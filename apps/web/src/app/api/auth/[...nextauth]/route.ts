@@ -13,7 +13,10 @@ export const authOptions: NextAuthOptions = {
         totp: { label: '2FA Code', type: 'text' }
       },
       async authorize(credentials) {
+        console.log('Auth attempt for:', credentials?.email)
+        
         if (!credentials?.email || !credentials?.password) {
+          console.log('Missing credentials')
           return null
         }
 
@@ -30,20 +33,24 @@ export const authOptions: NextAuthOptions = {
           }
 
           if (credentials.email !== mockUser.email) {
+            console.log('Invalid email:', credentials.email)
             return null
           }
 
           const isValidPassword = await compare(credentials.password, mockUser.password)
           if (!isValidPassword) {
+            console.log('Invalid password for user:', credentials.email)
             return null
           }
 
           // TODO: Implement TOTP verification
           // For now, skip 2FA for development
           if (credentials.totp && credentials.totp !== '123456') {
+            console.log('Invalid TOTP code')
             return null
           }
 
+          console.log('Authentication successful for:', credentials.email)
           return {
             id: mockUser.id,
             email: mockUser.email,
@@ -81,6 +88,7 @@ export const authOptions: NextAuthOptions = {
     error: '/auth/error',
   },
   secret: process.env.NEXTAUTH_SECRET || 'your-secret-key',
+  debug: process.env.NODE_ENV === 'development',
 }
 
 const handler = NextAuth(authOptions)
