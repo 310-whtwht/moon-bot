@@ -1,0 +1,78 @@
+---
+alwaysApply: true
+---
+
+# 基本設計書（v0.4.1）— moomoo 初期対応
+更新日: 2025-08-24（JST）
+
+## 1. 全体構成
+- **Front**: Next.js (App Router) + Tailwind + shadcn/ui
+- **API/Bot**: Go（gin）+ Starlark VM（go.starlark.net）
+- **Broker Adapter**: `infra/broker/moomoo`（Futu OpenD TCP/WS）
+- **Messaging**: Redis Streams（約定/サーキット/戦略ログ）
+- **DB**: MySQL 8（熱データ）+ Object Storage（ヒストリカル）
+- **Auth**: NextAuth + TOTP（Microsoft/Google Authenticator）
+
+## 2. コンポーネント
+- `apps/web`: 戦略センター、バックテスト、モニタ、設定、Kill。
+- `apps/api`
+  - `internal/adapter/rest`: `/orders`, `/strategies`, `/backtests`, `/exports`
+  - `internal/usecase`: PlaceOrder / SyncHistoricalData / RunBacktest / StrategyRelease / ExportPnL
+  - `internal/strategy`: Facade + Builtins（order/risk/data/ind/state/log）
+  - `infra/broker/moomoo`: 市況購読、発注、約定イベント
+  - `infra/repo`: MySQL（orders/trades/strategy_versions/params）
+  - `infra/streams`: Redis Streams（DLQ/ACK/Retry）
+- `apps/bot`: 銘柄×戦略ワーカー、`on_bar` 実行、サーキット制御。
+
+## 3. データモデル（要点）
+- `strategy_packages/versions/params` … スクリプト/スキーマ/パラメータ管理
+- `orders`（冪等キー、type/price/sl/tp/size、status、broker_order_id）
+- `trades`（open/close/pnl/rr、opened_at/closed_at、strategy_version_id）
+- `audit_logs`（stage: input/signal/order/fill/close、ts_utc）
+- `universe_symbols`（監視ユニバース、スクリーニング条件）
+
+## 4. ブローカーアダプタ（moomoo）
+- 購読管理: 「銘柄×サブタイプ＝1枠」規則に従い、Tick と K 線で **2 枠/銘柄**。
+- レート制限: エンドポイント毎の限度を `RateLimiter` で制御（トークンバケット）。
+- 発注: Market/Limit/Stop/Stop‑Limit/Trailing を DTO 変換。**OCO は擬似**。
+- 空売り: 事前に `Get Margin Data` を参照し、不可銘柄は発注ブロック。
+- 再接続: `onPush_Notify` 検知 → 再接続 → **再購読（subscribe_push=true）**。Tick は最大 50 件補完。
+
+## 5. 戦略テンプレ（初期値）
+- **EMA クロス**: fast=9, slow=21, min_vol=100k, atr_sl=2.0, atr_tp=3.0
+- **RSI リバーサル**: period=14, buy_th=30, sell_th=70, hold_max=10 bars, trail_atr=1.5
+- **ブレイクアウト**: lookback=20, filter_atr=1.0, atr_sl=1.5, atr_tp=3.0
+- **一目均衡表**: tenkan=9, kijun=26, spanB=52, cloud_min=0.5%, lag_confirm=true
+
+## 6. リスク/執行
+- サイズ計算: ATR リスクベースで 0.25%/trade（最小株数へ丸め）。
+- DD 閾値: 日次 1% / 週次 3% → 新規停止（既存保持）。
+- 冪等性: `client_order_id` 完全一致は 200 既存返却、差異ありは 409。
+- 擬似 OCO: 片方 SUBMITTED/（PARTIAL）FILLED で相互キャンセル。
+
+## 7. バックテスト
+- CLI/HTTP 共通の Facade を使用（本番 VM と同 API 面）。
+- スリッページ: 固定 + 動的（ATR/出来高）。
+- Walk‑Forward: Redis Streams ジョブ化で並列実行。
+
+## 8. UI/UX
+- Strategy Center: テンプレ選択→パラメータ→BT→Paper→Live（**Paper 必須**）。
+- Monitoring: PnL/MaxDD/勝率、サーキットイベント、戦略ログ。
+- Kill: 未約定キャンセル→全ポジ成行→Runner 停止（確認ダイアログ）。
+
+## 9. セキュリティ/監査
+- 2FA 初回必須。鍵は AES‑GCM + OCI Vault。PII 非保持。
+- 監査: トレード ID で鎖状トレース（入力→シグナル→注文→約定）。
+
+## 10. /healthz（拡張）
+- 返却: `{opend:{state,subs}, db:{pool,latency}, redis:{ping,lag}, streams:{pending,maxlen}, goroutines, build}`
+- 監視: lag/滞留量/再接続回数/VM クォータヒット数。
+
+## 11. 税務エクスポート
+- **TWS**: `trade_id,symbol,open_time,close_time,side,quantity,open_price,close_price,realized_pnl,commission,dividend,tax_withheld,currency,strategy_id`
+- **日本向け**: `約定日,銘柄,取引区分,数量,単価,受渡金額,手数料,税金,実現損益,通貨,戦略ID,備考`
+
+## 12. ファイル命名（英語）
+- 入力 CSV: `SYMBOL_TIMEFRAME.csv`（例: `AAPL_1m.csv`）
+- 出力 CSV: `pnl_export_tws_YYYY.csv`, `pnl_export_japan_YYYY.csv`
+- ドキュメント: `requirements_v0_5_1_moomoo.mb` ほか（本文は日本語）。

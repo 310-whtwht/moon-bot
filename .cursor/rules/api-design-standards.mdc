@@ -1,0 +1,862 @@
+# API 設計規約（v1.0）— moon-bot プロジェクト
+更新日: 2025-08-24（JST）
+
+## 1. RESTful API設計
+
+### 1.1 URL設計
+```typescript
+// 基本原則
+// - リソース指向
+// - 階層構造を明確に
+// - 動詞ではなく名詞を使用
+// - 複数形を使用
+
+// 良い例
+GET    /api/v1/orders              // 注文一覧取得
+POST   /api/v1/orders              // 注文作成
+GET    /api/v1/orders/{id}         // 特定注文取得
+PUT    /api/v1/orders/{id}         // 注文更新
+DELETE /api/v1/orders/{id}         // 注文削除
+
+GET    /api/v1/orders/{id}/trades  // 注文の取引履歴
+POST   /api/v1/orders/{id}/cancel  // 注文キャンセル
+
+GET    /api/v1/strategies          // 戦略一覧
+POST   /api/v1/strategies          // 戦略作成
+GET    /api/v1/strategies/{id}     // 特定戦略取得
+PUT    /api/v1/strategies/{id}     // 戦略更新
+DELETE /api/v1/strategies/{id}     // 戦略削除
+
+GET    /api/v1/backtests           // バックテスト一覧
+POST   /api/v1/backtests           // バックテスト実行
+GET    /api/v1/backtests/{id}      // バックテスト結果取得
+
+// 悪い例
+GET    /api/v1/getOrders           // 動詞使用
+POST   /api/v1/createOrder         // 動詞使用
+GET    /api/v1/order               // 単数形
+POST   /api/v1/order/{id}/update   // 動詞使用
+```
+
+### 1.2 HTTPメソッド使用
+```typescript
+// GET: リソース取得（冪等）
+GET /api/v1/orders?symbol=AAPL&status=pending&limit=100&offset=0
+
+// POST: リソース作成
+POST /api/v1/orders
+{
+  "client_order_id": "550e8400-e29b-41d4-a716-446655440000",
+  "symbol": "AAPL",
+  "side": "buy",
+  "type": "market",
+  "size": 100
+}
+
+// PUT: リソース全体更新（冪等）
+PUT /api/v1/orders/{id}
+{
+  "symbol": "AAPL",
+  "side": "buy",
+  "type": "limit",
+  "price": 150.50,
+  "size": 100
+}
+
+// PATCH: リソース部分更新
+PATCH /api/v1/orders/{id}
+{
+  "price": 151.00
+}
+
+// DELETE: リソース削除（冪等）
+DELETE /api/v1/orders/{id}
+```
+
+### 1.3 クエリパラメータ
+```typescript
+// フィルタリング
+GET /api/v1/orders?symbol=AAPL&status=pending&side=buy
+
+// ソート
+GET /api/v1/orders?sort=created_at&order=desc
+
+// ページネーション
+GET /api/v1/orders?limit=100&offset=0&page=1
+
+// 日付範囲
+GET /api/v1/orders?from=2024-01-01&to=2024-01-31
+
+// 複数値
+GET /api/v1/orders?symbols=AAPL,GOOGL,MSFT
+
+// 検索
+GET /api/v1/strategies?q=ema+cross
+```
+
+## 2. リクエスト・レスポンス形式
+
+### 2.1 リクエスト形式
+```typescript
+// Content-Type
+Content-Type: application/json
+
+// リクエストボディ例
+interface PlaceOrderRequest {
+  client_order_id: string;      // 必須、UUID形式
+  account_id: string;           // 必須
+  symbol: string;               // 必須
+  side: 'buy' | 'sell';         // 必須
+  type: 'market' | 'limit' | 'stop' | 'stop_limit' | 'trailing'; // 必須
+  price?: number;               // 指値注文の場合必須
+  size: number;                 // 必須、正の数
+  stop_loss?: number;           // オプション
+  take_profit?: number;         // オプション
+  time_in_force?: 'DAY' | 'GTC' | 'IOC'; // デフォルト: DAY
+  strategy_version_id?: number; // オプション
+}
+
+// リクエスト例
+POST /api/v1/orders
+{
+  "client_order_id": "550e8400-e29b-41d4-a716-446655440000",
+  "account_id": "acc-123",
+  "symbol": "AAPL",
+  "side": "buy",
+  "type": "limit",
+  "price": 150.50,
+  "size": 100,
+  "stop_loss": 145.00,
+  "take_profit": 160.00,
+  "time_in_force": "DAY"
+}
+```
+
+### 2.2 レスポンス形式
+```typescript
+// 成功レスポンス
+interface PlaceOrderResponse {
+  order_id: string;
+  client_order_id: string;
+  status: string;
+  broker_order_id?: string;
+  created_at: string;           // ISO 8601
+  updated_at: string;           // ISO 8601
+}
+
+// レスポンス例
+HTTP/1.1 201 Created
+Content-Type: application/json
+
+{
+  "order_id": "ord-456",
+  "client_order_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "pending",
+  "broker_order_id": "broker-789",
+  "created_at": "2024-01-15T10:30:00Z",
+  "updated_at": "2024-01-15T10:30:00Z"
+}
+
+// 一覧レスポンス
+interface OrdersResponse {
+  data: Order[];
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+    page: number;
+    pages: number;
+  };
+  meta: {
+    timestamp: string;
+    request_id: string;
+  };
+}
+
+// 一覧レスポンス例
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "data": [
+    {
+      "order_id": "ord-456",
+      "client_order_id": "550e8400-e29b-41d4-a716-446655440000",
+      "symbol": "AAPL",
+      "side": "buy",
+      "type": "limit",
+      "price": 150.50,
+      "size": 100,
+      "status": "pending",
+      "created_at": "2024-01-15T10:30:00Z"
+    }
+  ],
+  "pagination": {
+    "total": 150,
+    "limit": 100,
+    "offset": 0,
+    "page": 1,
+    "pages": 2
+  },
+  "meta": {
+    "timestamp": "2024-01-15T10:30:00Z",
+    "request_id": "req-123"
+  }
+}
+```
+
+## 3. エラーレスポンス規約
+
+### 3.1 エラーレスポンス形式
+```typescript
+interface ErrorResponse {
+  error: {
+    code: string;           // エラーコード
+    message: string;        // エラーメッセージ
+    details?: {             // 詳細情報（オプション）
+      field?: string;       // エラーが発生したフィールド
+      value?: any;          // 問題のある値
+      suggestion?: string;  // 修正提案
+    }[];
+    timestamp: string;      // エラー発生時刻
+    request_id: string;     // リクエストID
+    path: string;           // リクエストパス
+  };
+}
+
+// エラーレスポンス例
+HTTP/1.1 422 Unprocessable Entity
+Content-Type: application/json
+
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed",
+    "details": [
+      {
+        "field": "price",
+        "value": -150.50,
+        "suggestion": "Price must be a positive number"
+      },
+      {
+        "field": "symbol",
+        "value": "",
+        "suggestion": "Symbol is required"
+      }
+    ],
+    "timestamp": "2024-01-15T10:30:00Z",
+    "request_id": "req-123",
+    "path": "/api/v1/orders"
+  }
+}
+```
+
+### 3.2 HTTPステータスコード
+```typescript
+// 2xx Success
+200 OK                    // リクエスト成功
+201 Created               // リソース作成成功
+202 Accepted              // リクエスト受理（非同期処理）
+204 No Content            // 成功（レスポンスボディなし）
+
+// 4xx Client Error
+400 Bad Request           // リクエスト形式エラー
+401 Unauthorized          // 認証エラー
+403 Forbidden             // 認可エラー
+404 Not Found             // リソース未発見
+405 Method Not Allowed    // メソッド未対応
+409 Conflict              // リソース競合
+422 Unprocessable Entity  // バリデーションエラー
+429 Too Many Requests     // レート制限
+
+// 5xx Server Error
+500 Internal Server Error // サーバー内部エラー
+502 Bad Gateway           // ゲートウェイエラー
+503 Service Unavailable    // サービス利用不可
+504 Gateway Timeout        // ゲートウェイタイムアウト
+```
+
+### 3.3 エラーコード体系
+```typescript
+// エラーコード分類
+enum ErrorCode {
+  // 認証・認可
+  UNAUTHORIZED = 'UNAUTHORIZED',
+  FORBIDDEN = 'FORBIDDEN',
+  INVALID_TOKEN = 'INVALID_TOKEN',
+  TOKEN_EXPIRED = 'TOKEN_EXPIRED',
+  
+  // バリデーション
+  VALIDATION_ERROR = 'VALIDATION_ERROR',
+  INVALID_REQUEST = 'INVALID_REQUEST',
+  MISSING_REQUIRED_FIELD = 'MISSING_REQUIRED_FIELD',
+  INVALID_FORMAT = 'INVALID_FORMAT',
+  
+  // リソース
+  RESOURCE_NOT_FOUND = 'RESOURCE_NOT_FOUND',
+  RESOURCE_ALREADY_EXISTS = 'RESOURCE_ALREADY_EXISTS',
+  RESOURCE_CONFLICT = 'RESOURCE_CONFLICT',
+  
+  // ビジネスロジック
+  INSUFFICIENT_BALANCE = 'INSUFFICIENT_BALANCE',
+  ORDER_NOT_FOUND = 'ORDER_NOT_FOUND',
+  ORDER_ALREADY_FILLED = 'ORDER_ALREADY_FILLED',
+  INVALID_ORDER_STATE = 'INVALID_ORDER_STATE',
+  
+  // 外部サービス
+  BROKER_ERROR = 'BROKER_ERROR',
+  EXTERNAL_SERVICE_ERROR = 'EXTERNAL_SERVICE_ERROR',
+  
+  // システム
+  INTERNAL_SERVER_ERROR = 'INTERNAL_SERVER_ERROR',
+  SERVICE_UNAVAILABLE = 'SERVICE_UNAVAILABLE',
+  RATE_LIMIT_EXCEEDED = 'RATE_LIMIT_EXCEEDED',
+}
+
+// エラーレスポンス例
+{
+  "error": {
+    "code": "INSUFFICIENT_BALANCE",
+    "message": "Account balance is insufficient for this order",
+    "details": [
+      {
+        "field": "size",
+        "suggestion": "Reduce order size or add funds to account"
+      }
+    ],
+    "timestamp": "2024-01-15T10:30:00Z",
+    "request_id": "req-123",
+    "path": "/api/v1/orders"
+  }
+}
+```
+
+## 4. バリデーション規約
+
+### 4.1 入力バリデーション
+```typescript
+// バリデーションルール
+interface ValidationRules {
+  // 文字列
+  required?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  enum?: string[];
+  
+  // 数値
+  min?: number;
+  max?: number;
+  positive?: boolean;
+  integer?: boolean;
+  
+  // 日付
+  dateFormat?: string;
+  minDate?: string;
+  maxDate?: string;
+  
+  // カスタム
+  custom?: (value: any) => boolean;
+}
+
+// バリデーション例
+interface PlaceOrderValidation {
+  client_order_id: {
+    required: true;
+    pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+  };
+  
+  symbol: {
+    required: true;
+    minLength: 1;
+    maxLength: 16;
+    pattern: '^[A-Z]{1,16}$';
+  };
+  
+  side: {
+    required: true;
+    enum: ['buy', 'sell'];
+  };
+  
+  type: {
+    required: true;
+    enum: ['market', 'limit', 'stop', 'stop_limit', 'trailing'];
+  };
+  
+  price: {
+    required: false; // 成行注文の場合は不要
+    min: 0.01;
+    positive: true;
+  };
+  
+  size: {
+    required: true;
+    min: 0.01;
+    positive: true;
+  };
+}
+```
+
+### 4.2 バリデーションエラーレスポンス
+```typescript
+// バリデーションエラー例
+HTTP/1.1 422 Unprocessable Entity
+Content-Type: application/json
+
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed",
+    "details": [
+      {
+        "field": "client_order_id",
+        "value": "invalid-uuid",
+        "message": "Must be a valid UUID",
+        "suggestion": "Use format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+      },
+      {
+        "field": "price",
+        "value": -150.50,
+        "message": "Must be a positive number",
+        "suggestion": "Enter a value greater than 0"
+      },
+      {
+        "field": "type",
+        "value": "invalid_type",
+        "message": "Invalid order type",
+        "suggestion": "Use one of: market, limit, stop, stop_limit, trailing"
+      }
+    ],
+    "timestamp": "2024-01-15T10:30:00Z",
+    "request_id": "req-123",
+    "path": "/api/v1/orders"
+  }
+}
+```
+
+## 5. 認証・認可規約
+
+### 5.1 認証方式
+```typescript
+// Bearer Token認証
+Authorization: Bearer <access_token>
+
+// API Key認証
+X-API-Key: <api_key>
+
+// 認証ヘッダー例
+{
+  "headers": {
+    "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "X-API-Key": "sk_live_1234567890abcdef",
+    "Content-Type": "application/json"
+  }
+}
+
+// 認証エラーレスポンス
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+
+{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Authentication required",
+    "details": [
+      {
+        "field": "Authorization",
+        "suggestion": "Include valid Bearer token in Authorization header"
+      }
+    ],
+    "timestamp": "2024-01-15T10:30:00Z",
+    "request_id": "req-123",
+    "path": "/api/v1/orders"
+  }
+}
+```
+
+### 5.2 認可（RBAC）
+```typescript
+// ロール定義
+enum UserRole {
+  ADMIN = 'admin',           // 全権限
+  TRADER = 'trader',         // 取引・戦略管理
+  VIEWER = 'viewer',         // 閲覧のみ
+  API_USER = 'api_user'      // API専用
+}
+
+// 権限マトリックス
+const permissions = {
+  admin: ['*'],
+  trader: [
+    'orders:read',
+    'orders:write',
+    'strategies:read',
+    'strategies:write',
+    'backtests:read',
+    'backtests:write'
+  ],
+  viewer: [
+    'orders:read',
+    'strategies:read',
+    'backtests:read'
+  ],
+  api_user: [
+    'orders:write',
+    'orders:read'
+  ]
+};
+
+// 認可エラーレスポンス
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+
+{
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "Insufficient permissions",
+    "details": [
+      {
+        "field": "permission",
+        "suggestion": "Contact administrator to grant required permissions"
+      }
+    ],
+    "timestamp": "2024-01-15T10:30:00Z",
+    "request_id": "req-123",
+    "path": "/api/v1/strategies"
+  }
+}
+```
+
+## 6. レート制限
+
+### 6.1 レート制限ヘッダー
+```typescript
+// レスポンスヘッダー
+X-RateLimit-Limit: 1000        // 制限値
+X-RateLimit-Remaining: 999     // 残りリクエスト数
+X-RateLimit-Reset: 1642233600  // リセット時刻（Unix timestamp）
+
+// レート制限エラーレスポンス
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/json
+Retry-After: 60
+
+{
+  "error": {
+    "code": "RATE_LIMIT_EXCEEDED",
+    "message": "Rate limit exceeded",
+    "details": [
+      {
+        "field": "rate_limit",
+        "suggestion": "Wait 60 seconds before making another request"
+      }
+    ],
+    "timestamp": "2024-01-15T10:30:00Z",
+    "request_id": "req-123",
+    "path": "/api/v1/orders"
+  }
+}
+```
+
+## 7. バージョニング
+
+### 7.1 APIバージョニング
+```typescript
+// URLパスでのバージョニング
+GET /api/v1/orders
+GET /api/v2/orders
+
+// ヘッダーでのバージョニング
+Accept: application/vnd.moonbot.v1+json
+Accept: application/vnd.moonbot.v2+json
+
+// バージョン非対応エラー
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{
+  "error": {
+    "code": "UNSUPPORTED_VERSION",
+    "message": "API version not supported",
+    "details": [
+      {
+        "field": "version",
+        "suggestion": "Use supported version: v1, v2"
+      }
+    ],
+    "timestamp": "2024-01-15T10:30:00Z",
+    "request_id": "req-123",
+    "path": "/api/v3/orders"
+  }
+}
+```
+
+## 8. ドキュメント規約
+
+### 8.1 OpenAPI仕様
+```yaml
+# openapi.yaml
+openapi: 3.0.3
+info:
+  title: Moon Bot Trading API
+  description: API for automated trading system
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@moonbot.com
+
+servers:
+  - url: https://api.moonbot.com/v1
+    description: Production server
+  - url: https://staging-api.moonbot.com/v1
+    description: Staging server
+
+paths:
+  /orders:
+    get:
+      summary: Get orders
+      description: Retrieve a list of orders
+      parameters:
+        - name: symbol
+          in: query
+          description: Filter by symbol
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by status
+          schema:
+            type: string
+            enum: [pending, filled, cancelled, rejected]
+        - name: limit
+          in: query
+          description: Number of records to return
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+        - name: offset
+          in: query
+          description: Number of records to skip
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrdersResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    
+    post:
+      summary: Place order
+      description: Place a new order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceOrderRequest'
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaceOrderResponse'
+        '409':
+          description: Order already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    PlaceOrderRequest:
+      type: object
+      required:
+        - client_order_id
+        - symbol
+        - side
+        - type
+        - size
+      properties:
+        client_order_id:
+          type: string
+          format: uuid
+          description: Client order ID for idempotency
+        symbol:
+          type: string
+          pattern: '^[A-Z]{1,16}$'
+          description: Stock symbol
+        side:
+          type: string
+          enum: [buy, sell]
+          description: Order side
+        type:
+          type: string
+          enum: [market, limit, stop, stop_limit, trailing]
+          description: Order type
+        price:
+          type: number
+          minimum: 0.01
+          description: Order price (required for limit orders)
+        size:
+          type: number
+          minimum: 0.01
+          description: Order size
+    
+    PlaceOrderResponse:
+      type: object
+      properties:
+        order_id:
+          type: string
+          description: Internal order ID
+        client_order_id:
+          type: string
+          format: uuid
+          description: Client order ID
+        status:
+          type: string
+          enum: [pending, filled, cancelled, rejected]
+          description: Order status
+        broker_order_id:
+          type: string
+          description: Broker order ID
+        created_at:
+          type: string
+          format: date-time
+          description: Order creation timestamp
+    
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              description: Error code
+            message:
+              type: string
+              description: Error message
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                    description: Field name
+                  value:
+                    description: Invalid value
+                  suggestion:
+                    type: string
+                    description: Correction suggestion
+            timestamp:
+              type: string
+              format: date-time
+              description: Error timestamp
+            request_id:
+              type: string
+              description: Request ID for tracking
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+```
+
+## 9. ベストプラクティス
+
+### 9.1 パフォーマンス
+```typescript
+// ページネーション
+GET /api/v1/orders?limit=100&offset=0
+
+// フィールド選択
+GET /api/v1/orders?fields=id,symbol,side,status
+
+// 圧縮
+Accept-Encoding: gzip, deflate
+
+// キャッシュ
+Cache-Control: public, max-age=300
+ETag: "33a64df551"
+
+// 条件付きリクエスト
+If-None-Match: "33a64df551"
+If-Modified-Since: Wed, 21 Oct 2015 07:28:00 GMT
+```
+
+### 9.2 セキュリティ
+```typescript
+// HTTPS必須
+// すべてのAPIエンドポイントはHTTPSで提供
+
+// CORS設定
+Access-Control-Allow-Origin: https://app.moonbot.com
+Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS
+Access-Control-Allow-Headers: Content-Type, Authorization, X-API-Key
+
+// セキュリティヘッダー
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+X-XSS-Protection: 1; mode=block
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+
+// 入力サニタイゼーション
+// すべての入力は適切にサニタイズ
+```
+
+### 9.3 監視・ログ
+```typescript
+// リクエストID
+X-Request-ID: req-123
+
+// レスポンスヘッダー
+X-Response-Time: 150ms
+X-Request-ID: req-123
+
+// ログ形式
+{
+  "timestamp": "2024-01-15T10:30:00Z",
+  "level": "info",
+  "request_id": "req-123",
+  "method": "POST",
+  "path": "/api/v1/orders",
+  "status_code": 201,
+  "response_time": 150,
+  "user_id": "user-456",
+  "ip_address": "192.168.1.1"
+}
+```
+
+このAPI設計規約に従うことで、一貫性・保守性・拡張性の高いAPIを提供できます。
+description:
+globs:
+alwaysApply: false
+---

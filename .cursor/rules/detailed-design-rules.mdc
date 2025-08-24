@@ -1,0 +1,1200 @@
+
+# 詳細設計書（v0.4）— moomoo 対応 / Scriptable Strategy Architecture
+更新日: 2025-08-24（JST）
+
+## 0. 変更要約（v0.3 → v0.4）
+- **Docker Compose による開発・運用環境の標準化**を追加
+- **監視・ログ管理（ELK Stack + Prometheus/Grafana）**の詳細化
+- **セキュリティ・認証の強化**（API キー管理、RBAC、暗号化）
+- **エラーハンドリング・バリデーション**の詳細仕様追加
+- **運用・保守手順**の具体化
+
+## 1. インフラ構成（Docker Compose）
+
+### 1.1 開発環境構成
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  # フロントエンド
+  web:
+    build: ./apps/web
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://api:8080
+    depends_on:
+      - api
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+
+  # API サーバー
+  api:
+    build: ./apps/api
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_HOST=mysql
+      - REDIS_HOST=redis
+      - OPEND_HOST=opend
+      - MINIO_ENDPOINT=minio:9000
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+    depends_on:
+      - mysql
+      - redis
+      - opend
+      - minio
+      - elasticsearch
+    volumes:
+      - ./apps/api:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Bot Worker
+  bot:
+    build: ./apps/bot
+    environment:
+      - DB_HOST=mysql
+      - REDIS_HOST=redis
+      - OPEND_HOST=opend
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+    depends_on:
+      - mysql
+      - redis
+      - opend
+      - elasticsearch
+    volumes:
+      - ./apps/bot:/app
+    deploy:
+      replicas: 2
+
+  # データベース
+  mysql:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=moonbot
+      - MYSQL_USER=moonbot
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./infra/db/init:/docker-entrypoint-initdb.d
+      - ./infra/db/backup:/backup
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./infra/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # オブジェクトストレージ（開発用）
+  minio:
+    image: minio/minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ログ管理
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.8.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5601/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 監視
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ログ収集
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.8.0
+    volumes:
+      - ./infra/logging/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/log/docker:/var/log/docker:ro
+    depends_on:
+      - elasticsearch
+
+volumes:
+  mysql_data:
+  redis_data:
+  minio_data:
+  elasticsearch_data:
+  prometheus_data:
+  grafana_data:
+```
+
+### 1.2 本番環境構成
+```yaml
+# docker-compose.prod.yml
+version: '3.8'
+
+services:
+  api:
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+
+  bot:
+    restart: unless-stopped
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+        reservations:
+          memory: 256M
+          cpus: '0.1'
+
+  mysql:
+    restart: unless-stopped
+    environment:
+      - MYSQL_INNODB_BUFFER_POOL_SIZE=1G
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  redis:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+        reservations:
+          memory: 256M
+          cpus: '0.1'
+```
+
+## 2. DDL（主要テーブル/索引 抜粋）
+```sql
+-- アカウント管理
+CREATE TABLE accounts(
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(64) NOT NULL,
+  broker_account_id VARCHAR(64) NOT NULL UNIQUE,
+  trd_env ENUM('SIMULATE', 'REAL') NOT NULL DEFAULT 'SIMULATE',
+  status ENUM('active', 'inactive', 'suspended') NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 戦略パッケージ
+CREATE TABLE strategy_packages(
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(128) NOT NULL,
+  description TEXT,
+  template_type ENUM('ema_cross', 'rsi_reversal', 'breakout', 'ichimoku') NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 戦略バージョン
+CREATE TABLE strategy_versions(
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  package_id BIGINT NOT NULL,
+  version VARCHAR(32) NOT NULL,
+  script_content TEXT NOT NULL,
+  status ENUM('uploaded', 'verified', 'released', 'rolled_back', 'quarantined') NOT NULL DEFAULT 'uploaded',
+  verification_result JSON,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (package_id) REFERENCES strategy_packages(id),
+  UNIQUE KEY uk_package_version (package_id, version)
+);
+
+-- 戦略パラメータ
+CREATE TABLE strategy_params(
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  version_id BIGINT NOT NULL,
+  param_name VARCHAR(64) NOT NULL,
+  param_value JSON NOT NULL,
+  param_type ENUM('int', 'float', 'string', 'bool', 'array') NOT NULL,
+  description TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (version_id) REFERENCES strategy_versions(id),
+  UNIQUE KEY uk_version_param (version_id, param_name)
+);
+
+-- 監視銘柄
+CREATE TABLE universe_symbols(
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  symbol VARCHAR(16) NOT NULL UNIQUE,
+  filters_json JSON NOT NULL CHECK (JSON_VALID(filters_json)),
+  priority INT DEFAULT 0,
+  status ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- 注文
+CREATE TABLE orders(
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  client_order_id CHAR(36) NOT NULL UNIQUE,
+  account_id BIGINT NOT NULL,
+  symbol VARCHAR(16) NOT NULL,
+  side VARCHAR(8) NOT NULL,               -- buy/sell
+  type VARCHAR(16) NOT NULL,              -- market/limit/stop/stop_limit/trailing
+  price DECIMAL(18,6),
+  sl DECIMAL(18,6),
+  tp DECIMAL(18,6),
+  size DECIMAL(18,6) NOT NULL,
+  tif VARCHAR(8) DEFAULT 'DAY',
+  status VARCHAR(16) NOT NULL,            -- pending/submitted/filled/rejected/cancelled
+  broker_order_id VARCHAR(64),
+  placed_at TIMESTAMP, filled_at TIMESTAMP,
+  rejected_reason VARCHAR(255),
+  strategy_version_id BIGINT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (account_id) REFERENCES accounts(id),
+  FOREIGN KEY (strategy_version_id) REFERENCES strategy_versions(id),
+  CONSTRAINT chk_price_if_limit CHECK ((type NOT IN ('limit','stop','stop_limit')) OR price IS NOT NULL)
+);
+
+-- 取引
+CREATE TABLE trades(
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  open_order_id BIGINT NOT NULL,
+  close_order_id BIGINT,
+  symbol VARCHAR(16) NOT NULL,
+  size DECIMAL(18,6) NOT NULL,
+  open_price DECIMAL(18,6) NOT NULL,
+  close_price DECIMAL(18,6),
+  pnl DECIMAL(18,6),
+  rr DECIMAL(18,6),
+  opened_at TIMESTAMP,
+  closed_at TIMESTAMP,
+  strategy_version_id BIGINT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (open_order_id) REFERENCES orders(id),
+  FOREIGN KEY (close_order_id) REFERENCES orders(id),
+  FOREIGN KEY (strategy_version_id) REFERENCES strategy_versions(id)
+);
+
+-- 監査ログ
+CREATE TABLE audit_logs(
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  trade_id BIGINT,
+  stage VARCHAR(16) NOT NULL,             -- input|signal|order|fill|close|sync
+  payload JSON NOT NULL CHECK (JSON_VALID(payload)),
+  ts_utc TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (trade_id) REFERENCES trades(id)
+);
+
+-- リスク制限
+CREATE TABLE risk_limits(
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  account_id BIGINT NOT NULL,
+  limit_type VARCHAR(32) NOT NULL,        -- daily_dd|weekly_dd|position_size|max_positions
+  limit_value DECIMAL(18,6) NOT NULL,
+  current_value DECIMAL(18,6) DEFAULT 0,
+  reset_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (account_id) REFERENCES accounts(id),
+  UNIQUE KEY uk_account_limit (account_id, limit_type)
+);
+
+-- サーキットブレーカー
+CREATE TABLE circuit_breakers(
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  symbol VARCHAR(16) NOT NULL,
+  breaker_type VARCHAR(32) NOT NULL,      -- consecutive_failures|unfilled_orders|spread_exceeded
+  status ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
+  triggered_at TIMESTAMP,
+  reset_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_symbol_type (symbol, breaker_type)
+);
+
+-- 市場カレンダー
+CREATE TABLE market_calendar(
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  date DATE NOT NULL UNIQUE,
+  is_trading_day BOOLEAN NOT NULL DEFAULT true,
+  open_time TIME,
+  close_time TIME,
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- インデックス
+CREATE INDEX idx_orders_symbol_time ON orders(symbol, placed_at);
+CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_account ON orders(account_id);
+CREATE INDEX idx_orders_strategy ON orders(strategy_version_id);
+CREATE INDEX idx_trades_opened ON trades(opened_at);
+CREATE INDEX idx_trades_closed ON trades(closed_at);
+CREATE INDEX idx_trades_strategy ON trades(strategy_version_id);
+CREATE INDEX idx_audit_time ON audit_logs(ts_utc);
+CREATE INDEX idx_audit_trade ON audit_logs(trade_id);
+CREATE INDEX idx_risk_account ON risk_limits(account_id);
+CREATE INDEX idx_circuit_symbol ON circuit_breakers(symbol);
+```
+
+## 3. API 仕様（詳細化）
+
+### 3.1 セキュリティ・認証
+```typescript
+// 認証方式
+- NextAuth セッション Cookie（Web UI）
+- Bearer Token（API アクセス）
+- API Key（外部システム連携）
+
+// RBAC ロール
+enum UserRole {
+  ADMIN = 'admin',           // 全権限
+  TRADER = 'trader',         // 取引・戦略管理
+  VIEWER = 'viewer',         // 閲覧のみ
+  API_USER = 'api_user'      // API 専用
+}
+
+// 権限マトリックス
+const permissions = {
+  admin: ['*'],
+  trader: ['strategy.*', 'order.*', 'trade.*', 'backtest.*'],
+  viewer: ['strategy.read', 'trade.read', 'backtest.read'],
+  api_user: ['order.create', 'trade.read']
+};
+```
+
+### 3.2 エラーハンドリング
+```typescript
+// エラーコード体系
+enum ErrorCode {
+  // 4xx Client Errors
+  BAD_REQUEST = 400,
+  UNAUTHORIZED = 401,
+  FORBIDDEN = 403,
+  NOT_FOUND = 404,
+  CONFLICT = 409,
+  UNPROCESSABLE_ENTITY = 422,
+  TOO_MANY_REQUESTS = 429,
+  
+  // 5xx Server Errors
+  INTERNAL_SERVER_ERROR = 500,
+  SERVICE_UNAVAILABLE = 503,
+  GATEWAY_TIMEOUT = 504
+}
+
+// エラーレスポンス形式
+interface ErrorResponse {
+  error: {
+    code: ErrorCode;
+    message: string;
+    details?: Record<string, any>;
+    timestamp: string;
+    request_id: string;
+  }
+}
+```
+
+### 3.3 注文API（冪等拡張）
+```typescript
+// POST /orders
+interface PlaceOrderRequest {
+  client_order_id: string;      // 必須、UUID形式
+  symbol: string;
+  side: 'buy' | 'sell';
+  type: 'market' | 'limit' | 'stop' | 'stop_limit' | 'trailing';
+  size: number;
+  price?: number;
+  sl?: number;
+  tp?: number;
+  tif?: 'DAY' | 'GTC' | 'IOC';
+  strategy_version_id?: number;
+}
+
+// レスポンス
+interface PlaceOrderResponse {
+  order_id: number;
+  status: OrderStatus;
+  broker_order_id?: string;
+  message?: string;
+}
+
+// 冪等性チェック
+- client_order_id 完全一致 → 200 OK（既存注文返却）
+- payload 差異あり → 409 Conflict
+- バリデーションエラー → 422 Unprocessable Entity
+```
+
+### 3.4 SyncHistoricalData（詳細化）
+```typescript
+// POST /sync/historical
+interface SyncHistoricalRequest {
+  symbols: string[];
+  timeframes: ('1m' | '5m' | '15m' | '1d')[];
+  from: string;           // ISO 8601
+  to: string;             // ISO 8601
+  prefer_adjusted?: boolean;
+  force_refresh?: boolean;
+}
+
+interface SyncHistoricalResponse {
+  job_id: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed';
+  progress?: {
+    total_symbols: number;
+    processed_symbols: number;
+    total_bars: number;
+    processed_bars: number;
+  };
+  results?: {
+    symbol: string;
+    timeframe: string;
+    bars_added: number;
+    source: 'moomoo' | 'tiingo' | 'yahoo';
+    errors?: string[];
+  }[];
+}
+```
+
+### 3.5 監視・ヘルスチェックAPI
+```typescript
+// GET /healthz（拡張）
+interface HealthResponse {
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  timestamp: string;
+  version: string;
+  uptime: number;
+  
+  opend: {
+    state: 'connected' | 'disconnected' | 'reconnecting';
+    reconnects: number;
+    subs: number;
+    last_heartbeat: string;
+  };
+  
+  db: {
+    pool: {
+      active: number;
+      idle: number;
+      total: number;
+    };
+    latency: number;  // ms
+  };
+  
+  redis: {
+    ping: number;     // ms
+    backlog: number;
+  };
+  
+  streams: {
+    pending: number;
+    dlq: number;
+    maxlen: number;
+  };
+  
+  vm: {
+    quota_hits: number;
+    quarantined: number;
+  };
+  
+  goroutines: number;
+  memory: {
+    allocated: number;
+    total: number;
+    sys: number;
+  };
+}
+```
+
+## 4. moomoo アダプタ詳細（強化）
+
+### 4.1 購読枠・セット管理
+```go
+// 購読管理
+type SubscriptionSet struct {
+    maxSlots    int
+    currentSlots map[string]int
+    lru         *list.List
+    mu          sync.RWMutex
+}
+
+// 購読優先度
+type SubscriptionPriority struct {
+    Symbol    string
+    Priority  int
+    LastUsed  time.Time
+    DataType  string  // "tick" | "kline"
+}
+
+// LRU 解放ロジック
+func (ss *SubscriptionSet) evictLRU() {
+    if ss.currentSlots >= ss.maxSlots {
+        // 最も古い購読を削除
+        oldest := ss.lru.Back()
+        ss.unsubscribe(oldest.Value.(string))
+    }
+}
+```
+
+### 4.2 エラーハンドリング・再試行
+```go
+// 再試行設定
+type RetryConfig struct {
+    MaxAttempts     int
+    BaseDelay       time.Duration
+    MaxDelay        time.Duration
+    BackoffFactor   float64
+    Jitter          bool
+}
+
+// 指数バックオフ + ジッタ
+func (rc *RetryConfig) calculateDelay(attempt int) time.Duration {
+    delay := rc.BaseDelay * time.Duration(math.Pow(rc.BackoffFactor, float64(attempt)))
+    if delay > rc.MaxDelay {
+        delay = rc.MaxDelay
+    }
+    
+    if rc.Jitter {
+        jitter := time.Duration(rand.Float64() * float64(delay) * 0.1)
+        delay += jitter
+    }
+    
+    return delay
+}
+```
+
+### 4.3 データ品質管理
+```go
+// 異常値検出
+type DataQualityChecker struct {
+    priceSpikeThreshold float64  // 価格スパイク閾値
+    volumeSpikeThreshold float64 // 出来高スパイク閾値
+    maxDelayThreshold    time.Duration // 最大遅延閾値
+}
+
+func (dqc *DataQualityChecker) validateBar(bar *OHLCBar) error {
+    // 価格スパイクチェック
+    if bar.High/bar.Low > dqc.priceSpikeThreshold {
+        return errors.New("price spike detected")
+    }
+    
+    // 出来高スパイクチェック
+    if bar.Volume > dqc.volumeSpikeThreshold {
+        return errors.New("volume spike detected")
+    }
+    
+    // 遅延チェック
+    if time.Since(bar.Timestamp) > dqc.maxDelayThreshold {
+        return errors.New("data too old")
+    }
+    
+    return nil
+}
+```
+
+## 5. 戦略 VM（Starlark 強化）
+
+### 5.1 安全機構（詳細化）
+```go
+// VM 設定
+type VMConfig struct {
+    CPUTimeout     time.Duration  // 10ms
+    MemoryLimit    int64          // 10MB
+    MaxSteps       int            // 10,000
+    MaxStringLen   int            // 1MB
+    MaxListLen     int            // 10,000
+    MaxDictLen     int            // 1,000
+    AllowNetwork   bool           // false
+    AllowFileIO    bool           // false
+}
+
+// クォータ監視
+type QuotaMonitor struct {
+    cpuUsage    time.Duration
+    memoryUsage int64
+    stepCount   int
+    violations  int
+}
+
+func (qm *QuotaMonitor) checkQuota() error {
+    if qm.cpuUsage > qm.config.CPUTimeout {
+        qm.violations++
+        return errors.New("CPU quota exceeded")
+    }
+    
+    if qm.memoryUsage > qm.config.MemoryLimit {
+        qm.violations++
+        return errors.New("memory quota exceeded")
+    }
+    
+    if qm.stepCount > qm.config.MaxSteps {
+        qm.violations++
+        return errors.New("step quota exceeded")
+    }
+    
+    return nil
+}
+```
+
+### 5.2 API 拡張
+```python
+# 追加 API
+def data.get_historical(symbol, timeframe, bars=100):
+    """ヒストリカルデータ取得"""
+    pass
+
+def risk.get_position(symbol):
+    """現在ポジション取得"""
+    pass
+
+def risk.get_account_info():
+    """口座情報取得"""
+    pass
+
+def log.info(message, **kwargs):
+    """情報ログ"""
+    pass
+
+def log.warn(message, **kwargs):
+    """警告ログ"""
+    pass
+
+def log.error(message, **kwargs):
+    """エラーログ"""
+    pass
+
+def state.get(key, default=None):
+    """状態取得"""
+    pass
+
+def state.set(key, value, ttl=None):
+    """状態設定"""
+    pass
+```
+
+## 6. Redis Streams（詳細化）
+
+### 6.1 ストリーム設定
+```yaml
+# Redis 設定
+streams:
+  events:
+    maxlen: 10000
+    groups:
+      api:
+        consumers: 2
+        max_deliveries: 8
+        retry_delay: 5000ms
+      bot:
+        consumers: 3
+        max_deliveries: 8
+        retry_delay: 3000ms
+      monitoring:
+        consumers: 1
+        max_deliveries: 3
+        retry_delay: 10000ms
+
+# メッセージ形式
+message_types:
+  order_placed:
+    schema:
+      order_id: number
+      symbol: string
+      side: string
+      size: number
+      timestamp: string
+  order_filled:
+    schema:
+      order_id: number
+      fill_price: number
+      fill_size: number
+      timestamp: string
+  strategy_signal:
+    schema:
+      strategy_id: number
+      symbol: string
+      signal: string
+      params: object
+      timestamp: string
+```
+
+### 6.2 障害復旧
+```go
+// メッセージ損失検知
+type MessageLossDetector struct {
+    lastMessageID string
+    lossThreshold time.Duration
+    alertChannel  chan Alert
+}
+
+func (mld *MessageLossDetector) checkMessageLoss(currentID string) {
+    if mld.lastMessageID != "" {
+        gap := calculateGap(mld.lastMessageID, currentID)
+        if gap > mld.lossThreshold {
+            mld.alertChannel <- Alert{
+                Type: "message_loss",
+                Details: map[string]interface{}{
+                    "gap": gap,
+                    "last_id": mld.lastMessageID,
+                    "current_id": currentID,
+                },
+            }
+        }
+    }
+    mld.lastMessageID = currentID
+}
+```
+
+## 7. 監視・アラート（詳細化）
+
+### 7.1 Prometheus メトリクス
+```yaml
+# prometheus.yml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "alert_rules.yml"
+
+scrape_configs:
+  - job_name: 'moonbot-api'
+    static_configs:
+      - targets: ['api:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  - job_name: 'moonbot-bot'
+    static_configs:
+      - targets: ['bot:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+    scrape_interval: 30s
+
+  - job_name: 'mysql'
+    static_configs:
+      - targets: ['mysql:3306']
+    scrape_interval: 30s
+```
+
+### 7.2 アラートルール
+```yaml
+# alert_rules.yml
+groups:
+  - name: moonbot_alerts
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} per second"
+
+      - alert: DatabaseConnectionHigh
+        expr: mysql_global_status_threads_connected > 80
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High database connections"
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage high"
+
+      - alert: StrategyQuotaExceeded
+        expr: strategy_vm_quota_violations_total > 10
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Strategy VM quota exceeded"
+```
+
+### 7.3 Grafana ダッシュボード
+```json
+{
+  "dashboard": {
+    "title": "MoonBot Trading System",
+    "panels": [
+      {
+        "title": "Trading Performance",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(trades_pnl_total)",
+            "legendFormat": "Total PnL"
+          }
+        ]
+      },
+      {
+        "title": "Order Status",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "sum by (status) (orders_total)",
+            "legendFormat": "{{status}}"
+          }
+        ]
+      },
+      {
+        "title": "System Health",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "up",
+            "legendFormat": "{{job}}"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+## 8. セキュリティ（強化）
+
+### 8.1 暗号化設定
+```yaml
+# 暗号化設定
+encryption:
+  algorithm: "AES-256-GCM"
+  key_rotation_days: 90
+  key_storage: "oci_vault"
+  
+  encrypted_fields:
+    - "api_keys"
+    - "broker_credentials"
+    - "personal_data"
+
+# API キー管理
+api_keys:
+  expiration_days: 365
+  max_requests_per_minute: 1000
+  allowed_ips: []
+  scopes: ["read", "write", "admin"]
+```
+
+### 8.2 アクセス制御
+```go
+// IP 制限
+type IPWhitelist struct {
+    allowedIPs []net.IP
+    allowedCIDRs []*net.IPNet
+}
+
+func (iw *IPWhitelist) isAllowed(ip net.IP) bool {
+    for _, allowedIP := range iw.allowedIPs {
+        if ip.Equal(allowedIP) {
+            return true
+        }
+    }
+    
+    for _, cidr := range iw.allowedCIDRs {
+        if cidr.Contains(ip) {
+            return true
+        }
+    }
+    
+    return false
+}
+
+// 異常アクセス検知
+type AnomalyDetector struct {
+    requestCounts map[string]int
+    lastReset     time.Time
+    threshold     int
+}
+
+func (ad *AnomalyDetector) detectAnomaly(clientID string) bool {
+    now := time.Now()
+    if now.Sub(ad.lastReset) > time.Hour {
+        ad.requestCounts = make(map[string]int)
+        ad.lastReset = now
+    }
+    
+    ad.requestCounts[clientID]++
+    return ad.requestCounts[clientID] > ad.threshold
+}
+```
+
+## 9. 運用・保守手順
+
+### 9.1 デプロイメント手順
+```bash
+# 本番デプロイ
+#!/bin/bash
+set -e
+
+echo "Starting production deployment..."
+
+# 1. データベースマイグレーション
+echo "Running database migrations..."
+docker-compose -f docker-compose.prod.yml exec api ./migrate up
+
+# 2. ヘルスチェック
+echo "Performing health checks..."
+./scripts/health_check.sh
+
+# 3. 新バージョンデプロイ
+echo "Deploying new version..."
+docker-compose -f docker-compose.prod.yml up -d --no-deps api bot
+
+# 4. ロールバック準備
+echo "Preparing rollback..."
+docker tag moonbot-api:previous moonbot-api:rollback
+
+# 5. 最終ヘルスチェック
+echo "Final health check..."
+sleep 30
+./scripts/health_check.sh
+
+echo "Deployment completed successfully"
+```
+
+### 9.2 バックアップ手順
+```bash
+# データベースバックアップ
+#!/bin/bash
+
+BACKUP_DIR="/backup/$(date +%Y%m%d_%H%M%S)"
+mkdir -p $BACKUP_DIR
+
+# MySQL バックアップ
+docker-compose exec mysql mysqldump -u root -p$MYSQL_ROOT_PASSWORD moonbot > $BACKUP_DIR/mysql_backup.sql
+
+# Redis バックアップ
+docker-compose exec redis redis-cli BGSAVE
+sleep 5
+docker cp moonbot_redis_1:/data/dump.rdb $BACKUP_DIR/redis_backup.rdb
+
+# 設定ファイルバックアップ
+cp -r ./infra $BACKUP_DIR/
+
+echo "Backup completed: $BACKUP_DIR"
+```
+
+### 9.3 障害復旧手順
+```bash
+# 障害復旧
+#!/bin/bash
+
+case $1 in
+  "api")
+    echo "Recovering API service..."
+    docker-compose -f docker-compose.prod.yml restart api
+    ;;
+  "bot")
+    echo "Recovering Bot service..."
+    docker-compose -f docker-compose.prod.yml restart bot
+    ;;
+  "database")
+    echo "Recovering database..."
+    docker-compose -f docker-compose.prod.yml restart mysql
+    ;;
+  "full")
+    echo "Full system recovery..."
+    docker-compose -f docker-compose.prod.yml down
+    docker-compose -f docker-compose.prod.yml up -d
+    ;;
+  *)
+    echo "Usage: $0 {api|bot|database|full}"
+    exit 1
+    ;;
+esac
+```
+
+## 10. CI/CD パイプライン
+
+### 10.1 GitHub Actions
+```yaml
+# .github/workflows/ci.yml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+      
+      - name: Run tests
+        run: |
+          cd apps/api && go test ./...
+          cd apps/bot && go test ./...
+      
+      - name: Run integration tests
+        run: |
+          docker-compose up -d
+          sleep 30
+          ./scripts/integration_test.sh
+          docker-compose down
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Build and push images
+        run: |
+          docker build -t moonbot-api:latest ./apps/api
+          docker build -t moonbot-bot:latest ./apps/bot
+          docker build -t moonbot-web:latest ./apps/web
+      
+      - name: Deploy to staging
+        run: |
+          echo ${{ secrets.STAGING_SSH_KEY }} > key.pem
+          chmod 600 key.pem
+          scp -i key.pem docker-compose.prod.yml user@staging:/app/
+          ssh -i key.pem user@staging "cd /app && docker-compose -f docker-compose.prod.yml pull && docker-compose -f docker-compose.prod.yml up -d"
+```
+
+## 11. 受け入れ条件（更新）
+
+### 11.1 機能要件
+- [ ] Paper 必須のワークフローが UI/API で強制されること
+- [ ] 欠損ヒストリカルが自動補完されること（監査にソース記録）
+- [ ] 税務 CSV（TWS/日本向け）が任意期間で出力できること
+- [ ] Docker Compose で開発環境が構築できること
+- [ ] 監視・アラートが正常に動作すること
+
+### 11.2 非機能要件
+- [ ] 可用性 99.5%/月を達成すること
+- [ ] API レスポンス時間 95%ile < 200ms を達成すること
+- [ ] データベース接続プールが適切に管理されること
+- [ ] セキュリティスキャンで脆弱性が検出されないこと
+- [ ] バックアップ・リストアが正常に動作すること
+
+### 11.3 運用要件
+- [ ] ゼロダウンタイムデプロイが可能であること
+- [ ] 障害復旧手順が文書化されていること
+- [ ] 監査ログが適切に保持されること
+- [ ] パフォーマンスメトリクスが収集されること
+- [ ] アラートが適切に発報されること
+
+## 11. 受け入れ条件
+- Paper 強制、欠損補完の監査、二系統 CSV がダウンロード可能。
