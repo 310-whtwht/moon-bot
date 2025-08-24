@@ -6,12 +6,13 @@ alwaysApply: true
 更新日: 2025-08-24（JST）
 
 ## 1. 全体構成
-- **Front**: Next.js (App Router) + Tailwind + shadcn/ui
+- **Front**: Next.js (App Router) + Tailwind + shadcn/ui + zod + zustand
 - **API/Bot**: Go（gin）+ Starlark VM（go.starlark.net）
 - **Broker Adapter**: `infra/broker/moomoo`（Futu OpenD TCP/WS）
 - **Messaging**: Redis Streams（約定/サーキット/戦略ログ）
 - **DB**: MySQL 8（熱データ）+ Object Storage（ヒストリカル）
 - **Auth**: NextAuth + TOTP（Microsoft/Google Authenticator）
+- **Testing**: Bruno（エンドポイントテスト、日本語フォルダ構成）
 
 ## 2. コンポーネント
 - `apps/web`: 戦略センター、バックテスト、モニタ、設定、Kill。

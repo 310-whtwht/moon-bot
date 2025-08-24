@@ -69,9 +69,11 @@ alwaysApply: true
   - 通過後も **Live は最小株数**で段階的に検証。
 
 ### 5.5 UI/運用
+- **フロントエンド**: Next.js + shadcn/ui + zod（バリデーション）+ zustand（状態管理）
 - 戦略センター（テンプレ選択→編集→BT→Paper→Live）。
 - モニタ（PnL、DD、勝率、戦略ログ、サーキット通知履歴）。
 - **Kill スイッチ**：未約定キャンセル＋全ポジ成行クローズ＋Runner 停止。二重確認。
+- **エンドポイントテスト**: Bruno（日本語フォルダ構成、エンドポイント毎に.brunoファイル）
 
 ### 5.6 税務エクスポート
 - **TWS 形式**：`trade_id,symbol,open_time,close_time,side,quantity,open_price,close_price,realized_pnl,commission,dividend,tax_withheld,currency,strategy_id`。

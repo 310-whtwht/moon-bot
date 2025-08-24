@@ -1,6 +1,88 @@
 # Testing Standards & Best Practices
 
-## 1. 単体テスト規約
+## 1. エンドポイントテスト規約（Bruno）
+
+### 1.1 Bruno設定
+```json
+// bruno.json
+{
+  "version": "1",
+  "name": "moon-bot-api",
+  "type": "collection"
+}
+```
+
+### 1.2 フォルダ構成
+```
+bruno/
+├── 戦略管理/
+│   ├── 戦略一覧取得.bruno
+│   ├── 戦略詳細取得.bruno
+│   ├── 戦略作成.bruno
+│   ├── 戦略編集.bruno
+│   └── 戦略削除.bruno
+├── 注文管理/
+│   ├── 注文一覧取得.bruno
+│   ├── 注文詳細取得.bruno
+│   ├── 注文作成.bruno
+│   ├── 注文編集.bruno
+│   └── 注文キャンセル.bruno
+├── バックテスト/
+│   ├── バックテスト一覧取得.bruno
+│   ├── バックテスト実行.bruno
+│   └── バックテスト結果取得.bruno
+├── 監視/
+│   ├── PnL取得.bruno
+│   ├── サーキット状態取得.bruno
+│   └── 戦略ログ取得.bruno
+└── エクスポート/
+    ├── 税務エクスポートTWS.bruno
+    └── 税務エクスポート日本.bruno
+```
+
+### 1.3 テストファイル例
+```bruno
+# 戦略一覧取得.bruno
+meta {
+  name: 戦略一覧取得
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/strategies
+  body: none
+  auth: {
+    type: bearer
+    token: {{authToken}}
+  }
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+tests {
+  test("ステータスコードが200であること", function() {
+    expect(response.status).to.equal(200);
+  });
+  
+  test("レスポンスが配列であること", function() {
+    expect(response.body).to.be.an('array');
+  });
+  
+  test("各戦略に必須フィールドが含まれていること", function() {
+    response.body.forEach(strategy => {
+      expect(strategy).to.have.property('id');
+      expect(strategy).to.have.property('name');
+      expect(strategy).to.have.property('status');
+    });
+  });
+}
+```
+
+## 2. 単体テスト規約
 
 ### 1.1 Go単体テスト
 ```go
