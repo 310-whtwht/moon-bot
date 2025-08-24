@@ -1,0 +1,605 @@
+# Go コーディング規約（v1.0）— moon-bot プロジェクト
+更新日: 2025-08-24（JST）
+
+## 1. 基本原則
+
+### 1.1 コードスタイル
+- **gofmt** による自動フォーマットを必須とする
+- **golint** による静的解析を必須とする
+- **go vet** による潜在的問題の検出を必須とする
+- 行の最大長は **120文字** とする
+- インデントは **タブ** を使用する（スペース禁止）
+
+### 1.2 命名規則
+```go
+// パッケージ名：短く、明確、小文字のみ
+package trading
+package risk
+package strategy
+
+// 変数名：camelCase
+var orderID string
+var maxRetryCount int
+
+// 定数名：PascalCase
+const (
+    MaxOrderSize = 1000
+    DefaultTimeout = 30 * time.Second
+)
+
+// 関数名：camelCase、動詞から始める
+func placeOrder(ctx context.Context, order Order) error
+func validateOrder(order Order) error
+
+// 構造体名：PascalCase
+type Order struct {
+    ID   string
+    Size int
+}
+
+// インターフェース名：PascalCase、er接尾辞
+type OrderPlacer interface {
+    Place(ctx context.Context, order Order) error
+}
+
+// エラー変数：Err接頭辞
+var ErrOrderNotFound = errors.New("order not found")
+var ErrInvalidOrder = errors.New("invalid order")
+```
+
+## 2. パッケージ構造
+
+### 2.1 標準的なディレクトリ構造
+```
+apps/api/
+├── cmd/
+│   └── server/
+│       └── main.go
+├── internal/
+│   ├── adapter/
+│   │   ├── rest/
+│   │   └── grpc/
+│   ├── domain/
+│   │   ├── entity/
+│   │   ├── repository/
+│   │   └── service/
+│   ├── usecase/
+│   └── infrastructure/
+│       ├── database/
+│       ├── redis/
+│       └── broker/
+├── pkg/
+│   ├── logger/
+│   ├── validator/
+│   └── utils/
+├── go.mod
+└── go.sum
+```
+
+### 2.2 パッケージ設計原則
+```go
+// 良い例：単一責任の原則
+package order
+
+type Service struct {
+    repo Repository
+    validator Validator
+}
+
+func (s *Service) Place(ctx context.Context, order Order) error {
+    // 注文処理のみ
+}
+
+// 悪い例：複数の責任
+package trading
+
+type Service struct {
+    // 注文、リスク、戦略が混在
+}
+```
+
+## 3. エラーハンドリング
+
+### 3.1 エラー定義
+```go
+// カスタムエラー型
+type OrderError struct {
+    Code    string
+    Message string
+    Cause   error
+}
+
+func (e *OrderError) Error() string {
+    return fmt.Sprintf("[%s] %s", e.Code, e.Message)
+}
+
+func (e *OrderError) Unwrap() error {
+    return e.Cause
+}
+
+// エラー定数
+const (
+    ErrCodeOrderNotFound    = "ORDER_NOT_FOUND"
+    ErrCodeInvalidOrder     = "INVALID_ORDER"
+    ErrCodeInsufficientFunds = "INSUFFICIENT_FUNDS"
+)
+
+// エラー作成関数
+func NewOrderError(code, message string, cause error) *OrderError {
+    return &OrderError{
+        Code:    code,
+        Message: message,
+        Cause:   cause,
+    }
+}
+```
+
+### 3.2 エラーハンドリングパターン
+```go
+// 良い例：早期リターン
+func (s *Service) PlaceOrder(ctx context.Context, order Order) error {
+    if err := s.validateOrder(order); err != nil {
+        return fmt.Errorf("validation failed: %w", err)
+    }
+    
+    if err := s.checkRisk(order); err != nil {
+        return fmt.Errorf("risk check failed: %w", err)
+    }
+    
+    return s.repo.Create(ctx, order)
+}
+
+// 悪い例：ネストが深い
+func (s *Service) PlaceOrder(ctx context.Context, order Order) error {
+    if err := s.validateOrder(order); err == nil {
+        if err := s.checkRisk(order); err == nil {
+            return s.repo.Create(ctx, order)
+        } else {
+            return err
+        }
+    } else {
+        return err
+    }
+}
+```
+
+### 3.3 エラーログ出力
+```go
+// 構造化ログでのエラー出力
+func (s *Service) PlaceOrder(ctx context.Context, order Order) error {
+    if err := s.validateOrder(order); err != nil {
+        logger.Error(ctx, "order validation failed",
+            "order_id", order.ID,
+            "error", err,
+            "order", order,
+        )
+        return NewOrderError(ErrCodeInvalidOrder, "validation failed", err)
+    }
+    
+    return nil
+}
+```
+
+## 4. コンテキスト使用
+
+### 4.1 コンテキストの適切な使用
+```go
+// 関数の最初の引数としてcontext.Context
+func (s *Service) PlaceOrder(ctx context.Context, order Order) error {
+    // コンテキストのキャンセルをチェック
+    select {
+    case <-ctx.Done():
+        return ctx.Err()
+    default:
+    }
+    
+    // 処理続行
+    return s.processOrder(ctx, order)
+}
+
+// タイムアウト付きコンテキスト
+func (s *Service) PlaceOrderWithTimeout(order Order) error {
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+    
+    return s.PlaceOrder(ctx, order)
+}
+```
+
+## 5. インターフェース設計
+
+### 5.1 インターフェース定義
+```go
+// 小さく、具体的なインターフェース
+type OrderRepository interface {
+    Create(ctx context.Context, order Order) error
+    GetByID(ctx context.Context, id string) (*Order, error)
+    Update(ctx context.Context, order Order) error
+    Delete(ctx context.Context, id string) error
+}
+
+// 悪い例：大きなインターフェース
+type TradingService interface {
+    // 注文、リスク、戦略、監査などが混在
+    PlaceOrder(ctx context.Context, order Order) error
+    CheckRisk(ctx context.Context, order Order) error
+    ExecuteStrategy(ctx context.Context, strategy Strategy) error
+    // ... 多数のメソッド
+}
+```
+
+### 5.2 依存性注入
+```go
+// コンストラクタでの依存性注入
+type OrderService struct {
+    repo      OrderRepository
+    validator OrderValidator
+    logger    Logger
+}
+
+func NewOrderService(repo OrderRepository, validator OrderValidator, logger Logger) *OrderService {
+    return &OrderService{
+        repo:      repo,
+        validator: validator,
+        logger:    logger,
+    }
+}
+```
+
+## 6. テスト規約
+
+### 6.1 テストファイル命名
+```go
+// テストファイルは _test.go 接尾辞
+order_service.go
+order_service_test.go
+
+// ベンチマークテスト
+order_service_bench_test.go
+
+// 統合テスト
+order_service_integration_test.go
+```
+
+### 6.2 テスト構造
+```go
+func TestOrderService_PlaceOrder(t *testing.T) {
+    // テストケース定義
+    tests := []struct {
+        name    string
+        order   Order
+        wantErr bool
+        errCode string
+    }{
+        {
+            name: "valid order",
+            order: Order{
+                ID:   "test-1",
+                Size: 100,
+            },
+            wantErr: false,
+        },
+        {
+            name: "invalid order size",
+            order: Order{
+                ID:   "test-2",
+                Size: -1,
+            },
+            wantErr: true,
+            errCode: ErrCodeInvalidOrder,
+        },
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            // テスト実行
+            ctx := context.Background()
+            service := NewOrderService(mockRepo, mockValidator, mockLogger)
+            
+            err := service.PlaceOrder(ctx, tt.order)
+            
+            // アサーション
+            if tt.wantErr {
+                assert.Error(t, err)
+                if tt.errCode != "" {
+                    var orderErr *OrderError
+                    if errors.As(err, &orderErr) {
+                        assert.Equal(t, tt.errCode, orderErr.Code)
+                    }
+                }
+            } else {
+                assert.NoError(t, err)
+            }
+        })
+    }
+}
+```
+
+### 6.3 モック使用
+```go
+// インターフェースベースのモック
+type MockOrderRepository struct {
+    mock.Mock
+}
+
+func (m *MockOrderRepository) Create(ctx context.Context, order Order) error {
+    args := m.Called(ctx, order)
+    return args.Error(0)
+}
+
+func (m *MockOrderRepository) GetByID(ctx context.Context, id string) (*Order, error) {
+    args := m.Called(ctx, id)
+    return args.Get(0).(*Order), args.Error(1)
+}
+
+// テストでの使用
+func TestOrderService_PlaceOrder(t *testing.T) {
+    mockRepo := new(MockOrderRepository)
+    mockRepo.On("Create", mock.Anything, mock.AnythingOfType("Order")).Return(nil)
+    
+    service := NewOrderService(mockRepo, mockValidator, mockLogger)
+    // テスト実行
+    
+    mockRepo.AssertExpectations(t)
+}
+```
+
+## 7. パフォーマンス最適化
+
+### 7.1 メモリ効率
+```go
+// 良い例：ポインタの適切な使用
+type Order struct {
+    ID        string
+    Size      int
+    Price     float64
+    Timestamp time.Time
+}
+
+// 大きな構造体はポインタで渡す
+func (s *Service) ProcessOrder(order *Order) error {
+    // 処理
+}
+
+// 小さな構造体は値で渡す
+type Point struct {
+    X, Y int
+}
+
+func (s *Service) CalculateDistance(p1, p2 Point) float64 {
+    // 計算
+}
+```
+
+### 7.2 並行処理
+```go
+// goroutine の適切な使用
+func (s *Service) ProcessOrders(ctx context.Context, orders []Order) error {
+    var wg sync.WaitGroup
+    errCh := make(chan error, len(orders))
+    
+    for _, order := range orders {
+        wg.Add(1)
+        go func(o Order) {
+            defer wg.Done()
+            
+            select {
+            case <-ctx.Done():
+                errCh <- ctx.Err()
+                return
+            default:
+            }
+            
+            if err := s.processOrder(ctx, o); err != nil {
+                errCh <- err
+            }
+        }(order)
+    }
+    
+    wg.Wait()
+    close(errCh)
+    
+    // エラーチェック
+    for err := range errCh {
+        if err != nil {
+            return err
+        }
+    }
+    
+    return nil
+}
+```
+
+## 8. ログ出力
+
+### 8.1 構造化ログ
+```go
+// 良い例：構造化ログ
+func (s *Service) PlaceOrder(ctx context.Context, order Order) error {
+    logger.Info(ctx, "placing order",
+        "order_id", order.ID,
+        "symbol", order.Symbol,
+        "size", order.Size,
+        "price", order.Price,
+    )
+    
+    if err := s.processOrder(ctx, order); err != nil {
+        logger.Error(ctx, "order placement failed",
+            "order_id", order.ID,
+            "error", err,
+        )
+        return err
+    }
+    
+    logger.Info(ctx, "order placed successfully",
+        "order_id", order.ID,
+    )
+    
+    return nil
+}
+```
+
+### 8.2 ログレベル
+```go
+// ログレベルの適切な使用
+logger.Debug(ctx, "processing order details", "order", order)  // デバッグ情報
+logger.Info(ctx, "order placed", "order_id", order.ID)        // 一般的な情報
+logger.Warn(ctx, "retry attempt", "attempt", retryCount)      // 警告
+logger.Error(ctx, "order failed", "error", err)               // エラー
+logger.Fatal(ctx, "critical error", "error", err)             // 致命的エラー
+```
+
+## 9. 設定管理
+
+### 9.1 環境変数
+```go
+// 設定構造体
+type Config struct {
+    Server   ServerConfig   `envconfig:"SERVER"`
+    Database DatabaseConfig `envconfig:"DATABASE"`
+    Redis    RedisConfig    `envconfig:"REDIS"`
+}
+
+type ServerConfig struct {
+    Port    int    `envconfig:"PORT" default:"8080"`
+    Host    string `envconfig:"HOST" default:"localhost"`
+    Timeout int    `envconfig:"TIMEOUT" default:"30"`
+}
+
+// 設定読み込み
+func LoadConfig() (*Config, error) {
+    var cfg Config
+    if err := envconfig.Process("", &cfg); err != nil {
+        return nil, fmt.Errorf("failed to load config: %w", err)
+    }
+    return &cfg, nil
+}
+```
+
+## 10. セキュリティ
+
+### 10.1 入力検証
+```go
+// 入力検証の実装
+func (s *Service) PlaceOrder(ctx context.Context, order Order) error {
+    if err := s.validateOrder(order); err != nil {
+        return NewOrderError(ErrCodeInvalidOrder, "validation failed", err)
+    }
+    
+    // SQLインジェクション対策
+    if err := s.sanitizeInput(order); err != nil {
+        return NewOrderError(ErrCodeInvalidOrder, "input sanitization failed", err)
+    }
+    
+    return s.repo.Create(ctx, order)
+}
+
+func (s *Service) sanitizeInput(order Order) error {
+    // 危険な文字の除去
+    order.Symbol = strings.TrimSpace(order.Symbol)
+    if strings.ContainsAny(order.Symbol, "';\"") {
+        return errors.New("invalid characters in symbol")
+    }
+    
+    return nil
+}
+```
+
+## 11. ベストプラクティス
+
+### 11.1 コメント
+```go
+// OrderService は注文の処理を担当する
+type OrderService struct {
+    repo OrderRepository
+}
+
+// PlaceOrder は新しい注文を配置する
+// ctx: コンテキスト
+// order: 配置する注文
+// 戻り値: エラー（成功時はnil）
+func (s *OrderService) PlaceOrder(ctx context.Context, order Order) error {
+    // 実装
+}
+```
+
+### 11.2 定数定義
+```go
+// 定数はファイルの先頭で定義
+const (
+    // 注文タイプ
+    OrderTypeMarket = "market"
+    OrderTypeLimit  = "limit"
+    OrderTypeStop   = "stop"
+    
+    // 注文サイド
+    OrderSideBuy  = "buy"
+    OrderSideSell = "sell"
+    
+    // 最大値
+    MaxOrderSize = 10000
+    MaxRetries   = 3
+)
+```
+
+### 11.3 エクスポート
+```go
+// 外部パッケージから使用される関数・型は大文字で始める
+func PlaceOrder(ctx context.Context, order Order) error {
+    // 実装
+}
+
+// 内部でのみ使用される関数・型は小文字で始める
+func validateOrder(order Order) error {
+    // 実装
+}
+```
+
+## 12. ツール設定
+
+### 12.1 go.mod
+```go
+module github.com/your-org/moon-bot/apps/api
+
+go 1.21
+
+require (
+    github.com/gin-gonic/gin v1.9.1
+    github.com/go-redis/redis/v8 v8.11.5
+    github.com/stretchr/testify v1.8.4
+    go.uber.org/zap v1.24.0
+)
+```
+
+### 12.2 .golangci.yml
+```yaml
+linters:
+  enable:
+    - gofmt
+    - golint
+    - govet
+    - errcheck
+    - staticcheck
+    - gosimple
+    - ineffassign
+    - unused
+    - misspell
+    - gosec
+
+linters-settings:
+  golint:
+    min-confidence: 0.8
+
+run:
+  timeout: 5m
+  tests: true
+  skip-dirs:
+    - vendor
+    - third_party
+```
+
+このコーディング規約に従うことで、保守性・可読性・パフォーマンスの高いGoコードを実装できます。
+description:
+globs:
+alwaysApply: false
+---

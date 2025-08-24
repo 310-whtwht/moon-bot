@@ -1,0 +1,1113 @@
+# アーキテクチャ・パターン規約（v1.0）— moon-bot プロジェクト
+更新日: 2025-08-24（JST）
+
+## 1. Clean Architecture
+
+### 1.1 レイヤー構成
+```
+apps/api/
+├── cmd/                    # エントリーポイント
+│   └── server/
+│       └── main.go
+├── internal/              # 内部パッケージ
+│   ├── domain/           # ドメイン層（最内層）
+│   │   ├── entity/       # エンティティ
+│   │   ├── repository/   # リポジトリインターフェース
+│   │   ├── service/      # ドメインサービス
+│   │   └── valueobject/  # 値オブジェクト
+│   ├── usecase/          # ユースケース層
+│   │   ├── order/
+│   │   ├── strategy/
+│   │   ├── backtest/
+│   │   └── risk/
+│   ├── adapter/          # アダプター層
+│   │   ├── rest/         # REST API
+│   │   ├── grpc/         # gRPC API
+│   │   └── cli/          # CLI
+│   └── infrastructure/   # インフラ層（最外層）
+│       ├── database/     # データベース
+│       ├── redis/        # Redis
+│       ├── broker/       # ブローカー
+│       └── external/     # 外部API
+└── pkg/                  # 共有パッケージ
+    ├── logger/
+    ├── validator/
+    └── utils/
+```
+
+### 1.2 依存関係の方向
+```go
+// 依存関係は内側に向かう
+// 外層 → 内層（OK）
+// 内層 → 外層（NG）
+
+// 良い例：アダプターがユースケースに依存
+package rest
+
+import (
+    "github.com/moon-bot/internal/usecase/order"
+)
+
+type OrderHandler struct {
+    orderUseCase order.UseCase
+}
+
+// 悪い例：ドメインがインフラに依存
+package domain
+
+import (
+    "github.com/moon-bot/internal/infrastructure/database" // NG
+)
+```
+
+### 1.3 インターフェース分離
+```go
+// ドメイン層でインターフェース定義
+// internal/domain/repository/order_repository.go
+package repository
+
+import (
+    "context"
+    "github.com/moon-bot/internal/domain/entity"
+)
+
+type OrderRepository interface {
+    Create(ctx context.Context, order *entity.Order) error
+    GetByID(ctx context.Context, id string) (*entity.Order, error)
+    Update(ctx context.Context, order *entity.Order) error
+    Delete(ctx context.Context, id string) error
+    List(ctx context.Context, filter OrderFilter) ([]*entity.Order, error)
+}
+
+type OrderFilter struct {
+    Symbol   string
+    Status   string
+    FromDate time.Time
+    ToDate   time.Time
+    Limit    int
+    Offset   int
+}
+
+// インフラ層で実装
+// internal/infrastructure/database/order_repository.go
+package database
+
+import (
+    "context"
+    "github.com/moon-bot/internal/domain/entity"
+    "github.com/moon-bot/internal/domain/repository"
+)
+
+type orderRepository struct {
+    db *gorm.DB
+}
+
+func NewOrderRepository(db *gorm.DB) repository.OrderRepository {
+    return &orderRepository{db: db}
+}
+
+func (r *orderRepository) Create(ctx context.Context, order *entity.Order) error {
+    // 実装
+}
+
+func (r *orderRepository) GetByID(ctx context.Context, id string) (*entity.Order, error) {
+    // 実装
+}
+```
+
+## 2. ドメイン駆動設計（DDD）
+
+### 2.1 エンティティ
+```go
+// internal/domain/entity/order.go
+package entity
+
+import (
+    "time"
+    "github.com/google/uuid"
+)
+
+type Order struct {
+    id             string
+    clientOrderID  string
+    accountID      string
+    symbol         string
+    side           OrderSide
+    type_          OrderType
+    price          *Money
+    size           Quantity
+    status         OrderStatus
+    createdAt      time.Time
+    updatedAt      time.Time
+}
+
+// コンストラクタ
+func NewOrder(
+    clientOrderID string,
+    accountID string,
+    symbol string,
+    side OrderSide,
+    type_ OrderType,
+    price *Money,
+    size Quantity,
+) *Order {
+    return &Order{
+        id:            uuid.New().String(),
+        clientOrderID: clientOrderID,
+        accountID:     accountID,
+        symbol:        symbol,
+        side:          side,
+        type_:         type_,
+        price:         price,
+        size:          size,
+        status:        OrderStatusPending,
+        createdAt:     time.Now(),
+        updatedAt:     time.Now(),
+    }
+}
+
+// ビジネスメソッド
+func (o *Order) Fill(fillPrice Money, fillSize Quantity) error {
+    if o.status != OrderStatusPending {
+        return errors.New("order is not pending")
+    }
+    
+    if fillSize.GreaterThan(o.size) {
+        return errors.New("fill size exceeds order size")
+    }
+    
+    o.status = OrderStatusFilled
+    o.updatedAt = time.Now()
+    
+    return nil
+}
+
+func (o *Order) Cancel() error {
+    if o.status != OrderStatusPending {
+        return errors.New("order cannot be cancelled")
+    }
+    
+    o.status = OrderStatusCancelled
+    o.updatedAt = time.Now()
+    
+    return nil
+}
+
+// ゲッター（イミュータブル）
+func (o *Order) ID() string { return o.id }
+func (o *Order) ClientOrderID() string { return o.clientOrderID }
+func (o *Order) Symbol() string { return o.symbol }
+func (o *Order) Side() OrderSide { return o.side }
+func (o *Order) Status() OrderStatus { return o.status }
+func (o *Order) CreatedAt() time.Time { return o.createdAt }
+```
+
+### 2.2 値オブジェクト
+```go
+// internal/domain/valueobject/money.go
+package valueobject
+
+import (
+    "fmt"
+    "math/big"
+)
+
+type Money struct {
+    amount   *big.Int
+    currency string
+}
+
+func NewMoney(amount *big.Int, currency string) *Money {
+    return &Money{
+        amount:   amount,
+        currency: currency,
+    }
+}
+
+func NewMoneyFromFloat(amount float64, currency string) *Money {
+    // 浮動小数点を整数に変換（精度保持）
+    intAmount := new(big.Int).SetInt64(int64(amount * 1000000)) // 6桁精度
+    return NewMoney(intAmount, currency)
+}
+
+func (m *Money) Add(other *Money) (*Money, error) {
+    if m.currency != other.currency {
+        return nil, fmt.Errorf("cannot add different currencies: %s and %s", m.currency, other.currency)
+    }
+    
+    newAmount := new(big.Int).Add(m.amount, other.amount)
+    return NewMoney(newAmount, m.currency), nil
+}
+
+func (m *Money) Subtract(other *Money) (*Money, error) {
+    if m.currency != other.currency {
+        return nil, fmt.Errorf("cannot subtract different currencies: %s and %s", m.currency, other.currency)
+    }
+    
+    newAmount := new(big.Int).Sub(m.amount, other.amount)
+    return NewMoney(newAmount, m.currency), nil
+}
+
+func (m *Money) IsPositive() bool {
+    return m.amount.Sign() > 0
+}
+
+func (m *Money) IsNegative() bool {
+    return m.amount.Sign() < 0
+}
+
+func (m *Money) String() string {
+    amount := new(big.Float).Quo(new(big.Float).SetInt(m.amount), big.NewFloat(1000000))
+    return fmt.Sprintf("%.6f %s", amount, m.currency)
+}
+
+// internal/domain/valueobject/quantity.go
+package valueobject
+
+import (
+    "math/big"
+)
+
+type Quantity struct {
+    amount *big.Int
+}
+
+func NewQuantity(amount *big.Int) *Quantity {
+    return &Quantity{amount: amount}
+}
+
+func (q *Quantity) Add(other *Quantity) *Quantity {
+    newAmount := new(big.Int).Add(q.amount, other.amount)
+    return NewQuantity(newAmount)
+}
+
+func (q *Quantity) IsPositive() bool {
+    return q.amount.Sign() > 0
+}
+
+func (q *Quantity) GreaterThan(other *Quantity) bool {
+    return q.amount.Cmp(other.amount) > 0
+}
+```
+
+### 2.3 ドメインサービス
+```go
+// internal/domain/service/risk_service.go
+package service
+
+import (
+    "context"
+    "github.com/moon-bot/internal/domain/entity"
+    "github.com/moon-bot/internal/domain/valueobject"
+)
+
+type RiskService struct {
+    orderRepo    repository.OrderRepository
+    accountRepo  repository.AccountRepository
+}
+
+func NewRiskService(
+    orderRepo repository.OrderRepository,
+    accountRepo repository.AccountRepository,
+) *RiskService {
+    return &RiskService{
+        orderRepo:   orderRepo,
+        accountRepo: accountRepo,
+    }
+}
+
+func (s *RiskService) CanPlaceOrder(ctx context.Context, order *entity.Order) error {
+    // 1. 口座残高チェック
+    account, err := s.accountRepo.GetByID(ctx, order.AccountID())
+    if err != nil {
+        return err
+    }
+    
+    requiredAmount := order.Price().Multiply(order.Size())
+    if account.Balance().LessThan(requiredAmount) {
+        return errors.New("insufficient balance")
+    }
+    
+    // 2. ポジション制限チェック
+    if err := s.checkPositionLimit(ctx, order); err != nil {
+        return err
+    }
+    
+    // 3. リスク制限チェック
+    if err := s.checkRiskLimit(ctx, order); err != nil {
+        return err
+    }
+    
+    return nil
+}
+
+func (s *RiskService) checkPositionLimit(ctx context.Context, order *entity.Order) error {
+    // 実装
+    return nil
+}
+
+func (s *RiskService) checkRiskLimit(ctx context.Context, order *entity.Order) error {
+    // 実装
+    return nil
+}
+```
+
+### 2.4 集約
+```go
+// internal/domain/entity/account.go
+package entity
+
+import (
+    "time"
+    "github.com/moon-bot/internal/domain/valueobject"
+)
+
+type Account struct {
+    id          string
+    name        string
+    balance     *valueobject.Money
+    orders      []*Order
+    trades      []*Trade
+    createdAt   time.Time
+    updatedAt   time.Time
+}
+
+func (a *Account) PlaceOrder(order *Order) error {
+    // ビジネスルールの検証
+    if err := a.validateOrder(order); err != nil {
+        return err
+    }
+    
+    // 注文を追加
+    a.orders = append(a.orders, order)
+    a.updatedAt = time.Now()
+    
+    return nil
+}
+
+func (a *Account) validateOrder(order *Order) error {
+    // 残高チェック
+    requiredAmount := order.Price().Multiply(order.Size())
+    if a.balance.LessThan(requiredAmount) {
+        return errors.New("insufficient balance")
+    }
+    
+    // その他のビジネスルール
+    return nil
+}
+
+// 集約の境界を明確にする
+func (a *Account) GetOrders() []*Order {
+    // コピーを返して外部からの変更を防ぐ
+    orders := make([]*Order, len(a.orders))
+    copy(orders, a.orders)
+    return orders
+}
+```
+
+## 3. ユースケース層
+
+### 3.1 ユースケース実装
+```go
+// internal/usecase/order/place_order.go
+package order
+
+import (
+    "context"
+    "github.com/moon-bot/internal/domain/entity"
+    "github.com/moon-bot/internal/domain/repository"
+    "github.com/moon-bot/internal/domain/service"
+)
+
+type PlaceOrderRequest struct {
+    ClientOrderID string  `json:"client_order_id" validate:"required,uuid"`
+    AccountID     string  `json:"account_id" validate:"required"`
+    Symbol        string  `json:"symbol" validate:"required"`
+    Side          string  `json:"side" validate:"required,oneof=buy sell"`
+    Type          string  `json:"type" validate:"required,oneof=market limit stop"`
+    Price         float64 `json:"price,omitempty"`
+    Size          float64 `json:"size" validate:"required,gt=0"`
+}
+
+type PlaceOrderResponse struct {
+    OrderID       string `json:"order_id"`
+    Status        string `json:"status"`
+    BrokerOrderID string `json:"broker_order_id,omitempty"`
+}
+
+type PlaceOrderUseCase struct {
+    orderRepo    repository.OrderRepository
+    accountRepo  repository.AccountRepository
+    riskService  *service.RiskService
+    brokerClient broker.Client
+    logger       logger.Logger
+}
+
+func NewPlaceOrderUseCase(
+    orderRepo repository.OrderRepository,
+    accountRepo repository.AccountRepository,
+    riskService *service.RiskService,
+    brokerClient broker.Client,
+    logger logger.Logger,
+) *PlaceOrderUseCase {
+    return &PlaceOrderUseCase{
+        orderRepo:    orderRepo,
+        accountRepo:  accountRepo,
+        riskService:  riskService,
+        brokerClient: brokerClient,
+        logger:       logger,
+    }
+}
+
+func (uc *PlaceOrderUseCase) Execute(ctx context.Context, req PlaceOrderRequest) (*PlaceOrderResponse, error) {
+    // 1. 冪等性チェック
+    existingOrder, err := uc.orderRepo.GetByClientOrderID(ctx, req.ClientOrderID)
+    if err == nil && existingOrder != nil {
+        return &PlaceOrderResponse{
+            OrderID: existingOrder.ID(),
+            Status:  string(existingOrder.Status()),
+        }, nil
+    }
+    
+    // 2. ドメインオブジェクト作成
+    order, err := uc.createOrder(req)
+    if err != nil {
+        return nil, err
+    }
+    
+    // 3. リスクチェック
+    if err := uc.riskService.CanPlaceOrder(ctx, order); err != nil {
+        uc.logger.Error(ctx, "risk check failed", "error", err, "order_id", order.ID())
+        return nil, err
+    }
+    
+    // 4. データベース保存
+    if err := uc.orderRepo.Create(ctx, order); err != nil {
+        uc.logger.Error(ctx, "failed to save order", "error", err, "order_id", order.ID())
+        return nil, err
+    }
+    
+    // 5. ブローカー送信
+    brokerOrderID, err := uc.brokerClient.PlaceOrder(ctx, order)
+    if err != nil {
+        uc.logger.Error(ctx, "failed to place order with broker", "error", err, "order_id", order.ID())
+        // 注文をキャンセル状態に更新
+        order.Cancel()
+        uc.orderRepo.Update(ctx, order)
+        return nil, err
+    }
+    
+    // 6. ブローカー注文ID更新
+    order.SetBrokerOrderID(brokerOrderID)
+    if err := uc.orderRepo.Update(ctx, order); err != nil {
+        uc.logger.Error(ctx, "failed to update broker order id", "error", err, "order_id", order.ID())
+    }
+    
+    uc.logger.Info(ctx, "order placed successfully", 
+        "order_id", order.ID(), 
+        "broker_order_id", brokerOrderID)
+    
+    return &PlaceOrderResponse{
+        OrderID:       order.ID(),
+        Status:        string(order.Status()),
+        BrokerOrderID: brokerOrderID,
+    }, nil
+}
+
+func (uc *PlaceOrderUseCase) createOrder(req PlaceOrderRequest) (*entity.Order, error) {
+    // 値オブジェクト作成
+    price, err := valueobject.NewMoneyFromFloat(req.Price, "USD")
+    if err != nil {
+        return nil, err
+    }
+    
+    size := valueobject.NewQuantityFromFloat(req.Size)
+    
+    // ドメインオブジェクト作成
+    order := entity.NewOrder(
+        req.ClientOrderID,
+        req.AccountID,
+        req.Symbol,
+        entity.OrderSide(req.Side),
+        entity.OrderType(req.Type),
+        price,
+        size,
+    )
+    
+    return order, nil
+}
+```
+
+### 3.2 ユースケースファクトリ
+```go
+// internal/usecase/factory.go
+package usecase
+
+import (
+    "github.com/moon-bot/internal/domain/repository"
+    "github.com/moon-bot/internal/domain/service"
+    "github.com/moon-bot/internal/infrastructure/broker"
+    "github.com/moon-bot/pkg/logger"
+)
+
+type UseCaseFactory struct {
+    orderRepo    repository.OrderRepository
+    accountRepo  repository.AccountRepository
+    strategyRepo repository.StrategyRepository
+    riskService  *service.RiskService
+    brokerClient broker.Client
+    logger       logger.Logger
+}
+
+func NewUseCaseFactory(
+    orderRepo repository.OrderRepository,
+    accountRepo repository.AccountRepository,
+    strategyRepo repository.StrategyRepository,
+    riskService *service.RiskService,
+    brokerClient broker.Client,
+    logger logger.Logger,
+) *UseCaseFactory {
+    return &UseCaseFactory{
+        orderRepo:    orderRepo,
+        accountRepo:  accountRepo,
+        strategyRepo: strategyRepo,
+        riskService:  riskService,
+        brokerClient: brokerClient,
+        logger:       logger,
+    }
+}
+
+func (f *UseCaseFactory) PlaceOrder() *order.PlaceOrderUseCase {
+    return order.NewPlaceOrderUseCase(
+        f.orderRepo,
+        f.accountRepo,
+        f.riskService,
+        f.brokerClient,
+        f.logger,
+    )
+}
+
+func (f *UseCaseFactory) GetOrders() *order.GetOrdersUseCase {
+    return order.NewGetOrdersUseCase(f.orderRepo, f.logger)
+}
+
+func (f *UseCaseFactory) CreateStrategy() *strategy.CreateStrategyUseCase {
+    return strategy.NewCreateStrategyUseCase(f.strategyRepo, f.logger)
+}
+```
+
+## 4. アダプター層
+
+### 4.1 REST API アダプター
+```go
+// internal/adapter/rest/order_handler.go
+package rest
+
+import (
+    "net/http"
+    "strconv"
+    
+    "github.com/gin-gonic/gin"
+    "github.com/moon-bot/internal/usecase/order"
+)
+
+type OrderHandler struct {
+    placeOrderUseCase *order.PlaceOrderUseCase
+    getOrdersUseCase  *order.GetOrdersUseCase
+}
+
+func NewOrderHandler(
+    placeOrderUseCase *order.PlaceOrderUseCase,
+    getOrdersUseCase *order.GetOrdersUseCase,
+) *OrderHandler {
+    return &OrderHandler{
+        placeOrderUseCase: placeOrderUseCase,
+        getOrdersUseCase:  getOrdersUseCase,
+    }
+}
+
+func (h *OrderHandler) PlaceOrder(c *gin.Context) {
+    var req order.PlaceOrderRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+    
+    // バリデーション
+    if err := validatePlaceOrderRequest(req); err != nil {
+        c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+        return
+    }
+    
+    // ユースケース実行
+    response, err := h.placeOrderUseCase.Execute(c.Request.Context(), req)
+    if err != nil {
+        // エラーハンドリング
+        handleError(c, err)
+        return
+    }
+    
+    c.JSON(http.StatusCreated, response)
+}
+
+func (h *OrderHandler) GetOrders(c *gin.Context) {
+    // クエリパラメータ取得
+    symbol := c.Query("symbol")
+    status := c.Query("status")
+    limitStr := c.DefaultQuery("limit", "100")
+    offsetStr := c.DefaultQuery("offset", "0")
+    
+    limit, _ := strconv.Atoi(limitStr)
+    offset, _ := strconv.Atoi(offsetStr)
+    
+    req := order.GetOrdersRequest{
+        Symbol: symbol,
+        Status: status,
+        Limit:  limit,
+        Offset: offset,
+    }
+    
+    response, err := h.getOrdersUseCase.Execute(c.Request.Context(), req)
+    if err != nil {
+        handleError(c, err)
+        return
+    }
+    
+    c.JSON(http.StatusOK, response)
+}
+
+func validatePlaceOrderRequest(req order.PlaceOrderRequest) error {
+    // カスタムバリデーション
+    if req.Type == "limit" && req.Price <= 0 {
+        return errors.New("price is required for limit orders")
+    }
+    
+    return nil
+}
+
+func handleError(c *gin.Context, err error) {
+    // エラータイプに応じたレスポンス
+    switch {
+    case errors.Is(err, repository.ErrOrderNotFound):
+        c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
+    case errors.Is(err, service.ErrInsufficientBalance):
+        c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "insufficient balance"})
+    default:
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+    }
+}
+```
+
+### 4.2 ルーティング設定
+```go
+// internal/adapter/rest/router.go
+package rest
+
+import (
+    "github.com/gin-gonic/gin"
+    "github.com/moon-bot/internal/usecase"
+)
+
+func SetupRouter(useCaseFactory *usecase.UseCaseFactory) *gin.Engine {
+    router := gin.Default()
+    
+    // ミドルウェア
+    router.Use(gin.Recovery())
+    router.Use(cors.Default())
+    router.Use(authMiddleware())
+    
+    // ヘルスチェック
+    router.GET("/healthz", healthCheck)
+    
+    // API v1
+    v1 := router.Group("/api/v1")
+    {
+        // 注文関連
+        orderHandler := NewOrderHandler(
+            useCaseFactory.PlaceOrder(),
+            useCaseFactory.GetOrders(),
+        )
+        
+        orders := v1.Group("/orders")
+        {
+            orders.POST("/", orderHandler.PlaceOrder)
+            orders.GET("/", orderHandler.GetOrders)
+            orders.GET("/:id", orderHandler.GetOrder)
+            orders.PUT("/:id", orderHandler.UpdateOrder)
+            orders.DELETE("/:id", orderHandler.CancelOrder)
+        }
+        
+        // 戦略関連
+        strategyHandler := NewStrategyHandler(
+            useCaseFactory.CreateStrategy(),
+            useCaseFactory.GetStrategies(),
+        )
+        
+        strategies := v1.Group("/strategies")
+        {
+            strategies.POST("/", strategyHandler.CreateStrategy)
+            strategies.GET("/", strategyHandler.GetStrategies)
+            strategies.GET("/:id", strategyHandler.GetStrategy)
+            strategies.PUT("/:id", strategyHandler.UpdateStrategy)
+            strategies.DELETE("/:id", strategyHandler.DeleteStrategy)
+        }
+    }
+    
+    return router
+}
+```
+
+## 5. 依存性注入
+
+### 5.1 依存性注入コンテナ
+```go
+// cmd/server/main.go
+package main
+
+import (
+    "log"
+    "net/http"
+    
+    "github.com/moon-bot/internal/adapter/rest"
+    "github.com/moon-bot/internal/infrastructure/database"
+    "github.com/moon-bot/internal/infrastructure/redis"
+    "github.com/moon-bot/internal/infrastructure/broker"
+    "github.com/moon-bot/internal/domain/service"
+    "github.com/moon-bot/internal/usecase"
+    "github.com/moon-bot/pkg/logger"
+)
+
+func main() {
+    // ロガー初期化
+    logger := logger.NewLogger()
+    
+    // データベース接続
+    db, err := database.NewConnection()
+    if err != nil {
+        log.Fatal("failed to connect to database:", err)
+    }
+    
+    // Redis接続
+    redisClient, err := redis.NewClient()
+    if err != nil {
+        log.Fatal("failed to connect to redis:", err)
+    }
+    
+    // ブローカー接続
+    brokerClient, err := broker.NewClient()
+    if err != nil {
+        log.Fatal("failed to connect to broker:", err)
+    }
+    
+    // リポジトリ作成
+    orderRepo := database.NewOrderRepository(db)
+    accountRepo := database.NewAccountRepository(db)
+    strategyRepo := database.NewStrategyRepository(db)
+    
+    // ドメインサービス作成
+    riskService := service.NewRiskService(orderRepo, accountRepo)
+    
+    // ユースケースファクトリ作成
+    useCaseFactory := usecase.NewUseCaseFactory(
+        orderRepo,
+        accountRepo,
+        strategyRepo,
+        riskService,
+        brokerClient,
+        logger,
+    )
+    
+    // ルーター設定
+    router := rest.SetupRouter(useCaseFactory)
+    
+    // サーバー起動
+    logger.Info("starting server on :8080")
+    if err := http.ListenAndServe(":8080", router); err != nil {
+        log.Fatal("failed to start server:", err)
+    }
+}
+```
+
+### 5.2 インターフェース実装
+```go
+// internal/infrastructure/database/order_repository.go
+package database
+
+import (
+    "context"
+    "time"
+    
+    "gorm.io/gorm"
+    "github.com/moon-bot/internal/domain/entity"
+    "github.com/moon-bot/internal/domain/repository"
+)
+
+type orderRepository struct {
+    db *gorm.DB
+}
+
+func NewOrderRepository(db *gorm.DB) repository.OrderRepository {
+    return &orderRepository{db: db}
+}
+
+func (r *orderRepository) Create(ctx context.Context, order *entity.Order) error {
+    orderModel := &OrderModel{
+        ID:            order.ID(),
+        ClientOrderID: order.ClientOrderID(),
+        AccountID:     order.AccountID(),
+        Symbol:        order.Symbol(),
+        Side:          string(order.Side()),
+        Type:          string(order.Type()),
+        Price:         order.Price().String(),
+        Size:          order.Size().String(),
+        Status:        string(order.Status()),
+        CreatedAt:     order.CreatedAt(),
+        UpdatedAt:     order.UpdatedAt(),
+    }
+    
+    return r.db.WithContext(ctx).Create(orderModel).Error
+}
+
+func (r *orderRepository) GetByID(ctx context.Context, id string) (*entity.Order, error) {
+    var orderModel OrderModel
+    if err := r.db.WithContext(ctx).Where("id = ?", id).First(&orderModel).Error; err != nil {
+        return nil, err
+    }
+    
+    return r.toEntity(&orderModel)
+}
+
+func (r *orderRepository) GetByClientOrderID(ctx context.Context, clientOrderID string) (*entity.Order, error) {
+    var orderModel OrderModel
+    if err := r.db.WithContext(ctx).Where("client_order_id = ?", clientOrderID).First(&orderModel).Error; err != nil {
+        return nil, err
+    }
+    
+    return r.toEntity(&orderModel)
+}
+
+func (r *orderRepository) toEntity(model *OrderModel) (*entity.Order, error) {
+    // 値オブジェクト作成
+    price, err := valueobject.NewMoneyFromString(model.Price, "USD")
+    if err != nil {
+        return nil, err
+    }
+    
+    size := valueobject.NewQuantityFromString(model.Size)
+    
+    // エンティティ作成
+    order := entity.NewOrderWithID(
+        model.ID,
+        model.ClientOrderID,
+        model.AccountID,
+        model.Symbol,
+        entity.OrderSide(model.Side),
+        entity.OrderType(model.Type),
+        price,
+        size,
+        entity.OrderStatus(model.Status),
+        model.CreatedAt,
+        model.UpdatedAt,
+    )
+    
+    return order, nil
+}
+```
+
+## 6. エラーハンドリング
+
+### 6.1 ドメインエラー
+```go
+// internal/domain/error/domain_error.go
+package error
+
+import "fmt"
+
+type DomainError struct {
+    Code    string
+    Message string
+    Cause   error
+}
+
+func (e *DomainError) Error() string {
+    return fmt.Sprintf("[%s] %s", e.Code, e.Message)
+}
+
+func (e *DomainError) Unwrap() error {
+    return e.Cause
+}
+
+// エラー定数
+var (
+    ErrOrderNotFound     = &DomainError{Code: "ORDER_NOT_FOUND", Message: "order not found"}
+    ErrInvalidOrder      = &DomainError{Code: "INVALID_ORDER", Message: "invalid order"}
+    ErrInsufficientBalance = &DomainError{Code: "INSUFFICIENT_BALANCE", Message: "insufficient balance"}
+    ErrOrderAlreadyFilled = &DomainError{Code: "ORDER_ALREADY_FILLED", Message: "order is already filled"}
+)
+
+// エラー作成関数
+func NewDomainError(code, message string, cause error) *DomainError {
+    return &DomainError{
+        Code:    code,
+        Message: message,
+        Cause:   cause,
+    }
+}
+```
+
+### 6.2 エラーハンドリングミドルウェア
+```go
+// internal/adapter/rest/middleware/error_handler.go
+package middleware
+
+import (
+    "net/http"
+    
+    "github.com/gin-gonic/gin"
+    "github.com/moon-bot/internal/domain/error"
+)
+
+func ErrorHandler() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        c.Next()
+        
+        // エラーが発生した場合
+        if len(c.Errors) > 0 {
+            err := c.Errors.Last().Err
+            
+            // ドメインエラーの場合
+            var domainErr *error.DomainError
+            if errors.As(err, &domainErr) {
+                c.JSON(http.StatusUnprocessableEntity, gin.H{
+                    "error": gin.H{
+                        "code":    domainErr.Code,
+                        "message": domainErr.Message,
+                    },
+                })
+                return
+            }
+            
+            // その他のエラー
+            c.JSON(http.StatusInternalServerError, gin.H{
+                "error": "internal server error",
+            })
+        }
+    }
+}
+```
+
+## 7. テスト戦略
+
+### 7.1 ユニットテスト
+```go
+// internal/usecase/order/place_order_test.go
+package order
+
+import (
+    "context"
+    "testing"
+    "time"
+    
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/mock"
+    "github.com/moon-bot/internal/domain/entity"
+    "github.com/moon-bot/internal/domain/repository"
+    "github.com/moon-bot/internal/domain/service"
+)
+
+func TestPlaceOrderUseCase_Execute(t *testing.T) {
+    // モック作成
+    mockOrderRepo := new(MockOrderRepository)
+    mockAccountRepo := new(MockAccountRepository)
+    mockRiskService := new(MockRiskService)
+    mockBrokerClient := new(MockBrokerClient)
+    mockLogger := new(MockLogger)
+    
+    // ユースケース作成
+    useCase := NewPlaceOrderUseCase(
+        mockOrderRepo,
+        mockAccountRepo,
+        mockRiskService,
+        mockBrokerClient,
+        mockLogger,
+    )
+    
+    // テストケース
+    tests := []struct {
+        name    string
+        request PlaceOrderRequest
+        setup   func()
+        want    *PlaceOrderResponse
+        wantErr bool
+    }{
+        {
+            name: "successful order placement",
+            request: PlaceOrderRequest{
+                ClientOrderID: "test-order-id",
+                AccountID:     "test-account-id",
+                Symbol:        "AAPL",
+                Side:          "buy",
+                Type:          "market",
+                Size:          100,
+            },
+            setup: func() {
+                // 冪等性チェック（注文が存在しない）
+                mockOrderRepo.On("GetByClientOrderID", mock.Anything, "test-order-id").
+                    Return(nil, repository.ErrOrderNotFound)
+                
+                // リスクチェック成功
+                mockRiskService.On("CanPlaceOrder", mock.Anything, mock.AnythingOfType("*entity.Order")).
+                    Return(nil)
+                
+                // データベース保存成功
+                mockOrderRepo.On("Create", mock.Anything, mock.AnythingOfType("*entity.Order")).
+                    Return(nil)
+                
+                // ブローカー送信成功
+                mockBrokerClient.On("PlaceOrder", mock.Anything, mock.AnythingOfType("*entity.Order")).
+                    Return("broker-order-id", nil)
+                
+                // 更新成功
+                mockOrderRepo.On("Update", mock.Anything, mock.AnythingOfType("*entity.Order")).
+                    Return(nil)
+            },
+            want: &PlaceOrderResponse{
+                Status:        "pending",
+                BrokerOrderID: "broker-order-id",
+            },
+            wantErr: false,
+        },
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            // セットアップ
+            tt.setup()
+            
+            // 実行
+            result, err := useCase.Execute(context.Background(), tt.request)
+            
+            // アサーション
+            if tt.wantErr {
+                assert.Error(t, err)
+            } else {
+                assert.NoError(t, err)
+                assert.NotNil(t, result)
+                assert.Equal(t, tt.want.Status, result.Status)
+                assert.Equal(t, tt.want.BrokerOrderID, result.BrokerOrderID)
+            }
+            
+            // モック検証
+            mockOrderRepo.AssertExpectations(t)
+            mockRiskService.AssertExpectations(t)
+            mockBrokerClient.AssertExpectations(t)
+        })
+    }
+}
+```
+
+このアーキテクチャパターン規約に従うことで、保守性・テスタビリティ・拡張性の高いアプリケーションを構築できます。
+description:
+globs:
+alwaysApply: false
+---

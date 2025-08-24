@@ -1,0 +1,676 @@
+# データベース コーディング規約（v1.0）— moon-bot プロジェクト
+更新日: 2025-08-24（JST）
+
+## 1. SQLコーディング規約
+
+### 1.1 基本原則
+- **大文字小文字の統一**: キーワードは大文字、識別子は小文字
+- **インデント**: 2スペースで統一
+- **行の最大長**: 120文字
+- **セミコロン**: 必須
+- **コメント**: 複雑なクエリには必ずコメントを追加
+
+### 1.2 命名規則
+```sql
+-- テーブル名：複数形、スネークケース
+CREATE TABLE orders (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  client_order_id CHAR(36) NOT NULL UNIQUE,
+  symbol VARCHAR(16) NOT NULL,
+  side VARCHAR(8) NOT NULL,
+  size DECIMAL(18,6) NOT NULL,
+  price DECIMAL(18,6),
+  status VARCHAR(16) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- カラム名：スネークケース
+-- 主キー: id
+-- 外部キー: {table_name}_id
+-- タイムスタンプ: created_at, updated_at, deleted_at
+-- フラグ: is_active, is_deleted
+-- 状態: status, state
+
+-- インデックス名：idx_{table}_{columns}
+CREATE INDEX idx_orders_symbol_time ON orders(symbol, created_at);
+CREATE INDEX idx_orders_status ON orders(status);
+
+-- 制約名：{constraint_type}_{table}_{columns}
+CONSTRAINT chk_orders_price_positive CHECK (price > 0);
+CONSTRAINT fk_orders_account FOREIGN KEY (account_id) REFERENCES accounts(id);
+```
+
+### 1.3 データ型選択
+```sql
+-- 整数型
+TINYINT     -- 1バイト (-128 to 127)
+SMALLINT    -- 2バイト (-32,768 to 32,767)
+INT         -- 4バイト (-2,147,483,648 to 2,147,483,647)
+BIGINT      -- 8バイト (大きな整数、ID)
+
+-- 小数型
+DECIMAL(18,6)  -- 固定小数点（金額、数量）
+FLOAT          -- 単精度浮動小数点
+DOUBLE         -- 倍精度浮動小数点
+
+-- 文字列型
+VARCHAR(255)   -- 可変長文字列
+CHAR(36)       -- 固定長文字列（UUID等）
+TEXT           -- 長いテキスト
+JSON           -- JSONデータ
+
+-- 日時型
+TIMESTAMP      -- タイムスタンプ（自動更新）
+DATETIME       -- 日時
+DATE           -- 日付
+TIME           -- 時刻
+
+-- 真偽値
+BOOLEAN        -- 真偽値
+TINYINT(1)     -- 真偽値（MySQL互換）
+```
+
+### 1.4 クエリ書式
+```sql
+-- SELECT文
+SELECT 
+  o.id,
+  o.symbol,
+  o.side,
+  o.size,
+  o.price,
+  o.status,
+  o.created_at
+FROM orders o
+INNER JOIN accounts a ON o.account_id = a.id
+WHERE o.status = 'pending'
+  AND o.created_at >= '2024-01-01'
+  AND o.symbol IN ('AAPL', 'GOOGL', 'MSFT')
+ORDER BY o.created_at DESC
+LIMIT 100;
+
+-- INSERT文
+INSERT INTO orders (
+  client_order_id,
+  account_id,
+  symbol,
+  side,
+  size,
+  price,
+  status
+) VALUES (
+  '550e8400-e29b-41d4-a716-446655440000',
+  1,
+  'AAPL',
+  'buy',
+  100.0,
+  150.50,
+  'pending'
+);
+
+-- UPDATE文
+UPDATE orders 
+SET 
+  status = 'filled',
+  filled_at = CURRENT_TIMESTAMP,
+  updated_at = CURRENT_TIMESTAMP
+WHERE id = 123
+  AND status = 'pending';
+
+-- DELETE文（論理削除を推奨）
+UPDATE orders 
+SET 
+  is_deleted = TRUE,
+  deleted_at = CURRENT_TIMESTAMP,
+  updated_at = CURRENT_TIMESTAMP
+WHERE id = 123;
+```
+
+## 2. マイグレーション規約
+
+### 2.1 マイグレーションファイル命名
+```sql
+-- ファイル名: {timestamp}_{description}.sql
+-- 例: 20240824_001_create_orders_table.sql
+-- 例: 20240824_002_add_index_to_orders.sql
+-- 例: 20240824_003_add_risk_limits_table.sql
+
+-- アップマイグレーション
+-- 20240824_001_create_orders_table.up.sql
+CREATE TABLE orders (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  client_order_id CHAR(36) NOT NULL UNIQUE,
+  account_id BIGINT NOT NULL,
+  symbol VARCHAR(16) NOT NULL,
+  side VARCHAR(8) NOT NULL,
+  type VARCHAR(16) NOT NULL,
+  price DECIMAL(18,6),
+  size DECIMAL(18,6) NOT NULL,
+  status VARCHAR(16) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (account_id) REFERENCES accounts(id)
+);
+
+-- ダウンマイグレーション
+-- 20240824_001_create_orders_table.down.sql
+DROP TABLE IF EXISTS orders;
+```
+
+### 2.2 マイグレーション管理
+```sql
+-- マイグレーション履歴テーブル
+CREATE TABLE schema_migrations (
+  version VARCHAR(255) PRIMARY KEY,
+  applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- マイグレーション適用
+INSERT INTO schema_migrations (version) VALUES ('20240824_001');
+
+-- マイグレーション確認
+SELECT version, applied_at 
+FROM schema_migrations 
+ORDER BY applied_at DESC;
+```
+
+### 2.3 安全なマイグレーション
+```sql
+-- 1. バックアップ作成
+-- mysqldump -u root -p moonbot > backup_20240824.sql
+
+-- 2. テーブル追加（既存データに影響なし）
+CREATE TABLE new_orders (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  -- 新しいカラム
+);
+
+-- 3. データ移行
+INSERT INTO new_orders (id, client_order_id, symbol, side, size, price, status)
+SELECT id, client_order_id, symbol, side, size, price, status
+FROM orders;
+
+-- 4. テーブル名変更
+RENAME TABLE orders TO orders_old, new_orders TO orders;
+
+-- 5. 古いテーブル削除（確認後）
+DROP TABLE orders_old;
+```
+
+## 3. インデックス設計規約
+
+### 3.1 インデックス戦略
+```sql
+-- 主キーインデックス（自動作成）
+PRIMARY KEY (id)
+
+-- ユニークインデックス
+UNIQUE KEY uk_orders_client_id (client_order_id)
+UNIQUE KEY uk_accounts_broker_id (broker_account_id)
+
+-- 通常インデックス
+CREATE INDEX idx_orders_symbol_time ON orders(symbol, created_at);
+CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_account ON orders(account_id);
+
+-- 複合インデックス（最左プレフィックス）
+CREATE INDEX idx_orders_symbol_status_time ON orders(symbol, status, created_at);
+
+-- 部分インデックス（MySQL 8.0+）
+CREATE INDEX idx_orders_active ON orders(symbol, created_at) 
+WHERE status = 'active';
+
+-- カバリングインデックス
+CREATE INDEX idx_orders_covering ON orders(symbol, side, size, price, status) 
+WHERE status IN ('pending', 'filled');
+```
+
+### 3.2 インデックス設計原則
+```sql
+-- 1. WHERE句で頻繁に使用されるカラム
+CREATE INDEX idx_orders_symbol ON orders(symbol);
+CREATE INDEX idx_orders_status ON orders(status);
+
+-- 2. JOINで使用されるカラム
+CREATE INDEX idx_orders_account ON orders(account_id);
+
+-- 3. ORDER BYで使用されるカラム
+CREATE INDEX idx_orders_created_desc ON orders(created_at DESC);
+
+-- 4. GROUP BYで使用されるカラム
+CREATE INDEX idx_orders_symbol_date ON orders(symbol, DATE(created_at));
+
+-- 5. 複合条件の最適化
+-- クエリ: WHERE symbol = 'AAPL' AND status = 'pending' AND created_at > '2024-01-01'
+CREATE INDEX idx_orders_symbol_status_time ON orders(symbol, status, created_at);
+```
+
+### 3.3 インデックス監視
+```sql
+-- インデックス使用状況確認
+SELECT 
+  table_name,
+  index_name,
+  cardinality,
+  sub_part,
+  packed,
+  null,
+  index_type
+FROM information_schema.statistics 
+WHERE table_schema = 'moonbot'
+ORDER BY table_name, index_name;
+
+-- 未使用インデックス検出
+SELECT 
+  object_schema,
+  object_name,
+  index_name
+FROM performance_schema.table_io_waits_summary_by_index_usage
+WHERE index_name IS NOT NULL
+  AND count_star = 0;
+```
+
+## 4. パフォーマンス最適化
+
+### 4.1 クエリ最適化
+```sql
+-- 1. EXPLAIN使用
+EXPLAIN SELECT 
+  o.symbol,
+  COUNT(*) as order_count,
+  SUM(o.size) as total_size
+FROM orders o
+WHERE o.created_at >= '2024-01-01'
+  AND o.status = 'filled'
+GROUP BY o.symbol
+ORDER BY total_size DESC;
+
+-- 2. 適切なJOIN使用
+-- 良い例：INNER JOIN
+SELECT o.*, a.name as account_name
+FROM orders o
+INNER JOIN accounts a ON o.account_id = a.id
+WHERE o.status = 'pending';
+
+-- 悪い例：WHERE句での結合
+SELECT o.*, a.name as account_name
+FROM orders o, accounts a
+WHERE o.account_id = a.id
+  AND o.status = 'pending';
+
+-- 3. LIMIT使用
+SELECT * FROM orders 
+WHERE status = 'pending'
+ORDER BY created_at DESC
+LIMIT 100;
+
+-- 4. サブクエリの最適化
+-- 悪い例
+SELECT * FROM orders 
+WHERE account_id IN (
+  SELECT id FROM accounts WHERE status = 'active'
+);
+
+-- 良い例
+SELECT o.* FROM orders o
+INNER JOIN accounts a ON o.account_id = a.id
+WHERE a.status = 'active';
+```
+
+### 4.2 パーティショニング
+```sql
+-- 日付によるパーティショニング
+CREATE TABLE orders (
+  id BIGINT AUTO_INCREMENT,
+  client_order_id CHAR(36) NOT NULL,
+  symbol VARCHAR(16) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id, created_at)
+) PARTITION BY RANGE (YEAR(created_at)) (
+  PARTITION p2023 VALUES LESS THAN (2024),
+  PARTITION p2024 VALUES LESS THAN (2025),
+  PARTITION p2025 VALUES LESS THAN (2026),
+  PARTITION p_future VALUES LESS THAN MAXVALUE
+);
+
+-- パーティション追加
+ALTER TABLE orders ADD PARTITION (
+  PARTITION p2026 VALUES LESS THAN (2027)
+);
+
+-- パーティション削除
+ALTER TABLE orders DROP PARTITION p2023;
+```
+
+### 4.3 接続プール設定
+```sql
+-- MySQL設定例
+[mysqld]
+# 接続プール
+max_connections = 200
+max_connect_errors = 100000
+
+# バッファ設定
+innodb_buffer_pool_size = 1G
+innodb_log_file_size = 256M
+innodb_log_buffer_size = 16M
+
+# クエリキャッシュ
+query_cache_type = 1
+query_cache_size = 64M
+query_cache_limit = 2M
+
+# タイムアウト設定
+wait_timeout = 28800
+interactive_timeout = 28800
+```
+
+## 5. セキュリティ
+
+### 5.1 SQLインジェクション対策
+```sql
+-- プリペアドステートメント使用
+-- Go言語での例
+stmt, err := db.Prepare("SELECT * FROM orders WHERE symbol = ? AND status = ?")
+if err != nil {
+    return err
+}
+defer stmt.Close()
+
+rows, err := stmt.Query("AAPL", "pending")
+if err != nil {
+    return err
+}
+defer rows.Close()
+
+-- パラメータ化クエリ
+-- 悪い例（SQLインジェクション脆弱）
+query := fmt.Sprintf("SELECT * FROM orders WHERE symbol = '%s'", symbol)
+
+-- 良い例（プリペアドステートメント）
+query := "SELECT * FROM orders WHERE symbol = ?"
+```
+
+### 5.2 アクセス制御
+```sql
+-- ユーザー作成
+CREATE USER 'moonbot_app'@'%' IDENTIFIED BY 'strong_password';
+
+-- 権限付与（最小権限の原則）
+GRANT SELECT, INSERT, UPDATE, DELETE ON moonbot.* TO 'moonbot_app'@'%';
+
+-- 特定テーブルのみ
+GRANT SELECT ON moonbot.orders TO 'moonbot_readonly'@'%';
+
+-- 権限確認
+SHOW GRANTS FOR 'moonbot_app'@'%';
+
+-- ユーザー削除
+DROP USER 'moonbot_app'@'%';
+```
+
+### 5.3 データ暗号化
+```sql
+-- カラムレベル暗号化
+CREATE TABLE sensitive_data (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  account_number VARBINARY(255),
+  ssn VARBINARY(255),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 暗号化関数
+INSERT INTO sensitive_data (account_number, ssn) VALUES (
+  AES_ENCRYPT('1234567890', 'encryption_key'),
+  AES_ENCRYPT('123-45-6789', 'encryption_key')
+);
+
+-- 復号化
+SELECT 
+  id,
+  AES_DECRYPT(account_number, 'encryption_key') as account_number,
+  AES_DECRYPT(ssn, 'encryption_key') as ssn
+FROM sensitive_data;
+```
+
+## 6. バックアップ・リストア
+
+### 6.1 バックアップ戦略
+```bash
+#!/bin/bash
+# backup.sh
+
+# 設定
+DB_NAME="moonbot"
+BACKUP_DIR="/backup/mysql"
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="$BACKUP_DIR/moonbot_$DATE.sql"
+
+# フルバックアップ
+mysqldump \
+  --single-transaction \
+  --routines \
+  --triggers \
+  --events \
+  --hex-blob \
+  --add-drop-database \
+  --databases $DB_NAME > $BACKUP_FILE
+
+# 圧縮
+gzip $BACKUP_FILE
+
+# 古いバックアップ削除（30日以上）
+find $BACKUP_DIR -name "*.sql.gz" -mtime +30 -delete
+
+echo "Backup completed: $BACKUP_FILE.gz"
+```
+
+### 6.2 リストア手順
+```bash
+#!/bin/bash
+# restore.sh
+
+# 設定
+DB_NAME="moonbot"
+BACKUP_FILE="$1"
+
+if [ -z "$BACKUP_FILE" ]; then
+    echo "Usage: $0 <backup_file>"
+    exit 1
+fi
+
+# データベース削除・再作成
+mysql -e "DROP DATABASE IF EXISTS $DB_NAME;"
+mysql -e "CREATE DATABASE $DB_NAME;"
+
+# リストア
+if [[ $BACKUP_FILE == *.gz ]]; then
+    gunzip -c $BACKUP_FILE | mysql $DB_NAME
+else
+    mysql $DB_NAME < $BACKUP_FILE
+fi
+
+echo "Restore completed from: $BACKUP_FILE"
+```
+
+## 7. 監視・メトリクス
+
+### 7.1 パフォーマンス監視
+```sql
+-- スロークエリログ確認
+SELECT 
+  start_time,
+  query_time,
+  lock_time,
+  rows_sent,
+  rows_examined,
+  sql_text
+FROM mysql.slow_log
+WHERE start_time >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+ORDER BY query_time DESC
+LIMIT 10;
+
+-- 接続数監視
+SHOW STATUS LIKE 'Threads_connected';
+SHOW STATUS LIKE 'Max_used_connections';
+
+-- バッファプール使用状況
+SELECT 
+  pool_name,
+  pool_size,
+  data_pages,
+  dirty_pages,
+  free_pages
+FROM information_schema.innodb_metrics
+WHERE name LIKE 'buffer_pool_%';
+
+-- テーブルサイズ確認
+SELECT 
+  table_name,
+  ROUND(((data_length + index_length) / 1024 / 1024), 2) AS 'Size (MB)',
+  table_rows
+FROM information_schema.tables
+WHERE table_schema = 'moonbot'
+ORDER BY (data_length + index_length) DESC;
+```
+
+### 7.2 アラート設定
+```sql
+-- 接続数アラート
+SELECT 
+  VARIABLE_VALUE as current_connections
+FROM performance_schema.global_status
+WHERE VARIABLE_NAME = 'Threads_connected';
+
+-- スロークエリアラート
+SELECT COUNT(*) as slow_queries
+FROM mysql.slow_log
+WHERE start_time >= DATE_SUB(NOW(), INTERVAL 1 HOUR);
+
+-- ディスク使用量アラート
+SELECT 
+  table_schema,
+  ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)'
+FROM information_schema.tables
+GROUP BY table_schema;
+```
+
+## 8. データ整合性
+
+### 8.1 制約設定
+```sql
+-- NOT NULL制約
+CREATE TABLE orders (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  client_order_id CHAR(36) NOT NULL,
+  symbol VARCHAR(16) NOT NULL,
+  size DECIMAL(18,6) NOT NULL,
+  price DECIMAL(18,6) NOT NULL,
+  status VARCHAR(16) NOT NULL
+);
+
+-- CHECK制約
+CREATE TABLE orders (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  symbol VARCHAR(16) NOT NULL,
+  side ENUM('buy', 'sell') NOT NULL,
+  size DECIMAL(18,6) NOT NULL,
+  price DECIMAL(18,6) NOT NULL,
+  CONSTRAINT chk_size_positive CHECK (size > 0),
+  CONSTRAINT chk_price_positive CHECK (price > 0)
+);
+
+-- 外部キー制約
+CREATE TABLE orders (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  account_id BIGINT NOT NULL,
+  symbol VARCHAR(16) NOT NULL,
+  FOREIGN KEY (account_id) REFERENCES accounts(id)
+    ON DELETE RESTRICT
+    ON UPDATE CASCADE
+);
+```
+
+### 8.2 トランザクション管理
+```sql
+-- トランザクション例
+START TRANSACTION;
+
+-- 注文作成
+INSERT INTO orders (client_order_id, account_id, symbol, side, size, price, status)
+VALUES ('550e8400-e29b-41d4-a716-446655440000', 1, 'AAPL', 'buy', 100, 150.50, 'pending');
+
+-- 口座残高更新
+UPDATE accounts 
+SET balance = balance - (100 * 150.50)
+WHERE id = 1 AND balance >= (100 * 150.50);
+
+-- 更新行数チェック
+IF ROW_COUNT() = 0 THEN
+  ROLLBACK;
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Insufficient balance';
+ELSE
+  COMMIT;
+END IF;
+```
+
+## 9. ベストプラクティス
+
+### 9.1 命名規則まとめ
+```sql
+-- テーブル名
+orders, trades, accounts, strategies
+
+-- カラム名
+id, client_order_id, account_id, created_at, updated_at, is_active
+
+-- インデックス名
+idx_orders_symbol_time, uk_orders_client_id, fk_orders_account
+
+-- 制約名
+chk_orders_price_positive, fk_orders_account, uk_orders_client_id
+```
+
+### 9.2 コメント規約
+```sql
+-- テーブルコメント
+CREATE TABLE orders (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '注文ID',
+  client_order_id CHAR(36) NOT NULL UNIQUE COMMENT 'クライアント注文ID（冪等性）',
+  symbol VARCHAR(16) NOT NULL COMMENT '銘柄コード',
+  side VARCHAR(8) NOT NULL COMMENT '売買区分（buy/sell）',
+  size DECIMAL(18,6) NOT NULL COMMENT '注文数量',
+  price DECIMAL(18,6) COMMENT '注文価格（成行注文はNULL）',
+  status VARCHAR(16) NOT NULL COMMENT '注文状態',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時'
+) COMMENT '注文テーブル';
+
+-- 複雑なクエリのコメント
+/*
+ * 日次取引サマリー取得
+ * 
+ * 指定日の取引実績を銘柄別に集計
+ * - 取引回数
+ * - 取引数量
+ * - 取引金額
+ * - 損益
+ */
+SELECT 
+  symbol,
+  COUNT(*) as trade_count,
+  SUM(size) as total_size,
+  SUM(size * price) as total_amount,
+  SUM(pnl) as total_pnl
+FROM trades
+WHERE DATE(created_at) = '2024-01-01'
+GROUP BY symbol
+ORDER BY total_pnl DESC;
+```
+
+このコーディング規約に従うことで、保守性・パフォーマンス・セキュリティの高いデータベース設計・運用が可能になります。
+description:
+globs:
+alwaysApply: false
+---

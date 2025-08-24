@@ -1,0 +1,1146 @@
+# Next.js コーディング規約（v1.0）— moon-bot プロジェクト
+更新日: 2025-08-24（JST）
+
+## 1. 基本原則
+
+### 1.1 プロジェクト構造
+```
+apps/web/
+├── app/                    # App Router
+│   ├── (auth)/            # Route Groups
+│   │   ├── login/
+│   │   └── register/
+│   ├── dashboard/
+│   ├── strategies/
+│   ├── backtest/
+│   ├── monitoring/
+│   ├── settings/
+│   ├── layout.tsx
+│   ├── page.tsx
+│   └── globals.css
+├── components/            # 再利用可能コンポーネント
+│   ├── ui/               # shadcn/ui コンポーネント
+│   ├── forms/            # フォームコンポーネント
+│   ├── charts/           # チャートコンポーネント
+│   └── layout/           # レイアウトコンポーネント
+├── lib/                  # ユーティリティ・設定
+│   ├── utils.ts
+│   ├── validations.ts
+│   ├── api.ts
+│   └── constants.ts
+├── hooks/                # カスタムフック
+├── types/                # TypeScript型定義
+├── styles/               # スタイルファイル
+├── public/               # 静的ファイル
+├── next.config.js
+├── tailwind.config.js
+├── tsconfig.json
+└── package.json
+```
+
+### 1.2 TypeScript設定
+```json
+// tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["dom", "dom.iterable", "es6"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"],
+      "@/components/*": ["./components/*"],
+      "@/lib/*": ["./lib/*"],
+      "@/hooks/*": ["./hooks/*"],
+      "@/types/*": ["./types/*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
+```
+
+## 2. コンポーネント設計
+
+### 2.1 コンポーネント命名規則
+```typescript
+// ファイル名：PascalCase
+OrderForm.tsx
+StrategyCard.tsx
+BacktestChart.tsx
+
+// コンポーネント名：PascalCase
+export default function OrderForm() {
+  // 実装
+}
+
+// カスタムフック：use接頭辞
+export function useOrderForm() {
+  // 実装
+}
+
+// ユーティリティ関数：camelCase
+export function formatCurrency(amount: number): string {
+  // 実装
+}
+```
+
+### 2.2 コンポーネント構造
+```typescript
+// 良い例：明確な責任分離
+interface OrderFormProps {
+  onSubmit: (order: Order) => void;
+  initialData?: Partial<Order>;
+  isLoading?: boolean;
+}
+
+export default function OrderForm({ onSubmit, initialData, isLoading }: OrderFormProps) {
+  const [formData, setFormData] = useState<Order>({
+    symbol: '',
+    side: 'buy',
+    size: 0,
+    price: 0,
+    ...initialData
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSubmit(formData);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {/* フォーム要素 */}
+    </form>
+  );
+}
+
+// 悪い例：責任が混在
+export default function OrderForm() {
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(false);
+  
+  // API呼び出し、状態管理、UI描画が混在
+  const fetchOrders = async () => {
+    // API呼び出し
+  };
+  
+  return (
+    <div>
+      {/* UI */}
+    </div>
+  );
+}
+```
+
+### 2.3 Props設計
+```typescript
+// 良い例：明確な型定義
+interface StrategyCardProps {
+  strategy: Strategy;
+  onEdit?: (id: string) => void;
+  onDelete?: (id: string) => void;
+  onActivate?: (id: string) => void;
+  isActive?: boolean;
+  className?: string;
+}
+
+// 悪い例：any使用
+interface StrategyCardProps {
+  strategy: any;
+  onEdit?: any;
+  onDelete?: any;
+}
+```
+
+## 3. 状態管理
+
+### 3.1 React Hooks使用
+```typescript
+// カスタムフックでの状態管理
+export function useOrderForm() {
+  const [formData, setFormData] = useState<OrderFormData>({
+    symbol: '',
+    side: 'buy',
+    size: 0,
+    price: 0
+  });
+  
+  const [errors, setErrors] = useState<OrderFormErrors>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const validate = useCallback((data: OrderFormData): OrderFormErrors => {
+    const errors: OrderFormErrors = {};
+    
+    if (!data.symbol) {
+      errors.symbol = 'Symbol is required';
+    }
+    
+    if (data.size <= 0) {
+      errors.size = 'Size must be greater than 0';
+    }
+    
+    return errors;
+  }, []);
+
+  const handleSubmit = useCallback(async (data: OrderFormData) => {
+    const validationErrors = validate(data);
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await submitOrder(data);
+      setFormData({ symbol: '', side: 'buy', size: 0, price: 0 });
+      setErrors({});
+    } catch (error) {
+      console.error('Failed to submit order:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [validate]);
+
+  return {
+    formData,
+    setFormData,
+    errors,
+    isSubmitting,
+    handleSubmit
+  };
+}
+```
+
+### 3.2 Zustand使用（複雑な状態管理）
+```typescript
+// stores/orderStore.ts
+import { create } from 'zustand';
+import { devtools } from 'zustand/middleware';
+
+interface OrderState {
+  orders: Order[];
+  selectedOrder: Order | null;
+  isLoading: boolean;
+  error: string | null;
+}
+
+interface OrderActions {
+  fetchOrders: () => Promise<void>;
+  addOrder: (order: Order) => void;
+  updateOrder: (id: string, updates: Partial<Order>) => void;
+  deleteOrder: (id: string) => void;
+  selectOrder: (order: Order | null) => void;
+  clearError: () => void;
+}
+
+type OrderStore = OrderState & OrderActions;
+
+export const useOrderStore = create<OrderStore>()(
+  devtools(
+    (set, get) => ({
+      // State
+      orders: [],
+      selectedOrder: null,
+      isLoading: false,
+      error: null,
+
+      // Actions
+      fetchOrders: async () => {
+        set({ isLoading: true, error: null });
+        try {
+          const response = await fetch('/api/orders');
+          const orders = await response.json();
+          set({ orders, isLoading: false });
+        } catch (error) {
+          set({ 
+            error: error instanceof Error ? error.message : 'Failed to fetch orders',
+            isLoading: false 
+          });
+        }
+      },
+
+      addOrder: (order) => {
+        set((state) => ({ 
+          orders: [...state.orders, order] 
+        }));
+      },
+
+      updateOrder: (id, updates) => {
+        set((state) => ({
+          orders: state.orders.map(order =>
+            order.id === id ? { ...order, ...updates } : order
+          )
+        }));
+      },
+
+      deleteOrder: (id) => {
+        set((state) => ({
+          orders: state.orders.filter(order => order.id !== id)
+        }));
+      },
+
+      selectOrder: (order) => {
+        set({ selectedOrder: order });
+      },
+
+      clearError: () => {
+        set({ error: null });
+      }
+    }),
+    {
+      name: 'order-store'
+    }
+  )
+);
+```
+
+## 4. API呼び出し
+
+### 4.1 APIクライアント
+```typescript
+// lib/api.ts
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+
+class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public code?: string
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+async function apiRequest<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const url = `${API_BASE_URL}${endpoint}`;
+  
+  const config: RequestInit = {
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+    ...options,
+  };
+
+  // 認証トークンの追加
+  const token = localStorage.getItem('auth-token');
+  if (token) {
+    config.headers = {
+      ...config.headers,
+      Authorization: `Bearer ${token}`,
+    };
+  }
+
+  try {
+    const response = await fetch(url, config);
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new ApiError(
+        errorData.message || `HTTP ${response.status}`,
+        response.status,
+        errorData.code
+      );
+    }
+
+    return await response.json();
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    throw new ApiError(
+      error instanceof Error ? error.message : 'Network error',
+      0
+    );
+  }
+}
+
+// API関数
+export const orderApi = {
+  getOrders: () => apiRequest<Order[]>('/orders'),
+  getOrder: (id: string) => apiRequest<Order>(`/orders/${id}`),
+  createOrder: (order: CreateOrderRequest) => 
+    apiRequest<Order>('/orders', {
+      method: 'POST',
+      body: JSON.stringify(order),
+    }),
+  updateOrder: (id: string, updates: UpdateOrderRequest) =>
+    apiRequest<Order>(`/orders/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    }),
+  deleteOrder: (id: string) =>
+    apiRequest(`/orders/${id}`, {
+      method: 'DELETE',
+    }),
+};
+```
+
+### 4.2 React Query使用
+```typescript
+// hooks/useOrders.ts
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { orderApi } from '@/lib/api';
+
+export function useOrders() {
+  return useQuery({
+    queryKey: ['orders'],
+    queryFn: orderApi.getOrders,
+    staleTime: 30000, // 30秒
+    cacheTime: 300000, // 5分
+  });
+}
+
+export function useOrder(id: string) {
+  return useQuery({
+    queryKey: ['orders', id],
+    queryFn: () => orderApi.getOrder(id),
+    enabled: !!id,
+  });
+}
+
+export function useCreateOrder() {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: orderApi.createOrder,
+    onSuccess: (newOrder) => {
+      // キャッシュを更新
+      queryClient.setQueryData(['orders'], (old: Order[] = []) => [
+        ...old,
+        newOrder,
+      ]);
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+    },
+  });
+}
+
+export function useUpdateOrder() {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: ({ id, updates }: { id: string; updates: UpdateOrderRequest }) =>
+      orderApi.updateOrder(id, updates),
+    onSuccess: (updatedOrder) => {
+      // キャッシュを更新
+      queryClient.setQueryData(['orders', updatedOrder.id], updatedOrder);
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+    },
+  });
+}
+```
+
+## 5. フォーム処理
+
+### 5.1 React Hook Form使用
+```typescript
+// components/forms/OrderForm.tsx
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+
+const orderSchema = z.object({
+  symbol: z.string().min(1, 'Symbol is required'),
+  side: z.enum(['buy', 'sell']),
+  size: z.number().positive('Size must be positive'),
+  price: z.number().positive('Price must be positive'),
+  type: z.enum(['market', 'limit', 'stop']),
+});
+
+type OrderFormData = z.infer<typeof orderSchema>;
+
+interface OrderFormProps {
+  onSubmit: (data: OrderFormData) => void;
+  initialData?: Partial<OrderFormData>;
+  isLoading?: boolean;
+}
+
+export default function OrderForm({ onSubmit, initialData, isLoading }: OrderFormProps) {
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+    reset,
+  } = useForm<OrderFormData>({
+    resolver: zodResolver(orderSchema),
+    defaultValues: {
+      side: 'buy',
+      type: 'market',
+      ...initialData,
+    },
+  });
+
+  const onSubmitHandler = async (data: OrderFormData) => {
+    try {
+      await onSubmit(data);
+      reset();
+    } catch (error) {
+      console.error('Form submission failed:', error);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit(onSubmitHandler)} className="space-y-4">
+      <div>
+        <label htmlFor="symbol" className="block text-sm font-medium">
+          Symbol
+        </label>
+        <input
+          {...register('symbol')}
+          type="text"
+          id="symbol"
+          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+        />
+        {errors.symbol && (
+          <p className="mt-1 text-sm text-red-600">{errors.symbol.message}</p>
+        )}
+      </div>
+
+      <div>
+        <label htmlFor="side" className="block text-sm font-medium">
+          Side
+        </label>
+        <select
+          {...register('side')}
+          id="side"
+          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+        >
+          <option value="buy">Buy</option>
+          <option value="sell">Sell</option>
+        </select>
+      </div>
+
+      <div>
+        <label htmlFor="size" className="block text-sm font-medium">
+          Size
+        </label>
+        <input
+          {...register('size', { valueAsNumber: true })}
+          type="number"
+          id="size"
+          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+        />
+        {errors.size && (
+          <p className="mt-1 text-sm text-red-600">{errors.size.message}</p>
+        )}
+      </div>
+
+      <button
+        type="submit"
+        disabled={isSubmitting || isLoading}
+        className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:opacity-50"
+      >
+        {isSubmitting ? 'Submitting...' : 'Place Order'}
+      </button>
+    </form>
+  );
+}
+```
+
+## 6. パフォーマンス最適化
+
+### 6.1 メモ化
+```typescript
+// コンポーネントのメモ化
+import { memo } from 'react';
+
+interface StrategyCardProps {
+  strategy: Strategy;
+  onSelect: (strategy: Strategy) => void;
+}
+
+export const StrategyCard = memo(function StrategyCard({ 
+  strategy, 
+  onSelect 
+}: StrategyCardProps) {
+  return (
+    <div 
+      className="p-4 border rounded-lg cursor-pointer hover:bg-gray-50"
+      onClick={() => onSelect(strategy)}
+    >
+      <h3 className="font-semibold">{strategy.name}</h3>
+      <p className="text-sm text-gray-600">{strategy.description}</p>
+    </div>
+  );
+});
+
+// 計算結果のメモ化
+import { useMemo } from 'react';
+
+export function useStrategyStats(strategies: Strategy[]) {
+  return useMemo(() => {
+    const totalPnL = strategies.reduce((sum, s) => sum + s.pnl, 0);
+    const avgWinRate = strategies.reduce((sum, s) => sum + s.winRate, 0) / strategies.length;
+    const activeCount = strategies.filter(s => s.isActive).length;
+    
+    return {
+      totalPnL,
+      avgWinRate,
+      activeCount,
+    };
+  }, [strategies]);
+}
+```
+
+### 6.2 遅延読み込み
+```typescript
+// 動的インポート
+import dynamic from 'next/dynamic';
+
+const BacktestChart = dynamic(() => import('@/components/charts/BacktestChart'), {
+  loading: () => <div>Loading chart...</div>,
+  ssr: false, // クライアントサイドのみ
+});
+
+const HeavyComponent = dynamic(() => import('@/components/HeavyComponent'), {
+  loading: () => <div>Loading...</div>,
+});
+
+// ページの遅延読み込み
+const StrategyPage = dynamic(() => import('@/app/strategies/page'), {
+  loading: () => <div>Loading strategy page...</div>,
+});
+```
+
+### 6.3 画像最適化
+```typescript
+import Image from 'next/image';
+
+export function StrategyIcon({ src, alt }: { src: string; alt: string }) {
+  return (
+    <Image
+      src={src}
+      alt={alt}
+      width={48}
+      height={48}
+      className="rounded-full"
+      priority={false}
+      placeholder="blur"
+      blurDataURL="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k="
+    />
+  );
+}
+```
+
+## 7. エラーハンドリング
+
+### 7.1 エラーバウンダリ
+```typescript
+// components/ErrorBoundary.tsx
+'use client';
+
+import { Component, ReactNode } from 'react';
+
+interface Props {
+  children: ReactNode;
+  fallback?: ReactNode;
+}
+
+interface State {
+  hasError: boolean;
+  error?: Error;
+}
+
+export class ErrorBoundary extends Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('Error caught by boundary:', error, errorInfo);
+    
+    // エラー監視サービスに送信
+    // reportError(error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback || (
+        <div className="p-4 text-center">
+          <h2 className="text-lg font-semibold text-red-600">
+            Something went wrong
+          </h2>
+          <p className="text-gray-600">
+            Please try refreshing the page
+          </p>
+          <button
+            onClick={() => this.setState({ hasError: false })}
+            className="mt-2 px-4 py-2 bg-blue-600 text-white rounded"
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+```
+
+### 7.2 グローバルエラーハンドリング
+```typescript
+// app/global-error.tsx
+'use client';
+
+export default function GlobalError({
+  error,
+  reset,
+}: {
+  error: Error & { digest?: string };
+  reset: () => void;
+}) {
+  return (
+    <html>
+      <body>
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="text-center">
+            <h2 className="text-2xl font-bold text-red-600 mb-4">
+              Something went wrong!
+            </h2>
+            <p className="text-gray-600 mb-4">
+              An unexpected error occurred. Please try again.
+            </p>
+            <button
+              onClick={() => reset()}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      </body>
+    </html>
+  );
+}
+```
+
+## 8. 認証・認可
+
+### 8.1 NextAuth設定
+```typescript
+// lib/auth.ts
+import NextAuth from 'next-auth';
+import { JWT } from 'next-auth/jwt';
+
+declare module 'next-auth' {
+  interface Session {
+    user: {
+      id: string;
+      email: string;
+      role: 'admin' | 'trader' | 'viewer';
+    };
+    accessToken: string;
+  }
+}
+
+declare module 'next-auth/jwt' {
+  interface JWT {
+    role: 'admin' | 'trader' | 'viewer';
+    accessToken: string;
+  }
+}
+
+export const authOptions = {
+  providers: [
+    // プロバイダー設定
+  ],
+  callbacks: {
+    async jwt({ token, user, account }) {
+      if (account && user) {
+        token.accessToken = account.access_token;
+        token.role = user.role;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      session.user.role = token.role;
+      session.accessToken = token.accessToken;
+      return session;
+    },
+  },
+  pages: {
+    signIn: '/login',
+    error: '/auth/error',
+  },
+};
+
+export const { handlers, auth, signIn, signOut } = NextAuth(authOptions);
+```
+
+### 8.2 認可フック
+```typescript
+// hooks/useAuth.ts
+import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
+
+export function useAuth(requiredRole?: 'admin' | 'trader' | 'viewer') {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (status === 'loading') return;
+
+    if (!session) {
+      router.push('/login');
+      return;
+    }
+
+    if (requiredRole && session.user.role !== requiredRole) {
+      router.push('/unauthorized');
+      return;
+    }
+  }, [session, status, requiredRole, router]);
+
+  return {
+    session,
+    status,
+    isAuthenticated: !!session,
+    user: session?.user,
+  };
+}
+
+// 認可コンポーネント
+export function RequireAuth({ 
+  children, 
+  requiredRole 
+}: { 
+  children: React.ReactNode;
+  requiredRole?: 'admin' | 'trader' | 'viewer';
+}) {
+  const { isAuthenticated, status } = useAuth(requiredRole);
+
+  if (status === 'loading') {
+    return <div>Loading...</div>;
+  }
+
+  if (!isAuthenticated) {
+    return null;
+  }
+
+  return <>{children}</>;
+}
+```
+
+## 9. スタイリング
+
+### 9.1 Tailwind CSS使用
+```typescript
+// 良い例：一貫したスタイリング
+export function OrderCard({ order }: { order: Order }) {
+  return (
+    <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 hover:shadow-lg transition-shadow">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-gray-900">
+          {order.symbol}
+        </h3>
+        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+          order.side === 'buy' 
+            ? 'bg-green-100 text-green-800' 
+            : 'bg-red-100 text-red-800'
+        }`}>
+          {order.side.toUpperCase()}
+        </span>
+      </div>
+      
+      <div className="space-y-2">
+        <div className="flex justify-between text-sm">
+          <span className="text-gray-600">Size:</span>
+          <span className="font-medium">{order.size}</span>
+        </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-gray-600">Price:</span>
+          <span className="font-medium">${order.price.toFixed(2)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 悪い例：インラインスタイル
+export function OrderCard({ order }: { order: Order }) {
+  return (
+    <div style={{
+      backgroundColor: 'white',
+      borderRadius: '8px',
+      padding: '24px',
+      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+    }}>
+      {/* コンテンツ */}
+    </div>
+  );
+}
+```
+
+### 9.2 CSS Modules使用（必要に応じて）
+```typescript
+// components/OrderCard.module.css
+.card {
+  @apply bg-white rounded-lg shadow-md p-6 border border-gray-200;
+}
+
+.card:hover {
+  @apply shadow-lg transition-shadow;
+}
+
+.header {
+  @apply flex items-center justify-between mb-4;
+}
+
+.title {
+  @apply text-lg font-semibold text-gray-900;
+}
+
+.badge {
+  @apply px-2 py-1 rounded-full text-xs font-medium;
+}
+
+.badgeBuy {
+  @apply bg-green-100 text-green-800;
+}
+
+.badgeSell {
+  @apply bg-red-100 text-red-800;
+}
+
+// components/OrderCard.tsx
+import styles from './OrderCard.module.css';
+
+export function OrderCard({ order }: { order: Order }) {
+  return (
+    <div className={styles.card}>
+      <div className={styles.header}>
+        <h3 className={styles.title}>{order.symbol}</h3>
+        <span className={`${styles.badge} ${
+          order.side === 'buy' ? styles.badgeBuy : styles.badgeSell
+        }`}>
+          {order.side.toUpperCase()}
+        </span>
+      </div>
+    </div>
+  );
+}
+```
+
+## 10. テスト
+
+### 10.1 コンポーネントテスト
+```typescript
+// __tests__/OrderForm.test.tsx
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import OrderForm from '@/components/forms/OrderForm';
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: false },
+    mutations: { retry: false },
+  },
+});
+
+function renderWithProviders(component: React.ReactElement) {
+  return render(
+    <QueryClientProvider client={queryClient}>
+      {component}
+    </QueryClientProvider>
+  );
+}
+
+describe('OrderForm', () => {
+  it('renders form fields', () => {
+    const mockOnSubmit = jest.fn();
+    renderWithProviders(<OrderForm onSubmit={mockOnSubmit} />);
+
+    expect(screen.getByLabelText(/symbol/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/side/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/size/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/price/i)).toBeInTheDocument();
+  });
+
+  it('validates required fields', async () => {
+    const mockOnSubmit = jest.fn();
+    renderWithProviders(<OrderForm onSubmit={mockOnSubmit} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /place order/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/symbol is required/i)).toBeInTheDocument();
+    });
+
+    expect(mockOnSubmit).not.toHaveBeenCalled();
+  });
+
+  it('submits form with valid data', async () => {
+    const mockOnSubmit = jest.fn();
+    renderWithProviders(<OrderForm onSubmit={mockOnSubmit} />);
+
+    fireEvent.change(screen.getByLabelText(/symbol/i), {
+      target: { value: 'AAPL' },
+    });
+    fireEvent.change(screen.getByLabelText(/size/i), {
+      target: { value: '100' },
+    });
+    fireEvent.change(screen.getByLabelText(/price/i), {
+      target: { value: '150.50' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /place order/i }));
+
+    await waitFor(() => {
+      expect(mockOnSubmit).toHaveBeenCalledWith({
+        symbol: 'AAPL',
+        side: 'buy',
+        size: 100,
+        price: 150.5,
+        type: 'market',
+      });
+    });
+  });
+});
+```
+
+## 11. 環境設定
+
+### 11.1 環境変数
+```bash
+# .env.local
+NEXT_PUBLIC_API_URL=http://localhost:8080
+NEXT_PUBLIC_APP_NAME=Moon Bot
+NEXT_PUBLIC_VERSION=1.0.0
+
+# .env.production
+NEXT_PUBLIC_API_URL=https://api.moonbot.com
+NEXT_PUBLIC_APP_NAME=Moon Bot
+NEXT_PUBLIC_VERSION=1.0.0
+```
+
+### 11.2 Next.js設定
+```javascript
+// next.config.js
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  experimental: {
+    appDir: true,
+  },
+  images: {
+    domains: ['localhost', 'api.moonbot.com'],
+  },
+  env: {
+    CUSTOM_KEY: process.env.CUSTOM_KEY,
+  },
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: `${process.env.NEXT_PUBLIC_API_URL}/:path*`,
+      },
+    ];
+  },
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'X-Frame-Options',
+            value: 'DENY',
+          },
+          {
+            key: 'X-Content-Type-Options',
+            value: 'nosniff',
+          },
+        ],
+      },
+    ];
+  },
+};
+
+module.exports = nextConfig;
+```
+
+## 12. ベストプラクティス
+
+### 12.1 ファイル命名
+- コンポーネント: `PascalCase.tsx`
+- フック: `camelCase.ts`
+- ユーティリティ: `camelCase.ts`
+- 型定義: `camelCase.ts`
+- テスト: `ComponentName.test.tsx`
+
+### 12.2 インポート順序
+```typescript
+// 1. React関連
+import React, { useState, useEffect } from 'react';
+
+// 2. Next.js関連
+import { useRouter } from 'next/navigation';
+import Image from 'next/image';
+
+// 3. 外部ライブラリ
+import { useQuery } from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
+
+// 4. 内部モジュール（絶対パス）
+import { Button } from '@/components/ui/button';
+import { useAuth } from '@/hooks/useAuth';
+
+// 5. 相対パス
+import './Component.module.css';
+```
+
+### 12.3 コメント
+```typescript
+/**
+ * 注文フォームコンポーネント
+ * 
+ * @param onSubmit - フォーム送信時のコールバック
+ * @param initialData - 初期データ
+ * @param isLoading - 読み込み状態
+ */
+export default function OrderForm({ 
+  onSubmit, 
+  initialData, 
+  isLoading 
+}: OrderFormProps) {
+  // 実装
+}
+
+// 複雑なロジックにはコメントを追加
+const calculateOrderValue = (size: number, price: number): number => {
+  // 手数料を考慮した注文価値を計算
+  const commission = size * price * 0.001; // 0.1%手数料
+  return size * price + commission;
+};
+```
+
+このコーディング規約に従うことで、保守性・可読性・パフォーマンスの高いNext.jsアプリケーションを実装できます。
+description:
+globs:
+alwaysApply: false
+---
