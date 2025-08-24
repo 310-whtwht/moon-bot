@@ -1,0 +1,865 @@
+# Audit Standards & Best Practices
+
+## 1. 監査規約
+
+### 1.1 監査フレームワーク
+```go
+// internal/audit/framework.go
+package audit
+
+import (
+	"context"
+	"time"
+	"go.uber.org/zap"
+)
+
+// 監査フレームワーク
+type AuditFramework struct {
+	logger    *zap.Logger
+	storage   AuditStorage
+	notifier  AuditNotifier
+}
+
+// 監査イベント
+type AuditEvent struct {
+	ID          string                 `json:"id"`
+	Timestamp   time.Time              `json:"timestamp"`
+	EventType   string                 `json:"event_type"`
+	Severity    string                 `json:"severity"`
+	UserID      string                 `json:"user_id"`
+	SessionID   string                 `json:"session_id"`
+	IPAddress   string                 `json:"ip_address"`
+	UserAgent   string                 `json:"user_agent"`
+	Resource    string                 `json:"resource"`
+	Action      string                 `json:"action"`
+	Result      string                 `json:"result"`
+	Details     map[string]interface{} `json:"details"`
+	Metadata    map[string]interface{} `json:"metadata"`
+}
+
+// 監査レベル
+const (
+	AuditLevelInfo     = "INFO"
+	AuditLevelWarning  = "WARNING"
+	AuditLevelError    = "ERROR"
+	AuditLevelCritical = "CRITICAL"
+)
+
+// 監査イベントタイプ
+const (
+	EventTypeLogin        = "LOGIN"
+	EventTypeLogout       = "LOGOUT"
+	EventTypeTrade        = "TRADE"
+	EventTypeOrder        = "ORDER"
+	EventTypeStrategy     = "STRATEGY"
+	EventTypeConfig       = "CONFIG"
+	EventTypeSystem       = "SYSTEM"
+	EventTypeSecurity     = "SECURITY"
+)
+
+// 監査記録
+func (af *AuditFramework) RecordEvent(ctx context.Context, event *AuditEvent) error {
+	// イベントID生成
+	if event.ID == "" {
+		event.ID = generateEventID()
+	}
+	
+	// タイムスタンプ設定
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now()
+	}
+	
+	// メタデータ追加
+	if event.Metadata == nil {
+		event.Metadata = make(map[string]interface{})
+	}
+	event.Metadata["audit_version"] = "1.0"
+	event.Metadata["retention_period"] = "7_years"
+	
+	// 監査ログ記録
+	af.logger.Info("audit_event",
+		zap.String("event_id", event.ID),
+		zap.String("event_type", event.EventType),
+		zap.String("severity", event.Severity),
+		zap.String("user_id", event.UserID),
+		zap.String("resource", event.Resource),
+		zap.String("action", event.Action),
+		zap.String("result", event.Result),
+		zap.Any("details", event.Details),
+		zap.Any("metadata", event.Metadata),
+	)
+	
+	// ストレージに保存
+	if err := af.storage.StoreEvent(ctx, event); err != nil {
+		af.logger.Error("Failed to store audit event",
+			zap.String("event_id", event.ID),
+			zap.Error(err),
+		)
+		return err
+	}
+	
+	// 重要イベントの通知
+	if event.Severity == AuditLevelError || event.Severity == AuditLevelCritical {
+		af.notifier.Notify(ctx, event)
+	}
+	
+	return nil
+}
+
+// 監査イベント検索
+func (af *AuditFramework) SearchEvents(ctx context.Context, filters *AuditEventFilters) ([]*AuditEvent, error) {
+	return af.storage.SearchEvents(ctx, filters)
+}
+
+// 監査イベントフィルタ
+type AuditEventFilters struct {
+	EventType   string    `json:"event_type"`
+	Severity    string    `json:"severity"`
+	UserID      string    `json:"user_id"`
+	Resource    string    `json:"resource"`
+	Action      string    `json:"action"`
+	StartTime   time.Time `json:"start_time"`
+	EndTime     time.Time `json:"end_time"`
+	Limit       int       `json:"limit"`
+	Offset      int       `json:"offset"`
+}
+```
+
+### 1.2 取引監査
+```go
+// internal/audit/trade_audit.go
+package audit
+
+import (
+	"context"
+	"time"
+)
+
+// 取引監査
+type TradeAudit struct {
+	framework *AuditFramework
+}
+
+// 取引監査イベント
+func (ta *TradeAudit) AuditTradeExecution(ctx context.Context, trade *Trade, userID string) error {
+	event := &AuditEvent{
+		EventType: EventTypeTrade,
+		Severity:  AuditLevelInfo,
+		UserID:    userID,
+		Resource:  "trade",
+		Action:    "execution",
+		Result:    "success",
+		Details: map[string]interface{}{
+			"trade_id":      trade.ID,
+			"symbol":        trade.Symbol,
+			"side":          trade.Side,
+			"quantity":      trade.Quantity,
+			"price":         trade.Price,
+			"commission":    trade.Commission,
+			"strategy_id":   trade.StrategyID,
+			"broker_order_id": trade.BrokerOrderID,
+		},
+		Metadata: map[string]interface{}{
+			"compliance_required": true,
+			"regulatory_report":   true,
+		},
+	}
+	
+	return ta.framework.RecordEvent(ctx, event)
+}
+
+// 注文監査
+func (ta *TradeAudit) AuditOrderPlacement(ctx context.Context, order *Order, userID string) error {
+	event := &AuditEvent{
+		EventType: EventTypeOrder,
+		Severity:  AuditLevelInfo,
+		UserID:    userID,
+		Resource:  "order",
+		Action:    "placement",
+		Result:    "success",
+		Details: map[string]interface{}{
+			"order_id":     order.ID,
+			"symbol":       order.Symbol,
+			"side":         order.Side,
+			"type":         order.Type,
+			"quantity":     order.Quantity,
+			"price":        order.Price,
+			"strategy_id":  order.StrategyID,
+		},
+		Metadata: map[string]interface{}{
+			"compliance_required": true,
+		},
+	}
+	
+	return ta.framework.RecordEvent(ctx, event)
+}
+
+// 注文キャンセル監査
+func (ta *TradeAudit) AuditOrderCancellation(ctx context.Context, orderID, userID, reason string) error {
+	event := &AuditEvent{
+		EventType: EventTypeOrder,
+		Severity:  AuditLevelWarning,
+		UserID:    userID,
+		Resource:  "order",
+		Action:    "cancellation",
+		Result:    "success",
+		Details: map[string]interface{}{
+			"order_id": orderID,
+			"reason":   reason,
+		},
+	}
+	
+	return ta.framework.RecordEvent(ctx, event)
+}
+
+// リスク監査
+func (ta *TradeAudit) AuditRiskViolation(ctx context.Context, violation *RiskViolation, userID string) error {
+	event := &AuditEvent{
+		EventType: EventTypeTrade,
+		Severity:  AuditLevelError,
+		UserID:    userID,
+		Resource:  "risk",
+		Action:    "violation",
+		Result:    "blocked",
+		Details: map[string]interface{}{
+			"violation_type": violation.Type,
+			"limit_value":    violation.LimitValue,
+			"actual_value":   violation.ActualValue,
+			"order_id":       violation.OrderID,
+		},
+		Metadata: map[string]interface{}{
+			"requires_attention": true,
+			"auto_block":        true,
+		},
+	}
+	
+	return ta.framework.RecordEvent(ctx, event)
+}
+```
+
+## 2. ログ管理規約
+
+### 2.1 構造化ログ
+```go
+// internal/logging/structured_log.go
+package logging
+
+import (
+	"context"
+	"time"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+)
+
+// 構造化ログ管理
+type StructuredLogger struct {
+	logger *zap.Logger
+}
+
+// ログレベル
+const (
+	LogLevelDebug = "DEBUG"
+	LogLevelInfo  = "INFO"
+	LogLevelWarn  = "WARN"
+	LogLevelError = "ERROR"
+	LogLevelFatal = "FATAL"
+)
+
+// ログカテゴリ
+const (
+	LogCategorySystem    = "SYSTEM"
+	LogCategorySecurity  = "SECURITY"
+	LogCategoryTrading   = "TRADING"
+	LogCategoryDatabase  = "DATABASE"
+	LogCategoryAPI       = "API"
+	LogCategoryStrategy  = "STRATEGY"
+)
+
+// 構造化ログ設定
+func NewStructuredLogger(config *LogConfig) (*StructuredLogger, error) {
+	zapConfig := zap.NewProductionConfig()
+	
+	// ログレベル設定
+	level, err := zapcore.ParseLevel(config.Level)
+	if err != nil {
+		return nil, err
+	}
+	zapConfig.Level = zap.NewAtomicLevelAt(level)
+	
+	// エンコーディング設定
+	zapConfig.Encoding = "json"
+	
+	// 出力設定
+	if config.Output == "file" {
+		zapConfig.OutputPaths = []string{config.FilePath}
+		zapConfig.ErrorOutputPaths = []string{config.FilePath}
+	} else {
+		zapConfig.OutputPaths = []string{"stdout"}
+		zapConfig.ErrorOutputPaths = []string{"stderr"}
+	}
+	
+	// フィールド設定
+	zapConfig.InitialFields = map[string]interface{}{
+		"service":     config.ServiceName,
+		"version":     config.Version,
+		"environment": config.Environment,
+	}
+	
+	logger, err := zapConfig.Build()
+	if err != nil {
+		return nil, err
+	}
+	
+	return &StructuredLogger{
+		logger: logger,
+	}, nil
+}
+
+// ログ設定
+type LogConfig struct {
+	Level       string `yaml:"level"`
+	Output      string `yaml:"output"`
+	FilePath    string `yaml:"file_path"`
+	ServiceName string `yaml:"service_name"`
+	Version     string `yaml:"version"`
+	Environment string `yaml:"environment"`
+}
+
+// 構造化ログ記録
+func (sl *StructuredLogger) Log(ctx context.Context, level, category, message string, fields map[string]interface{}) {
+	// コンテキスト情報の追加
+	if fields == nil {
+		fields = make(map[string]interface{})
+	}
+	
+	// リクエストIDの追加
+	if requestID := ctx.Value("request_id"); requestID != nil {
+		fields["request_id"] = requestID
+	}
+	
+	// ユーザーIDの追加
+	if userID := ctx.Value("user_id"); userID != nil {
+		fields["user_id"] = userID
+	}
+	
+	// タイムスタンプの追加
+	fields["timestamp"] = time.Now().UTC()
+	fields["category"] = category
+	
+	// ログレベルに応じた記録
+	switch level {
+	case LogLevelDebug:
+		sl.logger.Debug(message, convertToZapFields(fields)...)
+	case LogLevelInfo:
+		sl.logger.Info(message, convertToZapFields(fields)...)
+	case LogLevelWarn:
+		sl.logger.Warn(message, convertToZapFields(fields)...)
+	case LogLevelError:
+		sl.logger.Error(message, convertToZapFields(fields)...)
+	case LogLevelFatal:
+		sl.logger.Fatal(message, convertToZapFields(fields)...)
+	}
+}
+
+// Zapフィールド変換
+func convertToZapFields(fields map[string]interface{}) []zap.Field {
+	zapFields := make([]zap.Field, 0, len(fields))
+	for key, value := range fields {
+		zapFields = append(zapFields, zap.Any(key, value))
+	}
+	return zapFields
+}
+```
+
+### 2.2 ログローテーション
+```go
+// internal/logging/rotation.go
+package logging
+
+import (
+	"os"
+	"path/filepath"
+	"time"
+	"gopkg.in/natefinch/lumberjack.v2"
+)
+
+// ログローテーション設定
+type LogRotationConfig struct {
+	MaxSize    int  `yaml:"max_size"`    // MB
+	MaxAge     int  `yaml:"max_age"`     // days
+	MaxBackups int  `yaml:"max_backups"` // files
+	Compress   bool `yaml:"compress"`    // gzip compression
+}
+
+// ログローテーション管理
+type LogRotator struct {
+	config *LogRotationConfig
+	writer *lumberjack.Logger
+}
+
+// ローテーション設定
+func NewLogRotator(config *LogRotationConfig, logPath string) *LogRotator {
+	writer := &lumberjack.Logger{
+		Filename:   logPath,
+		MaxSize:    config.MaxSize,
+		MaxAge:     config.MaxAge,
+		MaxBackups: config.MaxBackups,
+		Compress:   config.Compress,
+	}
+	
+	return &LogRotator{
+		config: config,
+		writer: writer,
+	}
+}
+
+// ログクリーンアップ
+func (lr *LogRotator) Cleanup() error {
+	// 期限切れログファイルの削除
+	logDir := filepath.Dir(lr.writer.Filename)
+	
+	files, err := os.ReadDir(logDir)
+	if err != nil {
+		return err
+	}
+	
+	cutoffTime := time.Now().AddDate(0, 0, -lr.config.MaxAge)
+	
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		
+		info, err := file.Info()
+		if err != nil {
+			continue
+		}
+		
+		if info.ModTime().Before(cutoffTime) {
+			filePath := filepath.Join(logDir, file.Name())
+			os.Remove(filePath)
+		}
+	}
+	
+	return nil
+}
+```
+
+## 3. トレーサビリティ規約
+
+### 3.1 トレース管理
+```go
+// internal/tracing/trace.go
+package tracing
+
+import (
+	"context"
+	"time"
+	"go.uber.org/zap"
+)
+
+// トレース管理
+type TraceManager struct {
+	logger *zap.Logger
+}
+
+// トレース情報
+type TraceInfo struct {
+	TraceID      string            `json:"trace_id"`
+	SpanID       string            `json:"span_id"`
+	ParentSpanID string            `json:"parent_span_id"`
+	ServiceName  string            `json:"service_name"`
+	Operation    string            `json:"operation"`
+	StartTime    time.Time         `json:"start_time"`
+	EndTime      time.Time         `json:"end_time"`
+	Duration     time.Duration     `json:"duration"`
+	Tags         map[string]string `json:"tags"`
+	Logs         []TraceLog        `json:"logs"`
+}
+
+// トレースログ
+type TraceLog struct {
+	Timestamp time.Time              `json:"timestamp"`
+	Level     string                 `json:"level"`
+	Message   string                 `json:"message"`
+	Fields    map[string]interface{} `json:"fields"`
+}
+
+// トレース開始
+func (tm *TraceManager) StartTrace(ctx context.Context, operation string) (context.Context, *TraceInfo) {
+	traceID := generateTraceID()
+	spanID := generateSpanID()
+	
+	trace := &TraceInfo{
+		TraceID:     traceID,
+		SpanID:      spanID,
+		ServiceName: "trading-system",
+		Operation:   operation,
+		StartTime:   time.Now(),
+		Tags:        make(map[string]string),
+		Logs:        []TraceLog{},
+	}
+	
+	// コンテキストにトレース情報を追加
+	ctx = context.WithValue(ctx, "trace_id", traceID)
+	ctx = context.WithValue(ctx, "span_id", spanID)
+	ctx = context.WithValue(ctx, "trace_info", trace)
+	
+	return ctx, trace
+}
+
+// トレース終了
+func (tm *TraceManager) EndTrace(ctx context.Context, trace *TraceInfo) {
+	trace.EndTime = time.Now()
+	trace.Duration = trace.EndTime.Sub(trace.StartTime)
+	
+	// トレース情報をログに記録
+	tm.logger.Info("trace_completed",
+		zap.String("trace_id", trace.TraceID),
+		zap.String("span_id", trace.SpanID),
+		zap.String("operation", trace.Operation),
+		zap.Duration("duration", trace.Duration),
+		zap.Any("tags", trace.Tags),
+		zap.Any("logs", trace.Logs),
+	)
+}
+
+// トレースログ追加
+func (tm *TraceManager) AddTraceLog(ctx context.Context, level, message string, fields map[string]interface{}) {
+	traceInfo, ok := ctx.Value("trace_info").(*TraceInfo)
+	if !ok {
+		return
+	}
+	
+	log := TraceLog{
+		Timestamp: time.Now(),
+		Level:     level,
+		Message:   message,
+		Fields:    fields,
+	}
+	
+	traceInfo.Logs = append(traceInfo.Logs, log)
+}
+
+// トレースタグ追加
+func (tm *TraceManager) AddTraceTag(ctx context.Context, key, value string) {
+	traceInfo, ok := ctx.Value("trace_info").(*TraceInfo)
+	if !ok {
+		return
+	}
+	
+	traceInfo.Tags[key] = value
+}
+```
+
+### 3.2 分散トレーシング
+```go
+// internal/tracing/distributed_trace.go
+package tracing
+
+import (
+	"context"
+	"time"
+)
+
+// 分散トレース管理
+type DistributedTracer struct {
+	serviceName string
+	version     string
+}
+
+// 分散トレース情報
+type DistributedTraceInfo struct {
+	TraceID      string            `json:"trace_id"`
+	SpanID       string            `json:"span_id"`
+	ParentSpanID string            `json:"parent_span_id"`
+	ServiceName  string            `json:"service_name"`
+	Version      string            `json:"version"`
+	Operation    string            `json:"operation"`
+	StartTime    time.Time         `json:"start_time"`
+	EndTime      time.Time         `json:"end_time"`
+	Duration     time.Duration     `json:"duration"`
+	Tags         map[string]string `json:"tags"`
+	Baggage      map[string]string `json:"baggage"`
+}
+
+// 分散トレース開始
+func (dt *DistributedTracer) StartDistributedTrace(ctx context.Context, operation string) (context.Context, *DistributedTraceInfo) {
+	traceID := extractTraceID(ctx)
+	if traceID == "" {
+		traceID = generateTraceID()
+	}
+	
+	spanID := generateSpanID()
+	parentSpanID := extractSpanID(ctx)
+	
+	trace := &DistributedTraceInfo{
+		TraceID:      traceID,
+		SpanID:       spanID,
+		ParentSpanID: parentSpanID,
+		ServiceName:  dt.serviceName,
+		Version:      dt.version,
+		Operation:    operation,
+		StartTime:    time.Now(),
+		Tags:         make(map[string]string),
+		Baggage:      extractBaggage(ctx),
+	}
+	
+	// コンテキストに分散トレース情報を追加
+	ctx = context.WithValue(ctx, "trace_id", traceID)
+	ctx = context.WithValue(ctx, "span_id", spanID)
+	ctx = context.WithValue(ctx, "distributed_trace", trace)
+	
+	return ctx, trace
+}
+
+// 分散トレース終了
+func (dt *DistributedTracer) EndDistributedTrace(ctx context.Context, trace *DistributedTraceInfo) {
+	trace.EndTime = time.Now()
+	trace.Duration = trace.EndTime.Sub(trace.StartTime)
+	
+	// 分散トレース情報を外部システムに送信
+	dt.sendTraceToCollector(trace)
+}
+
+// トレースID抽出
+func extractTraceID(ctx context.Context) string {
+	if traceID, ok := ctx.Value("trace_id").(string); ok {
+		return traceID
+	}
+	return ""
+}
+
+// スパンID抽出
+func extractSpanID(ctx context.Context) string {
+	if spanID, ok := ctx.Value("span_id").(string); ok {
+		return spanID
+	}
+	return ""
+}
+
+// バッゲージ抽出
+func extractBaggage(ctx context.Context) map[string]string {
+	if baggage, ok := ctx.Value("baggage").(map[string]string); ok {
+		return baggage
+	}
+	return make(map[string]string)
+}
+```
+
+## 4. レポート規約
+
+### 4.1 監査レポート
+```go
+// internal/reporting/audit_report.go
+package reporting
+
+import (
+	"context"
+	"time"
+)
+
+// 監査レポート管理
+type AuditReporter struct {
+	storage AuditStorage
+}
+
+// 監査レポート
+type AuditReport struct {
+	ID          string    `json:"id"`
+	ReportType  string    `json:"report_type"`
+	Period      string    `json:"period"`
+	GeneratedAt time.Time `json:"generated_at"`
+	GeneratedBy string    `json:"generated_by"`
+	Summary     ReportSummary `json:"summary"`
+	Details     []ReportDetail `json:"details"`
+	Metadata    map[string]interface{} `json:"metadata"`
+}
+
+// レポートサマリー
+type ReportSummary struct {
+	TotalEvents     int     `json:"total_events"`
+	ErrorEvents     int     `json:"error_events"`
+	WarningEvents   int     `json:"warning_events"`
+	InfoEvents      int     `json:"info_events"`
+	UniqueUsers     int     `json:"unique_users"`
+	UniqueResources int     `json:"unique_resources"`
+}
+
+// レポート詳細
+type ReportDetail struct {
+	EventType    string    `json:"event_type"`
+	Count        int       `json:"count"`
+	Percentage   float64   `json:"percentage"`
+	Severity     string    `json:"severity"`
+	TopUsers     []string  `json:"top_users"`
+	TopResources []string  `json:"top_resources"`
+}
+
+// 日次監査レポート生成
+func (ar *AuditReporter) GenerateDailyReport(ctx context.Context, date time.Time) (*AuditReport, error) {
+	startTime := date.Truncate(24 * time.Hour)
+	endTime := startTime.Add(24 * time.Hour)
+	
+	// 監査イベント取得
+	events, err := ar.storage.GetEventsByTimeRange(ctx, startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	
+	// レポート生成
+	report := &AuditReport{
+		ID:          generateReportID(),
+		ReportType:  "daily_audit",
+		Period:      date.Format("2006-01-02"),
+		GeneratedAt: time.Now(),
+		GeneratedBy: "system",
+		Summary:     ar.calculateSummary(events),
+		Details:     ar.calculateDetails(events),
+		Metadata: map[string]interface{}{
+			"total_events": len(events),
+			"date_range":   map[string]time.Time{"start": startTime, "end": endTime},
+		},
+	}
+	
+	return report, ar.storage.StoreReport(ctx, report)
+}
+
+// 月次監査レポート生成
+func (ar *AuditReporter) GenerateMonthlyReport(ctx context.Context, year int, month time.Month) (*AuditReport, error) {
+	startTime := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
+	endTime := startTime.AddDate(0, 1, 0)
+	
+	// 監査イベント取得
+	events, err := ar.storage.GetEventsByTimeRange(ctx, startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	
+	// レポート生成
+	report := &AuditReport{
+		ID:          generateReportID(),
+		ReportType:  "monthly_audit",
+		Period:      startTime.Format("2006-01"),
+		GeneratedAt: time.Now(),
+		GeneratedBy: "system",
+		Summary:     ar.calculateSummary(events),
+		Details:     ar.calculateDetails(events),
+		Metadata: map[string]interface{}{
+			"total_events": len(events),
+			"date_range":   map[string]time.Time{"start": startTime, "end": endTime},
+		},
+	}
+	
+	return report, ar.storage.StoreReport(ctx, report)
+}
+
+// サマリー計算
+func (ar *AuditReporter) calculateSummary(events []*AuditEvent) ReportSummary {
+	summary := ReportSummary{
+		TotalEvents: len(events),
+	}
+	
+	userSet := make(map[string]bool)
+	resourceSet := make(map[string]bool)
+	
+	for _, event := range events {
+		// レベル別カウント
+		switch event.Severity {
+		case AuditLevelError:
+			summary.ErrorEvents++
+		case AuditLevelWarning:
+			summary.WarningEvents++
+		case AuditLevelInfo:
+			summary.InfoEvents++
+		}
+		
+		// ユニークユーザー・リソース
+		userSet[event.UserID] = true
+		resourceSet[event.Resource] = true
+	}
+	
+	summary.UniqueUsers = len(userSet)
+	summary.UniqueResources = len(resourceSet)
+	
+	return summary
+}
+
+// 詳細計算
+func (ar *AuditReporter) calculateDetails(events []*AuditEvent) []ReportDetail {
+	eventTypeCount := make(map[string]int)
+	eventTypeUsers := make(map[string]map[string]bool)
+	eventTypeResources := make(map[string]map[string]bool)
+	
+	for _, event := range events {
+		eventTypeCount[event.EventType]++
+		
+		if eventTypeUsers[event.EventType] == nil {
+			eventTypeUsers[event.EventType] = make(map[string]bool)
+		}
+		eventTypeUsers[event.EventType][event.UserID] = true
+		
+		if eventTypeResources[event.EventType] == nil {
+			eventTypeResources[event.EventType] = make(map[string]bool)
+		}
+		eventTypeResources[event.EventType][event.Resource] = true
+	}
+	
+	var details []ReportDetail
+	totalEvents := len(events)
+	
+	for eventType, count := range eventTypeCount {
+		detail := ReportDetail{
+			EventType:  eventType,
+			Count:      count,
+			Percentage: float64(count) / float64(totalEvents) * 100,
+		}
+		
+		// トップユーザー
+		users := eventTypeUsers[eventType]
+		for userID := range users {
+			detail.TopUsers = append(detail.TopUsers, userID)
+		}
+		
+		// トップリソース
+		resources := eventTypeResources[eventType]
+		for resource := range resources {
+			detail.TopResources = append(detail.TopResources, resource)
+		}
+		
+		details = append(details, detail)
+	}
+	
+	return details
+}
+```
+
+## 5. 実装チェックリスト
+
+### 5.1 監査
+- [ ] 監査フレームワークの実装
+- [ ] 取引監査の実装
+- [ ] セキュリティ監査の実装
+- [ ] システム監査の実装
+- [ ] 監査イベント検索の実装
+
+### 5.2 ログ管理
+- [ ] 構造化ログの実装
+- [ ] ログローテーションの実装
+- [ ] ログレベル管理の実装
+- [ ] ログ検索の実装
+- [ ] ログアーカイブの実装
+
+### 5.3 トレーサビリティ
+- [ ] トレース管理の実装
+- [ ] 分散トレーシングの実装
+- [ ] トレース検索の実装
+- [ ] トレース分析の実装
+- [ ] トレース可視化の実装
+
+### 5.4 レポート
+- [ ] 監査レポートの実装
+- [ ] 日次レポートの実装
+- [ ] 月次レポートの実装
+- [ ] レポートエクスポートの実装
+- [ ] レポート配信の実装

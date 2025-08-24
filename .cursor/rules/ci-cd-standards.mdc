@@ -1,0 +1,854 @@
+# CI/CD Standards & Best Practices
+
+## 1. GitHub Actions規約
+
+### 1.1 基本ワークフロー
+```yaml
+# .github/workflows/ci.yml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  GO_VERSION: '1.21'
+  NODE_VERSION: '18'
+
+jobs:
+  # コード品質チェック
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: |
+        go mod download
+        npm ci
+    
+    - name: Run linters
+      run: |
+        # Go linting
+        golangci-lint run --timeout=5m
+        
+        # TypeScript linting
+        npm run lint
+        
+        # Prettier check
+        npm run format:check
+    
+    - name: Run security scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload security scan results
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # テスト実行
+  test:
+    runs-on: ubuntu-latest
+    needs: code-quality
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: test_db
+          MYSQL_USER: test_user
+          MYSQL_PASSWORD: test_pass
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+      
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=3
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: |
+        go mod download
+        npm ci
+    
+    - name: Run unit tests
+      run: |
+        go test -v -race -coverprofile=coverage.out ./...
+        npm run test:unit
+    
+    - name: Run integration tests
+      run: |
+        go test -v -tags=integration ./...
+        npm run test:integration
+      env:
+        TEST_DATABASE_DSN: test_user:test_pass@tcp(localhost:3306)/test_db
+        TEST_REDIS_URL: redis://localhost:6379
+    
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.out
+        flags: unittests
+        name: codecov-umbrella
+
+  # ビルド
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      api-image: ${{ steps.build-api.outputs.image }}
+      web-image: ${{ steps.build-web.outputs.image }}
+      bot-image: ${{ steps.build-bot.outputs.image }}
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+    
+    - name: Login to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    
+    - name: Build API image
+      id: build-api
+      uses: docker/build-push-action@v4
+      with:
+        context: ./apps/api
+        push: false
+        tags: trading-system/api:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        outputs: type=docker,dest=/tmp/api.tar
+    
+    - name: Build Web image
+      id: build-web
+      uses: docker/build-push-action@v4
+      with:
+        context: ./apps/web
+        push: false
+        tags: trading-system/web:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        outputs: type=docker,dest=/tmp/web.tar
+    
+    - name: Build Bot image
+      id: build-bot
+      uses: docker/build-push-action@v4
+      with:
+        context: ./apps/bot
+        push: false
+        tags: trading-system/bot:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        outputs: type=docker,dest=/tmp/bot.tar
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: docker-images
+        path: /tmp/*.tar
+
+  # ステージングデプロイ
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Download artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: docker-images
+        path: /tmp
+    
+    - name: Load Docker images
+      run: |
+        docker load < /tmp/api.tar
+        docker load < /tmp/web.tar
+        docker load < /tmp/bot.tar
+    
+    - name: Deploy to staging
+      run: |
+        # ステージング環境へのデプロイ
+        docker-compose -f docker-compose.staging.yml pull
+        docker-compose -f docker-compose.staging.yml up -d
+        docker system prune -f
+
+  # 本番デプロイ
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Download artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: docker-images
+        path: /tmp
+    
+    - name: Load Docker images
+      run: |
+        docker load < /tmp/api.tar
+        docker load < /tmp/web.tar
+        docker load < /tmp/bot.tar
+    
+    - name: Deploy to production
+      run: |
+        # 本番環境へのデプロイ
+        docker-compose -f docker-compose.prod.yml pull
+        docker-compose -f docker-compose.prod.yml up -d
+        docker system prune -f
+```
+
+### 1.2 プルリクエストワークフロー
+```yaml
+# .github/workflows/pr.yml
+name: Pull Request Checks
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  # コードレビュー自動化
+  code-review:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: '1.21'
+    
+    - name: Run code analysis
+      run: |
+        # コード複雑度チェック
+        gocyclo -over 15 .
+        
+        # 未使用コードチェック
+        go vet ./...
+        
+        # セキュリティチェック
+        gosec ./...
+    
+    - name: Check test coverage
+      run: |
+        go test -coverprofile=coverage.out ./...
+        go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//' > coverage.txt
+        COVERAGE=$(cat coverage.txt)
+        if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+          echo "Test coverage is below 80%: $COVERAGE%"
+          exit 1
+        fi
+    
+    - name: Comment PR
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const coverage = fs.readFileSync('coverage.txt', 'utf8').trim();
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `## Code Review Results
+          
+          ✅ **Test Coverage**: ${coverage}%
+          ✅ **Code Quality**: Passed
+          ✅ **Security Scan**: Passed
+          
+          This PR is ready for review!`
+          });
+
+  # 自動マージチェック
+  auto-merge-check:
+    runs-on: ubuntu-latest
+    needs: code-review
+    steps:
+    - name: Check if PR can be auto-merged
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const { data: pr } = await github.rest.pulls.get({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pull_number: context.issue.number
+          });
+          
+          if (pr.mergeable && pr.mergeable_state === 'clean') {
+            console.log('PR is ready for auto-merge');
+          } else {
+            console.log('PR is not ready for auto-merge');
+            core.setFailed('PR cannot be auto-merged');
+          }
+```
+
+## 2. ビルド・デプロイ規約
+
+### 2.1 マルチステージビルド
+```dockerfile
+# apps/api/Dockerfile
+FROM golang:1.21-alpine AS base
+
+# 共通の依存関係
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /app
+
+# 依存関係のコピー
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 開発ステージ
+FROM base AS development
+
+# 開発用ツールのインストール
+RUN go install github.com/cosmtrek/air@latest
+RUN go install github.com/go-delve/delve/cmd/dlv@latest
+
+# ソースコードのコピー
+COPY . .
+
+# 開発用コマンド
+CMD ["air"]
+
+# テストステージ
+FROM base AS testing
+
+# ソースコードのコピー
+COPY . .
+
+# テスト実行
+RUN go test -v -race -coverprofile=coverage.out ./...
+
+# ビルドステージ
+FROM base AS builder
+
+# ソースコードのコピー
+COPY . .
+
+# ビルド実行
+RUN CGO_ENABLED=0 GOOS=linux \
+    go build \
+    -ldflags="-w -s" \
+    -a -installsuffix cgo \
+    -o main ./cmd/api
+
+# 本番ステージ
+FROM alpine:latest AS production
+
+# セキュリティ: 非rootユーザー
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -u 1001 -S appuser -G appgroup
+
+# 必要なパッケージ
+RUN apk --no-cache add ca-certificates tzdata
+
+WORKDIR /app
+
+# ビルド成果物のコピー
+COPY --from=builder /app/main .
+
+# 設定ファイル
+COPY --from=builder /app/configs ./configs
+
+# 権限設定
+RUN chown -R appuser:appgroup /app
+
+USER appuser
+
+# ヘルスチェック
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/healthz || exit 1
+
+EXPOSE 8080
+ENTRYPOINT ["./main"]
+```
+
+### 2.2 デプロイ設定
+```yaml
+# docker-compose.prod.yml
+version: '3.8'
+
+services:
+  # APIサービス
+  api:
+    image: trading-system/api:${IMAGE_TAG:-latest}
+    container_name: trading-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - ENV=production
+      - DB_HOST=mysql
+      - REDIS_HOST=redis
+      - LOG_LEVEL=info
+    env_file:
+      - .env.production
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - trading-network
+    volumes:
+      - ./logs:/app/logs:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+
+  # Botサービス
+  bot:
+    image: trading-system/bot:${IMAGE_TAG:-latest}
+    container_name: trading-bot
+    restart: unless-stopped
+    environment:
+      - ENV=production
+      - API_HOST=api
+      - REDIS_HOST=redis
+      - LOG_LEVEL=info
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - trading-network
+    volumes:
+      - ./logs:/app/logs:ro
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Webサービス
+  web:
+    image: trading-system/web:${IMAGE_TAG:-latest}
+    container_name: trading-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://api:8080
+    depends_on:
+      - api
+    networks:
+      - trading-network
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Nginx
+  nginx:
+    image: nginx:alpine
+    container_name: trading-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/logs:/var/log/nginx
+    depends_on:
+      - api
+      - web
+    networks:
+      - trading-network
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+
+networks:
+  trading-network:
+    driver: bridge
+```
+
+## 3. 環境管理規約
+
+### 3.1 環境設定管理
+```yaml
+# config/environments/development.yml
+environment: development
+api:
+  host: "0.0.0.0"
+  port: 8080
+  cors:
+    allowed_origins: ["http://localhost:3000"]
+    allowed_methods: ["GET", "POST", "PUT", "DELETE"]
+    allowed_headers: ["*"]
+
+database:
+  host: "localhost"
+  port: 3306
+  name: "trading_dev"
+  user: "dev_user"
+  password: "dev_password"
+  max_connections: 10
+  max_idle_connections: 5
+
+redis:
+  host: "localhost"
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 10
+
+broker:
+  type: "moomoo"
+  environment: "SIMULATE"
+  host: "localhost"
+  port: 11111
+  api_key: "dev_api_key"
+  secret_key: "dev_secret_key"
+
+logging:
+  level: "debug"
+  format: "json"
+  output: "stdout"
+
+monitoring:
+  prometheus:
+    enabled: true
+    port: 9090
+  grafana:
+    enabled: true
+    port: 3001
+```
+
+```yaml
+# config/environments/production.yml
+environment: production
+api:
+  host: "0.0.0.0"
+  port: 8080
+  cors:
+    allowed_origins: ["https://trading.example.com"]
+    allowed_methods: ["GET", "POST", "PUT", "DELETE"]
+    allowed_headers: ["Authorization", "Content-Type"]
+
+database:
+  host: "${DB_HOST}"
+  port: 3306
+  name: "${DB_NAME}"
+  user: "${DB_USER}"
+  password: "${DB_PASSWORD}"
+  max_connections: 50
+  max_idle_connections: 25
+
+redis:
+  host: "${REDIS_HOST}"
+  port: 6379
+  password: "${REDIS_PASSWORD}"
+  db: 0
+  pool_size: 50
+
+broker:
+  type: "moomoo"
+  environment: "REAL"
+  host: "${BROKER_HOST}"
+  port: 11111
+  api_key: "${BROKER_API_KEY}"
+  secret_key: "${BROKER_SECRET_KEY}"
+
+logging:
+  level: "info"
+  format: "json"
+  output: "file"
+  file_path: "/var/log/trading-system/app.log"
+
+monitoring:
+  prometheus:
+    enabled: true
+    port: 9090
+  grafana:
+    enabled: true
+    port: 3001
+```
+
+### 3.2 シークレット管理
+```yaml
+# .github/workflows/secrets.yml
+name: Secrets Management
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to update secrets'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+        - staging
+        - production
+
+jobs:
+  update-secrets:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - name: Update environment secrets
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const secrets = {
+            'DB_HOST': 'production-db.example.com',
+            'DB_NAME': 'trading_prod',
+            'DB_USER': 'prod_user',
+            'DB_PASSWORD': 'prod_password',
+            'REDIS_HOST': 'production-redis.example.com',
+            'REDIS_PASSWORD': 'redis_password',
+            'BROKER_HOST': 'production-broker.example.com',
+            'BROKER_API_KEY': 'prod_api_key',
+            'BROKER_SECRET_KEY': 'prod_secret_key'
+          };
+          
+          for (const [key, value] of Object.entries(secrets)) {
+            await github.rest.actions.createEnvironmentSecret({
+              environment: '${{ github.event.inputs.environment }}',
+              secret_name: key,
+              encrypted_value: value,
+              owner: context.repo.owner,
+              repo: context.repo.repo
+            });
+          }
+```
+
+## 4. ロールバック規約
+
+### 4.1 ロールバックワークフロー
+```yaml
+# .github/workflows/rollback.yml
+name: Rollback Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to rollback'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+        - staging
+        - production
+      version:
+        description: 'Version to rollback to'
+        required: true
+        type: string
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Checkout specific version
+      run: |
+        git checkout ${{ github.event.inputs.version }}
+    
+    - name: Build rollback images
+      run: |
+        docker build -t trading-system/api:${{ github.event.inputs.version }} ./apps/api
+        docker build -t trading-system/web:${{ github.event.inputs.version }} ./apps/web
+        docker build -t trading-system/bot:${{ github.event.inputs.version }} ./apps/bot
+    
+    - name: Deploy rollback
+      run: |
+        export IMAGE_TAG=${{ github.event.inputs.version }}
+        
+        if [ "${{ github.event.inputs.environment }}" = "production" ]; then
+          docker-compose -f docker-compose.prod.yml up -d
+        else
+          docker-compose -f docker-compose.staging.yml up -d
+        fi
+    
+    - name: Verify deployment
+      run: |
+        # ヘルスチェック
+        sleep 30
+        curl -f http://localhost:8080/healthz || exit 1
+        
+        # メトリクスチェック
+        curl -f http://localhost:9090/metrics || exit 1
+    
+    - name: Notify rollback
+      uses: actions/github-script@v6
+      with:
+        script: |
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `Rollback to ${context.payload.inputs.version}`,
+            body: `## Rollback Summary
+          
+          **Environment**: ${context.payload.inputs.environment}
+          **Version**: ${context.payload.inputs.version}
+          **Timestamp**: ${new Date().toISOString()}
+          **Triggered by**: ${context.actor}
+          
+          The deployment has been rolled back to version ${context.payload.inputs.version}.`
+          });
+```
+
+### 4.2 自動ロールバック
+```yaml
+# .github/workflows/auto-rollback.yml
+name: Auto Rollback
+
+on:
+  workflow_run:
+    workflows: ["deploy-production"]
+    types:
+      - completed
+
+jobs:
+  check-deployment:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    
+    steps:
+    - name: Check deployment health
+      run: |
+        # ヘルスチェック
+        for i in {1..5}; do
+          if curl -f http://localhost:8080/healthz; then
+            echo "Deployment is healthy"
+            exit 0
+          fi
+          sleep 10
+        done
+        
+        echo "Deployment is unhealthy, triggering rollback"
+        exit 1
+    
+    - name: Trigger rollback
+      if: failure()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          await github.rest.actions.createWorkflowDispatch({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            workflow_id: 'rollback.yml',
+            ref: 'main',
+            inputs: {
+              environment: 'production',
+              version: 'previous-stable'
+            }
+          });
+```
+
+## 5. 実装チェックリスト
+
+### 5.1 CI/CD実装
+- [ ] GitHub Actionsワークフローの実装
+- [ ] コード品質チェックの実装
+- [ ] 自動テストの実装
+- [ ] セキュリティスキャンの実装
+- [ ] 自動デプロイの実装
+
+### 5.2 ビルド実装
+- [ ] マルチステージビルドの実装
+- [ ] キャッシュ最適化の実装
+- [ ] セキュリティスキャンの実装
+- [ ] イメージ最適化の実装
+- [ ] ビルド時間の最適化
+
+### 5.3 デプロイ実装
+- [ ] 環境別デプロイ設定の実装
+- [ ] ヘルスチェックの実装
+- [ ] ロードバランサーの設定
+- [ ] SSL証明書の設定
+- [ ] 監視設定の実装
+
+### 5.4 ロールバック実装
+- [ ] 手動ロールバックの実装
+- [ ] 自動ロールバックの実装
+- [ ] ロールバック検証の実装
+- [ ] 通知機能の実装
+- [ ] ロールバック履歴の管理

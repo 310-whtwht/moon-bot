@@ -1,0 +1,664 @@
+# Starlark VM & Strategy Script Standards
+
+## 1. Starlark VM実装規約
+
+### 1.1 VM設定・初期化
+```go
+// VM設定の標準化
+type VMConfig struct {
+    MaxExecutionTime time.Duration    // デフォルト: 100ms
+    MaxMemoryUsage   int64           // デフォルト: 10MB
+    MaxLoopIterations int             // デフォルト: 1000
+    AllowedModules   []string        // 許可されたモジュール
+    Builtins         map[string]interface{}
+}
+
+// VM初期化の標準パターン
+func NewStrategyVM(config VMConfig) *starlark.Thread {
+    thread := &starlark.Thread{
+        Name: "strategy_vm",
+        Load: loadStrategyModule,
+        Print: func(thread *starlark.Thread, msg string) {
+            // ログ出力にリダイレクト
+            log.Printf("[Strategy] %s", msg)
+        },
+    }
+    
+    // 実行時間制限
+    thread.SetLocal("deadline", time.Now().Add(config.MaxExecutionTime))
+    
+    return thread
+}
+```
+
+### 1.2 セキュリティ制限
+```go
+// 危険な操作の禁止
+var forbiddenBuiltins = map[string]bool{
+    "eval":     true,
+    "exec":     true,
+    "open":     true,
+    "file":     true,
+    "import":   true,
+    "compile":  true,
+}
+
+// メモリ使用量監視
+func monitorMemoryUsage(thread *starlark.Thread) {
+    var m runtime.MemStats
+    runtime.ReadMemStats(&m)
+    
+    if m.Alloc > maxMemoryUsage {
+        panic("Memory usage exceeded limit")
+    }
+}
+```
+
+### 1.3 エラーハンドリング
+```go
+// VM実行エラーの標準処理
+func ExecuteStrategy(script string, globals starlark.StringDict) (starlark.Value, error) {
+    defer func() {
+        if r := recover(); r != nil {
+            log.Printf("VM panic: %v", r)
+            // メトリクス記録
+            recordVMPanic()
+        }
+    }()
+    
+    thread := NewStrategyVM(defaultConfig)
+    return starlark.ExecFile(thread, "strategy.star", script, globals)
+}
+```
+
+## 2. 戦略スクリプト規約
+
+### 2.1 基本構造
+```python
+# 戦略スクリプトの標準テンプレート
+def init(context):
+    """戦略初期化"""
+    context.symbols = ["AAPL", "GOOGL"]  # 対象銘柄
+    context.fast_ema = 9
+    context.slow_ema = 21
+    context.atr_period = 14
+    context.risk_per_trade = 0.0025  # 0.25%
+    
+    # 状態管理
+    context.positions = {}  # 現在のポジション
+    context.orders = {}     # 発注済み注文
+
+def on_bar(context, data):
+    """バー更新時の処理"""
+    for symbol in context.symbols:
+        if not has_sufficient_data(data, symbol, context.slow_ema):
+            continue
+            
+        signal = calculate_signal(context, data, symbol)
+        if signal:
+            execute_signal(context, data, symbol, signal)
+
+def on_order_fill(context, order):
+    """注文約定時の処理"""
+    symbol = order.symbol
+    if order.side == "BUY":
+        context.positions[symbol] = {
+            "quantity": order.quantity,
+            "entry_price": order.fill_price,
+            "entry_time": order.fill_time
+        }
+    else:  # SELL
+        if symbol in context.positions:
+            del context.positions[symbol]
+```
+
+### 2.2 データアクセス規約
+```python
+# データアクセスの標準パターン
+def get_price_data(data, symbol, period=1):
+    """価格データ取得"""
+    try:
+        return data[symbol].close[-period:]
+    except (KeyError, IndexError):
+        return None
+
+def get_volume_data(data, symbol, period=1):
+    """出来高データ取得"""
+    try:
+        return data[symbol].volume[-period:]
+    except (KeyError, IndexError):
+        return None
+
+def has_sufficient_data(data, symbol, required_bars):
+    """十分なデータがあるかチェック"""
+    try:
+        return len(data[symbol].close) >= required_bars
+    except (KeyError, AttributeError):
+        return False
+```
+
+### 2.3 シグナル計算規約
+```python
+# テクニカル指標の標準実装
+def calculate_ema(prices, period):
+    """EMA計算"""
+    if len(prices) < period:
+        return None
+    
+    alpha = 2.0 / (period + 1)
+    ema = prices[0]
+    
+    for price in prices[1:]:
+        ema = alpha * price + (1 - alpha) * ema
+    
+    return ema
+
+def calculate_atr(highs, lows, closes, period):
+    """ATR計算"""
+    if len(highs) < period + 1:
+        return None
+    
+    tr_values = []
+    for i in range(1, len(highs)):
+        hl = highs[i] - lows[i]
+        hc = abs(highs[i] - closes[i-1])
+        lc = abs(lows[i] - closes[i-1])
+        tr_values.append(max(hl, hc, lc))
+    
+    return calculate_ema(tr_values, period)
+
+def calculate_rsi(prices, period):
+    """RSI計算"""
+    if len(prices) < period + 1:
+        return None
+    
+    gains = []
+    losses = []
+    
+    for i in range(1, len(prices)):
+        change = prices[i] - prices[i-1]
+        if change > 0:
+            gains.append(change)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(-change)
+    
+    avg_gain = sum(gains[-period:]) / period
+    avg_loss = sum(losses[-period:]) / period
+    
+    if avg_loss == 0:
+        return 100
+    
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    
+    return rsi
+```
+
+### 2.4 注文実行規約
+```python
+# 注文実行の標準パターン
+def execute_signal(context, data, symbol, signal):
+    """シグナルに基づく注文実行"""
+    if signal.side == "BUY" and symbol not in context.positions:
+        # 買い注文
+        quantity = calculate_position_size(context, data, symbol, signal)
+        if quantity > 0:
+            order = context.order(
+                symbol=symbol,
+                side="BUY",
+                quantity=quantity,
+                order_type="MARKET"
+            )
+            context.orders[order.id] = order
+            
+    elif signal.side == "SELL" and symbol in context.positions:
+        # 売り注文
+        position = context.positions[symbol]
+        order = context.order(
+            symbol=symbol,
+            side="SELL",
+            quantity=position["quantity"],
+            order_type="MARKET"
+        )
+        context.orders[order.id] = order
+
+def calculate_position_size(context, data, symbol, signal):
+    """ポジションサイズ計算（リスクベース）"""
+    current_price = data[symbol].close[-1]
+    atr = calculate_atr(
+        data[symbol].high,
+        data[symbol].low,
+        data[symbol].close,
+        context.atr_period
+    )
+    
+    if atr is None:
+        return 0
+    
+    # ATRベースのストップロス
+    stop_loss = current_price - (atr * 2.0)  # 2 ATR
+    risk_per_share = current_price - stop_loss
+    
+    if risk_per_share <= 0:
+        return 0
+    
+    # アカウント価値の0.25%をリスク
+    account_value = context.account_value
+    risk_amount = account_value * context.risk_per_trade
+    
+    quantity = int(risk_amount / risk_per_share)
+    
+    # 最小株数チェック
+    if quantity < 1:
+        return 0
+    
+    return quantity
+```
+
+## 3. セキュリティ制限規約
+
+### 3.1 実行環境制限
+```go
+// ファイルシステムアクセス禁止
+func restrictedLoad(thread *starlark.Thread, module string) (starlark.StringDict, error) {
+    if strings.HasPrefix(module, "/") || strings.Contains(module, "..") {
+        return nil, fmt.Errorf("file access not allowed: %s", module)
+    }
+    
+    // 許可されたモジュールのみ
+    allowedModules := map[string]bool{
+        "math": true,
+        "time": true,
+        "json": true,
+    }
+    
+    if !allowedModules[module] {
+        return nil, fmt.Errorf("module not allowed: %s", module)
+    }
+    
+    return starlark.StringDict{}, nil
+}
+```
+
+### 3.2 実行時間制限
+```go
+// 実行時間監視
+func withTimeout(thread *starlark.Thread, timeout time.Duration, fn func() error) error {
+    done := make(chan error, 1)
+    
+    go func() {
+        done <- fn()
+    }()
+    
+    select {
+    case err := <-done:
+        return err
+    case <-time.After(timeout):
+        return fmt.Errorf("execution timeout after %v", timeout)
+    }
+}
+```
+
+### 3.3 メモリ使用量制限
+```go
+// メモリ使用量監視
+type MemoryMonitor struct {
+    maxUsage int64
+    start    time.Time
+}
+
+func (m *MemoryMonitor) Check() error {
+    var mem runtime.MemStats
+    runtime.ReadMemStats(&mem)
+    
+    if mem.Alloc > m.maxUsage {
+        return fmt.Errorf("memory usage exceeded: %d > %d", mem.Alloc, m.maxUsage)
+    }
+    
+    return nil
+}
+```
+
+## 4. パフォーマンス監視規約
+
+### 4.1 実行時間メトリクス
+```go
+// VM実行時間の計測
+type VMMetrics struct {
+    ExecutionTime    time.Duration
+    MemoryUsage      int64
+    LoopIterations   int
+    ErrorCount       int
+    SuccessCount     int
+}
+
+func recordVMMetrics(thread *starlark.Thread, start time.Time, err error) {
+    metrics := VMMetrics{
+        ExecutionTime: time.Since(start),
+    }
+    
+    var mem runtime.MemStats
+    runtime.ReadMemStats(&mem)
+    metrics.MemoryUsage = mem.Alloc
+    
+    if err != nil {
+        metrics.ErrorCount = 1
+    } else {
+        metrics.SuccessCount = 1
+    }
+    
+    // Prometheusメトリクス記録
+    vmExecutionDuration.Observe(metrics.ExecutionTime.Seconds())
+    vmMemoryUsage.Set(float64(metrics.MemoryUsage))
+    vmErrorCount.Add(float64(metrics.ErrorCount))
+    vmSuccessCount.Add(float64(metrics.SuccessCount))
+}
+```
+
+### 4.2 キャッシュ戦略
+```go
+// 戦略スクリプトのキャッシュ
+type ScriptCache struct {
+    cache map[string]*CompiledScript
+    mutex sync.RWMutex
+}
+
+type CompiledScript struct {
+    Script    string
+    Compiled  *starlark.Program
+    CompiledAt time.Time
+}
+
+func (sc *ScriptCache) Get(scriptHash string) (*CompiledScript, bool) {
+    sc.mutex.RLock()
+    defer sc.mutex.RUnlock()
+    
+    script, exists := sc.cache[scriptHash]
+    if !exists {
+        return nil, false
+    }
+    
+    // 1時間でキャッシュ無効化
+    if time.Since(script.CompiledAt) > time.Hour {
+        delete(sc.cache, scriptHash)
+        return nil, false
+    }
+    
+    return script, true
+}
+```
+
+### 4.3 並列実行制御
+```go
+// 並列実行の制御
+type VMExecutor struct {
+    semaphore chan struct{}
+    maxConcurrent int
+}
+
+func NewVMExecutor(maxConcurrent int) *VMExecutor {
+    return &VMExecutor{
+        semaphore: make(chan struct{}, maxConcurrent),
+        maxConcurrent: maxConcurrent,
+    }
+}
+
+func (e *VMExecutor) Execute(script string, globals starlark.StringDict) (starlark.Value, error) {
+    e.semaphore <- struct{}{}
+    defer func() { <-e.semaphore }()
+    
+    return ExecuteStrategy(script, globals)
+}
+```
+
+## 5. エラー処理・ログ規約
+
+### 5.1 エラーハンドリング
+```go
+// 戦略実行エラーの分類
+type StrategyError struct {
+    Type    string `json:"type"`
+    Message string `json:"message"`
+    Symbol  string `json:"symbol,omitempty"`
+    Time    time.Time `json:"time"`
+}
+
+var (
+    ErrInsufficientData = &StrategyError{Type: "insufficient_data"}
+    ErrInvalidSignal    = &StrategyError{Type: "invalid_signal"}
+    ErrOrderFailed      = &StrategyError{Type: "order_failed"}
+    ErrVMPanic          = &StrategyError{Type: "vm_panic"}
+)
+
+func handleStrategyError(err error, symbol string) {
+    strategyErr := &StrategyError{
+        Message: err.Error(),
+        Symbol:  symbol,
+        Time:    time.Now(),
+    }
+    
+    // エラータイプの判定
+    switch {
+    case strings.Contains(err.Error(), "insufficient data"):
+        strategyErr.Type = "insufficient_data"
+    case strings.Contains(err.Error(), "invalid signal"):
+        strategyErr.Type = "invalid_signal"
+    case strings.Contains(err.Error(), "order failed"):
+        strategyErr.Type = "order_failed"
+    default:
+        strategyErr.Type = "unknown"
+    }
+    
+    // ログ出力
+    log.Printf("[Strategy Error] %+v", strategyErr)
+    
+    // メトリクス記録
+    strategyErrorCount.WithLabelValues(strategyErr.Type).Inc()
+}
+```
+
+### 5.2 ログ出力規約
+```go
+// 戦略ログの標準フォーマット
+type StrategyLog struct {
+    Timestamp   time.Time              `json:"timestamp"`
+    StrategyID  string                 `json:"strategy_id"`
+    Symbol      string                 `json:"symbol"`
+    Level       string                 `json:"level"`
+    Message     string                 `json:"message"`
+    Data        map[string]interface{} `json:"data,omitempty"`
+}
+
+func logStrategyEvent(strategyID, symbol, level, message string, data map[string]interface{}) {
+    log := StrategyLog{
+        Timestamp:  time.Now(),
+        StrategyID: strategyID,
+        Symbol:     symbol,
+        Level:      level,
+        Message:    message,
+        Data:       data,
+    }
+    
+    // JSON形式でログ出力
+    logJSON, _ := json.Marshal(log)
+    log.Printf("[Strategy] %s", string(logJSON))
+    
+    // Redis Streamsに送信
+    sendToStrategyLogStream(log)
+}
+```
+
+## 6. テスト規約
+
+### 6.1 戦略スクリプトテスト
+```go
+// 戦略スクリプトの単体テスト
+func TestStrategyScript(t *testing.T) {
+    script := `
+def init(context):
+    context.symbols = ["AAPL"]
+    context.fast_ema = 9
+    context.slow_ema = 21
+
+def on_bar(context, data):
+    for symbol in context.symbols:
+        if has_sufficient_data(data, symbol, context.slow_ema):
+            signal = calculate_ema_cross_signal(context, data, symbol)
+            if signal:
+                execute_signal(context, data, symbol, signal)
+`
+    
+    // モックデータ作成
+    mockData := createMockMarketData()
+    
+    // VM実行
+    result, err := ExecuteStrategy(script, mockData)
+    
+    assert.NoError(t, err)
+    assert.NotNil(t, result)
+}
+
+// モックデータ作成
+func createMockMarketData() starlark.StringDict {
+    return starlark.StringDict{
+        "AAPL": &MarketData{
+            Close:  []float64{150.0, 151.0, 152.0, 153.0, 154.0},
+            High:   []float64{151.0, 152.0, 153.0, 154.0, 155.0},
+            Low:    []float64{149.0, 150.0, 151.0, 152.0, 153.0},
+            Volume: []int64{1000000, 1100000, 1200000, 1300000, 1400000},
+        },
+    }
+}
+```
+
+### 6.2 パフォーマンステスト
+```go
+// VM実行時間のベンチマーク
+func BenchmarkVMExecution(b *testing.B) {
+    script := loadTestStrategy()
+    
+    b.ResetTimer()
+    for i := 0; i < b.N; i++ {
+        _, err := ExecuteStrategy(script, createMockMarketData())
+        if err != nil {
+            b.Fatal(err)
+        }
+    }
+}
+
+// メモリ使用量のベンチマーク
+func BenchmarkVMMemoryUsage(b *testing.B) {
+    script := loadTestStrategy()
+    
+    b.ResetTimer()
+    for i := 0; i < b.N; i++ {
+        var m1, m2 runtime.MemStats
+        runtime.ReadMemStats(&m1)
+        
+        _, err := ExecuteStrategy(script, createMockMarketData())
+        if err != nil {
+            b.Fatal(err)
+        }
+        
+        runtime.ReadMemStats(&m2)
+        b.ReportMetric(float64(m2.Alloc-m1.Alloc), "bytes/op")
+    }
+}
+```
+
+## 7. 監視・アラート規約
+
+### 7.1 メトリクス定義
+```go
+// Prometheusメトリクス定義
+var (
+    vmExecutionDuration = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name: "strategy_vm_execution_duration_seconds",
+            Help: "Strategy VM execution duration",
+            Buckets: prometheus.DefBuckets,
+        },
+        []string{"strategy_id", "symbol"},
+    )
+    
+    vmMemoryUsage = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "strategy_vm_memory_usage_bytes",
+            Help: "Strategy VM memory usage",
+        },
+        []string{"strategy_id"},
+    )
+    
+    vmErrorCount = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "strategy_vm_errors_total",
+            Help: "Total number of VM errors",
+        },
+        []string{"error_type", "strategy_id"},
+    )
+    
+    vmSuccessCount = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "strategy_vm_success_total",
+            Help: "Total number of successful VM executions",
+        },
+        []string{"strategy_id"},
+    )
+)
+```
+
+### 7.2 アラート設定
+```yaml
+# Grafanaアラート設定例
+groups:
+  - name: strategy_vm_alerts
+    rules:
+      - alert: VMExecutionTimeout
+        expr: histogram_quantile(0.95, strategy_vm_execution_duration_seconds) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Strategy VM execution timeout"
+          description: "95th percentile of VM execution time exceeds 100ms"
+      
+      - alert: VMMemoryUsageHigh
+        expr: strategy_vm_memory_usage_bytes > 10000000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Strategy VM memory usage high"
+          description: "VM memory usage exceeds 10MB"
+      
+      - alert: VMErrorRateHigh
+        expr: rate(strategy_vm_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Strategy VM error rate high"
+          description: "VM error rate exceeds 10%"
+```
+
+## 8. 最適化ガイドライン
+
+### 8.1 スクリプト最適化
+- **ループ最適化**: 不要なループを避け、ベクトル化可能な操作を活用
+- **メモリ効率**: 大きなデータ構造の作成を避け、必要最小限のデータのみ保持
+- **キャッシュ活用**: 計算結果をキャッシュし、重複計算を回避
+- **早期リターン**: 条件を満たさない場合は早期に処理を終了
+
+### 8.2 VM設定最適化
+- **実行時間制限**: 戦略の複雑度に応じて適切な制限を設定
+- **メモリ制限**: 使用可能なメモリに応じて制限を調整
+- **並列度**: システムリソースに応じて並列実行数を調整
+- **キャッシュサイズ**: メモリ使用量とパフォーマンスのバランスを考慮
+
+### 8.3 監視最適化
+- **メトリクス粒度**: 適切な粒度でメトリクスを収集
+- **ログレベル**: 本番環境では適切なログレベルを設定
+- **アラート閾値**: システム特性に応じてアラート閾値を調整
+- **保持期間**: メトリクスとログの保持期間を適切に設定

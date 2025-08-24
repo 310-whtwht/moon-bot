@@ -1,0 +1,966 @@
+# Moomoo Integration Standards & Best Practices
+
+## 1. moomoo API統合規約
+
+### 1.1 API接続管理
+```go
+// moomoo API接続管理
+package moomoo
+
+import (
+    "context"
+    "fmt"
+    "sync"
+    "time"
+    "github.com/futu-api/futu-api-go"
+)
+
+type MoomooClient struct {
+    client        *futu.OpenD
+    config        *MoomooConfig
+    subscriptions map[string]*Subscription
+    orders        map[string]*Order
+    mutex         sync.RWMutex
+    reconnectChan chan struct{}
+    stopChan      chan struct{}
+}
+
+type MoomooConfig struct {
+    Host         string        `json:"host"`
+    Port         int           `json:"port"`
+    APIKey       string        `json:"api_key"`
+    SecretKey    string        `json:"secret_key"`
+    AccountID    string        `json:"account_id"`
+    Environment  string        `json:"environment"` // SIMULATE or REAL
+    ReconnectInterval time.Duration `json:"reconnect_interval"`
+    MaxRetries   int           `json:"max_retries"`
+    Timeout      time.Duration `json:"timeout"`
+}
+
+type Subscription struct {
+    Symbol     string    `json:"symbol"`
+    SubType    string    `json:"sub_type"`
+    Status     string    `json:"status"`
+    CreatedAt  time.Time `json:"created_at"`
+    UpdatedAt  time.Time `json:"updated_at"`
+}
+
+func NewMoomooClient(config *MoomooConfig) *MoomooClient {
+    return &MoomooClient{
+        config:        config,
+        subscriptions: make(map[string]*Subscription),
+        orders:        make(map[string]*Order),
+        reconnectChan: make(chan struct{}, 1),
+        stopChan:      make(chan struct{}),
+    }
+}
+
+// 接続初期化
+func (mc *MoomooClient) Connect(ctx context.Context) error {
+    // OpenD接続
+    client := futu.NewOpenD()
+    err := client.Connect(mc.config.Host, mc.config.Port)
+    if err != nil {
+        return fmt.Errorf("failed to connect to OpenD: %w", err)
+    }
+    
+    mc.client = client
+    
+    // 認証
+    if err := mc.authenticate(ctx); err != nil {
+        return fmt.Errorf("failed to authenticate: %w", err)
+    }
+    
+    // 再接続監視開始
+    go mc.monitorConnection()
+    
+    return nil
+}
+
+// 認証処理
+func (mc *MoomooClient) authenticate(ctx context.Context) error {
+    // API認証リクエスト
+    req := &futu.QotCommon_InitConnect{
+        ClientVer: 1,
+        ClientID:  "trading-system",
+    }
+    
+    resp, err := mc.client.QotCommon_InitConnect(req)
+    if err != nil {
+        return fmt.Errorf("failed to init connect: %w", err)
+    }
+    
+    if resp.RetType != futu.RetType_Succeed {
+        return fmt.Errorf("init connect failed: %s", resp.RetMsg)
+    }
+    
+    return nil
+}
+
+// 接続監視
+func (mc *MoomooClient) monitorConnection() {
+    ticker := time.NewTicker(30 * time.Second)
+    defer ticker.Stop()
+    
+    for {
+        select {
+        case <-mc.stopChan:
+            return
+        case <-mc.reconnectChan:
+            mc.reconnect()
+        case <-ticker.C:
+            if !mc.isConnected() {
+                mc.reconnect()
+            }
+        }
+    }
+}
+
+// 再接続処理
+func (mc *MoomooClient) reconnect() {
+    log.Printf("Attempting to reconnect to moomoo...")
+    
+    // 既存接続を閉じる
+    if mc.client != nil {
+        mc.client.Close()
+    }
+    
+    // 新しい接続を確立
+    ctx := context.Background()
+    if err := mc.Connect(ctx); err != nil {
+        log.Printf("Reconnection failed: %v", err)
+        return
+    }
+    
+    // 購読を再開
+    mc.resubscribeAll()
+    
+    log.Printf("Successfully reconnected to moomoo")
+}
+
+// 接続状態確認
+func (mc *MoomooClient) isConnected() bool {
+    if mc.client == nil {
+        return false
+    }
+    
+    // 簡単なpingテスト
+    req := &futu.QotCommon_GetGlobalState{}
+    resp, err := mc.client.QotCommon_GetGlobalState(req)
+    if err != nil {
+        return false
+    }
+    
+    return resp.RetType == futu.RetType_Succeed
+}
+```
+
+### 1.2 購読管理規約
+```go
+// 購読管理
+package subscription
+
+import (
+    "context"
+    "fmt"
+    "sync"
+    "time"
+    "github.com/futu-api/futu-api-go"
+)
+
+type SubscriptionManager struct {
+    client        *MoomooClient
+    subscriptions map[string]*Subscription
+    mutex         sync.RWMutex
+    maxSubscriptions int
+}
+
+type Subscription struct {
+    ID           string    `json:"id"`
+    Symbol       string    `json:"symbol"`
+    SubType      SubType   `json:"sub_type"`
+    Status       string    `json:"status"`
+    CreatedAt    time.Time `json:"created_at"`
+    UpdatedAt    time.Time `json:"updated_at"`
+    LastData     interface{} `json:"last_data,omitempty"`
+}
+
+type SubType string
+const (
+    SubTypeTick    SubType = "TICK"
+    SubTypeKLine   SubType = "KLINE"
+    SubTypeOrderBook SubType = "ORDERBOOK"
+    SubTypeTicker  SubType = "TICKER"
+)
+
+func NewSubscriptionManager(client *MoomooClient, maxSubscriptions int) *SubscriptionManager {
+    return &SubscriptionManager{
+        client:            client,
+        subscriptions:     make(map[string]*Subscription),
+        maxSubscriptions:  maxSubscriptions,
+    }
+}
+
+// 購読追加
+func (sm *SubscriptionManager) Subscribe(ctx context.Context, symbol string, subType SubType) error {
+    sm.mutex.Lock()
+    defer sm.mutex.Unlock()
+    
+    // 購読制限チェック
+    if len(sm.subscriptions) >= sm.maxSubscriptions {
+        return fmt.Errorf("subscription limit exceeded: %d", sm.maxSubscriptions)
+    }
+    
+    // 既存購読チェック
+    subID := fmt.Sprintf("%s_%s", symbol, subType)
+    if _, exists := sm.subscriptions[subID]; exists {
+        return fmt.Errorf("subscription already exists: %s", subID)
+    }
+    
+    // 購読リクエスト送信
+    if err := sm.sendSubscriptionRequest(ctx, symbol, subType); err != nil {
+        return fmt.Errorf("failed to send subscription request: %w", err)
+    }
+    
+    // 購読情報を保存
+    subscription := &Subscription{
+        ID:        subID,
+        Symbol:    symbol,
+        SubType:   subType,
+        Status:    "ACTIVE",
+        CreatedAt: time.Now(),
+        UpdatedAt: time.Now(),
+    }
+    
+    sm.subscriptions[subID] = subscription
+    
+    return nil
+}
+
+// 購読解除
+func (sm *SubscriptionManager) Unsubscribe(ctx context.Context, symbol string, subType SubType) error {
+    sm.mutex.Lock()
+    defer sm.mutex.Unlock()
+    
+    subID := fmt.Sprintf("%s_%s", symbol, subType)
+    subscription, exists := sm.subscriptions[subID]
+    if !exists {
+        return fmt.Errorf("subscription not found: %s", subID)
+    }
+    
+    // 購読解除リクエスト送信
+    if err := sm.sendUnsubscriptionRequest(ctx, symbol, subType); err != nil {
+        return fmt.Errorf("failed to send unsubscription request: %w", err)
+    }
+    
+    // 購読情報を削除
+    delete(sm.subscriptions, subID)
+    
+    return nil
+}
+
+// 購読リクエスト送信
+func (sm *SubscriptionManager) sendSubscriptionRequest(ctx context.Context, symbol string, subType SubType) error {
+    switch subType {
+    case SubTypeTick:
+        return sm.subscribeTick(ctx, symbol)
+    case SubTypeKLine:
+        return sm.subscribeKLine(ctx, symbol)
+    case SubTypeOrderBook:
+        return sm.subscribeOrderBook(ctx, symbol)
+    case SubTypeTicker:
+        return sm.subscribeTicker(ctx, symbol)
+    default:
+        return fmt.Errorf("unsupported subscription type: %s", subType)
+    }
+}
+
+// Tick購読
+func (sm *SubscriptionManager) subscribeTick(ctx context.Context, symbol string) error {
+    req := &futu.QotSub_Sub{
+        IsSubOrUnSub: true,
+        SubTypeList: []int32{futu.SubType_Tick},
+        SecurityList: []*futu.QotCommon_Security{
+            {
+                Market: futu.QotMarket_QotMarket_US_Security,
+                Code:   symbol,
+            },
+        },
+    }
+    
+    resp, err := sm.client.client.QotSub_Sub(req)
+    if err != nil {
+        return fmt.Errorf("failed to subscribe tick: %w", err)
+    }
+    
+    if resp.RetType != futu.RetType_Succeed {
+        return fmt.Errorf("subscribe tick failed: %s", resp.RetMsg)
+    }
+    
+    return nil
+}
+
+// K線購読
+func (sm *SubscriptionManager) subscribeKLine(ctx context.Context, symbol string) error {
+    req := &futu.QotSub_Sub{
+        IsSubOrUnSub: true,
+        SubTypeList: []int32{futu.SubType_Basic},
+        SecurityList: []*futu.QotCommon_Security{
+            {
+                Market: futu.QotMarket_QotMarket_US_Security,
+                Code:   symbol,
+            },
+        },
+    }
+    
+    resp, err := sm.client.client.QotSub_Sub(req)
+    if err != nil {
+        return fmt.Errorf("failed to subscribe kline: %w", err)
+    }
+    
+    if resp.RetType != futu.RetType_Succeed {
+        return fmt.Errorf("subscribe kline failed: %s", resp.RetMsg)
+    }
+    
+    return nil
+}
+
+// 全購読再開
+func (sm *SubscriptionManager) resubscribeAll() {
+    sm.mutex.RLock()
+    subscriptions := make([]*Subscription, 0, len(sm.subscriptions))
+    for _, sub := range sm.subscriptions {
+        subscriptions = append(subscriptions, sub)
+    }
+    sm.mutex.RUnlock()
+    
+    for _, sub := range subscriptions {
+        ctx := context.Background()
+        if err := sm.Subscribe(ctx, sub.Symbol, sub.SubType); err != nil {
+            log.Printf("Failed to resubscribe %s: %v", sub.ID, err)
+        }
+    }
+}
+```
+
+### 1.3 注文処理規約
+```go
+// 注文処理
+package order
+
+import (
+    "context"
+    "fmt"
+    "sync"
+    "time"
+    "github.com/futu-api/futu-api-go"
+)
+
+type OrderManager struct {
+    client *MoomooClient
+    orders map[string]*Order
+    mutex  sync.RWMutex
+}
+
+type Order struct {
+    ID              string    `json:"id"`
+    ClientOrderID   string    `json:"client_order_id"`
+    Symbol          string    `json:"symbol"`
+    Side            OrderSide `json:"side"`
+    OrderType       OrderType `json:"order_type"`
+    Quantity        int       `json:"quantity"`
+    Price           float64   `json:"price,omitempty"`
+    StopPrice       float64   `json:"stop_price,omitempty"`
+    LimitPrice      float64   `json:"limit_price,omitempty"`
+    Status          OrderStatus `json:"status"`
+    FilledQuantity  int       `json:"filled_quantity"`
+    AveragePrice    float64   `json:"average_price,omitempty"`
+    Commission      float64   `json:"commission,omitempty"`
+    CreatedAt       time.Time `json:"created_at"`
+    UpdatedAt       time.Time `json:"updated_at"`
+    FilledAt        *time.Time `json:"filled_at,omitempty"`
+    CancelledAt     *time.Time `json:"cancelled_at,omitempty"`
+}
+
+type OrderSide string
+const (
+    OrderSideBuy  OrderSide = "BUY"
+    OrderSideSell OrderSide = "SELL"
+)
+
+type OrderType string
+const (
+    OrderTypeMarket OrderType = "MARKET"
+    OrderTypeLimit  OrderType = "LIMIT"
+    OrderTypeStop   OrderType = "STOP"
+    OrderTypeStopLimit OrderType = "STOP_LIMIT"
+)
+
+type OrderStatus string
+const (
+    OrderStatusPending   OrderStatus = "PENDING"
+    OrderStatusSubmitted OrderStatus = "SUBMITTED"
+    OrderStatusPartial   OrderStatus = "PARTIAL"
+    OrderStatusFilled    OrderStatus = "FILLED"
+    OrderStatusCancelled OrderStatus = "CANCELLED"
+    OrderStatusRejected  OrderStatus = "REJECTED"
+)
+
+func NewOrderManager(client *MoomooClient) *OrderManager {
+    return &OrderManager{
+        client: client,
+        orders: make(map[string]*Order),
+    }
+}
+
+// 注文作成
+func (om *OrderManager) PlaceOrder(ctx context.Context, req *PlaceOrderRequest) (*Order, error) {
+    // 注文エンティティ作成
+    order := &Order{
+        ID:            generateOrderID(),
+        ClientOrderID: req.ClientOrderID,
+        Symbol:        req.Symbol,
+        Side:          req.Side,
+        OrderType:     req.OrderType,
+        Quantity:      req.Quantity,
+        Price:         req.Price,
+        StopPrice:     req.StopPrice,
+        LimitPrice:    req.LimitPrice,
+        Status:        OrderStatusPending,
+        CreatedAt:     time.Now(),
+        UpdatedAt:     time.Now(),
+    }
+    
+    // 注文リクエスト送信
+    if err := om.sendOrderRequest(ctx, order); err != nil {
+        order.Status = OrderStatusRejected
+        om.updateOrder(order)
+        return nil, fmt.Errorf("failed to place order: %w", err)
+    }
+    
+    // 注文情報を保存
+    om.mutex.Lock()
+    om.orders[order.ID] = order
+    om.mutex.Unlock()
+    
+    return order, nil
+}
+
+// 注文リクエスト送信
+func (om *OrderManager) sendOrderRequest(ctx context.Context, order *Order) error {
+    // 注文タイプに応じたリクエスト作成
+    var req interface{}
+    
+    switch order.OrderType {
+    case OrderTypeMarket:
+        req = om.createMarketOrderRequest(order)
+    case OrderTypeLimit:
+        req = om.createLimitOrderRequest(order)
+    case OrderTypeStop:
+        req = om.createStopOrderRequest(order)
+    case OrderTypeStopLimit:
+        req = om.createStopLimitOrderRequest(order)
+    default:
+        return fmt.Errorf("unsupported order type: %s", order.OrderType)
+    }
+    
+    // 注文送信
+    resp, err := om.client.client.Trd_PlaceOrder(req)
+    if err != nil {
+        return fmt.Errorf("failed to send order request: %w", err)
+    }
+    
+    // レスポンス処理
+    if resp.RetType != futu.RetType_Succeed {
+        return fmt.Errorf("order placement failed: %s", resp.RetMsg)
+    }
+    
+    // 注文IDを更新
+    if resp.OrderID != nil {
+        order.ID = *resp.OrderID
+    }
+    
+    order.Status = OrderStatusSubmitted
+    om.updateOrder(order)
+    
+    return nil
+}
+
+// 成行注文リクエスト作成
+func (om *OrderManager) createMarketOrderRequest(order *Order) *futu.Trd_PlaceOrder {
+    return &futu.Trd_PlaceOrder{
+        PacketID: &futu.PacketId{
+            ConnID: om.client.client.GetConnID(),
+            SerialNo: generateSerialNo(),
+        },
+        Header: &futu.TrdCommon_TrdHeader{
+            TrdEnv:    getTrdEnv(om.client.config.Environment),
+            AccID:     &om.client.config.AccountID,
+            TrdMarket: futu.TrdMarket_TrdMarket_US,
+            TrdSide:   getTrdSide(order.Side),
+        },
+        TrdSec: &futu.TrdCommon_TrdSec{
+            Code:   &order.Symbol,
+            Market: futu.QotMarket_QotMarket_US_Security,
+        },
+        TrdOrderType: futu.TrdOrderType_TrdOrderType_Market,
+        Qty:          &order.Quantity,
+        Price:        nil, // 成行注文は価格不要
+        AdjustLimit:  nil,
+        AdjustSideAndLimit: nil,
+    }
+}
+
+// 指値注文リクエスト作成
+func (om *OrderManager) createLimitOrderRequest(order *Order) *futu.Trd_PlaceOrder {
+    return &futu.Trd_PlaceOrder{
+        PacketID: &futu.PacketId{
+            ConnID: om.client.client.GetConnID(),
+            SerialNo: generateSerialNo(),
+        },
+        Header: &futu.TrdCommon_TrdHeader{
+            TrdEnv:    getTrdEnv(om.client.config.Environment),
+            AccID:     &om.client.config.AccountID,
+            TrdMarket: futu.TrdMarket_TrdMarket_US,
+            TrdSide:   getTrdSide(order.Side),
+        },
+        TrdSec: &futu.TrdCommon_TrdSec{
+            Code:   &order.Symbol,
+            Market: futu.QotMarket_QotMarket_US_Security,
+        },
+        TrdOrderType: futu.TrdOrderType_TrdOrderType_Normal,
+        Qty:          &order.Quantity,
+        Price:        &order.Price,
+        AdjustLimit:  nil,
+        AdjustSideAndLimit: nil,
+    }
+}
+
+// 注文キャンセル
+func (om *OrderManager) CancelOrder(ctx context.Context, orderID string) error {
+    om.mutex.RLock()
+    order, exists := om.orders[orderID]
+    om.mutex.RUnlock()
+    
+    if !exists {
+        return fmt.Errorf("order not found: %s", orderID)
+    }
+    
+    // キャンセルリクエスト送信
+    req := &futu.Trd_ModifyOrder{
+        PacketID: &futu.PacketId{
+            ConnID: om.client.client.GetConnID(),
+            SerialNo: generateSerialNo(),
+        },
+        Header: &futu.TrdCommon_TrdHeader{
+            TrdEnv:    getTrdEnv(om.client.config.Environment),
+            AccID:     &om.client.config.AccountID,
+            TrdMarket: futu.TrdMarket_TrdMarket_US,
+        },
+        OrderID: &orderID,
+        ModifyOrderOp: futu.ModifyOrderOp_ModifyOrderOp_Cancel,
+    }
+    
+    resp, err := om.client.client.Trd_ModifyOrder(req)
+    if err != nil {
+        return fmt.Errorf("failed to cancel order: %w", err)
+    }
+    
+    if resp.RetType != futu.RetType_Succeed {
+        return fmt.Errorf("cancel order failed: %s", resp.RetMsg)
+    }
+    
+    // 注文ステータス更新
+    order.Status = OrderStatusCancelled
+    order.CancelledAt = &time.Now()
+    om.updateOrder(order)
+    
+    return nil
+}
+
+// 注文更新
+func (om *OrderManager) updateOrder(order *Order) {
+    om.mutex.Lock()
+    defer om.mutex.Unlock()
+    
+    order.UpdatedAt = time.Now()
+    om.orders[order.ID] = order
+}
+
+// 注文取得
+func (om *OrderManager) GetOrder(orderID string) (*Order, error) {
+    om.mutex.RLock()
+    defer om.mutex.RUnlock()
+    
+    order, exists := om.orders[orderID]
+    if !exists {
+        return nil, fmt.Errorf("order not found: %s", orderID)
+    }
+    
+    return order, nil
+}
+```
+
+### 1.4 エラーハンドリング規約
+```go
+// エラーハンドリング
+package error
+
+import (
+    "fmt"
+    "time"
+    "github.com/futu-api/futu-api-go"
+)
+
+type MoomooError struct {
+    Code        int       `json:"code"`
+    Message     string    `json:"message"`
+    Type        string    `json:"type"`
+    Timestamp   time.Time `json:"timestamp"`
+    OrderID     string    `json:"order_id,omitempty"`
+    Symbol      string    `json:"symbol,omitempty"`
+}
+
+type ErrorHandler struct {
+    errorChan chan *MoomooError
+    logger    Logger
+}
+
+func NewErrorHandler(logger Logger) *ErrorHandler {
+    return &ErrorHandler{
+        errorChan: make(chan *MoomooError, 100),
+        logger:    logger,
+    }
+}
+
+// エラーハンドリング開始
+func (eh *ErrorHandler) Start() {
+    go eh.handleErrors()
+}
+
+// エラー処理ループ
+func (eh *ErrorHandler) handleErrors() {
+    for err := range eh.errorChan {
+        eh.processError(err)
+    }
+}
+
+// エラー処理
+func (eh *ErrorHandler) processError(err *MoomooError) {
+    switch err.Type {
+    case "CONNECTION_ERROR":
+        eh.handleConnectionError(err)
+    case "AUTHENTICATION_ERROR":
+        eh.handleAuthenticationError(err)
+    case "SUBSCRIPTION_ERROR":
+        eh.handleSubscriptionError(err)
+    case "ORDER_ERROR":
+        eh.handleOrderError(err)
+    case "RATE_LIMIT_ERROR":
+        eh.handleRateLimitError(err)
+    default:
+        eh.handleUnknownError(err)
+    }
+}
+
+// 接続エラー処理
+func (eh *ErrorHandler) handleConnectionError(err *MoomooError) {
+    eh.logger.Error("Connection error", map[string]interface{}{
+        "code":    err.Code,
+        "message": err.Message,
+        "time":    err.Timestamp,
+    })
+    
+    // 再接続を試行
+    // 実装は接続管理部分で行う
+}
+
+// 認証エラー処理
+func (eh *ErrorHandler) handleAuthenticationError(err *MoomooError) {
+    eh.logger.Error("Authentication error", map[string]interface{}{
+        "code":    err.Code,
+        "message": err.Message,
+        "time":    err.Timestamp,
+    })
+    
+    // 認証情報の再確認
+    // APIキーの有効性チェック
+}
+
+// 購読エラー処理
+func (eh *ErrorHandler) handleSubscriptionError(err *MoomooError) {
+    eh.logger.Error("Subscription error", map[string]interface{}{
+        "code":    err.Code,
+        "message": err.Message,
+        "symbol":  err.Symbol,
+        "time":    err.Timestamp,
+    })
+    
+    // 購読制限の確認
+    // 購読数の調整
+}
+
+// 注文エラー処理
+func (eh *ErrorHandler) handleOrderError(err *MoomooError) {
+    eh.logger.Error("Order error", map[string]interface{}{
+        "code":     err.Code,
+        "message":  err.Message,
+        "order_id": err.OrderID,
+        "symbol":   err.Symbol,
+        "time":     err.Timestamp,
+    })
+    
+    // 注文の再試行またはキャンセル
+    switch err.Code {
+    case 1001: // 資金不足
+        eh.handleInsufficientFunds(err)
+    case 1002: // 注文制限
+        eh.handleOrderLimit(err)
+    case 1003: // 無効な価格
+        eh.handleInvalidPrice(err)
+    default:
+        eh.handleGenericOrderError(err)
+    }
+}
+
+// レート制限エラー処理
+func (eh *ErrorHandler) handleRateLimitError(err *MoomooError) {
+    eh.logger.Warn("Rate limit exceeded", map[string]interface{}{
+        "code":    err.Code,
+        "message": err.Message,
+        "time":    err.Timestamp,
+    })
+    
+    // レート制限の調整
+    // リクエスト間隔の調整
+}
+
+// 資金不足エラー処理
+func (eh *ErrorHandler) handleInsufficientFunds(err *MoomooError) {
+    eh.logger.Error("Insufficient funds", map[string]interface{}{
+        "order_id": err.OrderID,
+        "symbol":   err.Symbol,
+        "time":     err.Timestamp,
+    })
+    
+    // 注文のキャンセル
+    // 資金状況の確認
+}
+
+// 注文制限エラー処理
+func (eh *ErrorHandler) handleOrderLimit(err *MoomooError) {
+    eh.logger.Error("Order limit exceeded", map[string]interface{}{
+        "order_id": err.OrderID,
+        "symbol":   err.Symbol,
+        "time":     err.Timestamp,
+    })
+    
+    // 注文サイズの調整
+    // 制限の確認
+}
+
+// 無効な価格エラー処理
+func (eh *ErrorHandler) handleInvalidPrice(err *MoomooError) {
+    eh.logger.Error("Invalid price", map[string]interface{}{
+        "order_id": err.OrderID,
+        "symbol":   err.Symbol,
+        "time":     err.Timestamp,
+    })
+    
+    // 価格の再計算
+    // 市場データの確認
+}
+
+// 汎用注文エラー処理
+func (eh *ErrorHandler) handleGenericOrderError(err *MoomooError) {
+    eh.logger.Error("Generic order error", map[string]interface{}{
+        "code":     err.Code,
+        "message":  err.Message,
+        "order_id": err.OrderID,
+        "symbol":   err.Symbol,
+        "time":     err.Timestamp,
+    })
+    
+    // 注文のキャンセル
+    // エラーログの記録
+}
+
+// 未知のエラー処理
+func (eh *ErrorHandler) handleUnknownError(err *MoomooError) {
+    eh.logger.Error("Unknown error", map[string]interface{}{
+        "code":    err.Code,
+        "message": err.Message,
+        "type":    err.Type,
+        "time":    err.Timestamp,
+    })
+    
+    // エラーログの記録
+    // 管理者への通知
+}
+
+// エラー送信
+func (eh *ErrorHandler) SendError(err *MoomooError) {
+    select {
+    case eh.errorChan <- err:
+    default:
+        // チャンネルが一杯の場合はログに記録
+        eh.logger.Error("Error channel full, dropping error", map[string]interface{}{
+            "error": err,
+        })
+    }
+}
+```
+
+### 1.5 レート制限管理
+```go
+// レート制限管理
+package ratelimit
+
+import (
+    "context"
+    "fmt"
+    "sync"
+    "time"
+    "golang.org/x/time/rate"
+)
+
+type RateLimiter struct {
+    limiters map[string]*rate.Limiter
+    mutex    sync.RWMutex
+    config   *RateLimitConfig
+}
+
+type RateLimitConfig struct {
+    SnapshotLimit     int           `json:"snapshot_limit"`     // 30秒/60回
+    OrderLimit        int           `json:"order_limit"`        // 1分/100回
+    SubscriptionLimit int           `json:"subscription_limit"` // 1分/50回
+    HistoryLimit      int           `json:"history_limit"`      // 1分/30回
+    Window            time.Duration `json:"window"`
+}
+
+func NewRateLimiter(config *RateLimitConfig) *RateLimiter {
+    return &RateLimiter{
+        limiters: make(map[string]*rate.Limiter),
+        config:   config,
+    }
+}
+
+// レート制限チェック
+func (rl *RateLimiter) Allow(endpoint string) bool {
+    rl.mutex.RLock()
+    limiter, exists := rl.limiters[endpoint]
+    rl.mutex.RUnlock()
+    
+    if !exists {
+        rl.mutex.Lock()
+        limiter = rl.createLimiter(endpoint)
+        rl.limiters[endpoint] = limiter
+        rl.mutex.Unlock()
+    }
+    
+    return limiter.Allow()
+}
+
+// レート制限待機
+func (rl *RateLimiter) Wait(ctx context.Context, endpoint string) error {
+    rl.mutex.RLock()
+    limiter, exists := rl.limiters[endpoint]
+    rl.mutex.RUnlock()
+    
+    if !exists {
+        rl.mutex.Lock()
+        limiter = rl.createLimiter(endpoint)
+        rl.limiters[endpoint] = limiter
+        rl.mutex.Unlock()
+    }
+    
+    return limiter.Wait(ctx)
+}
+
+// リミッター作成
+func (rl *RateLimiter) createLimiter(endpoint string) *rate.Limiter {
+    var limit int
+    
+    switch endpoint {
+    case "snapshot":
+        limit = rl.config.SnapshotLimit
+    case "order":
+        limit = rl.config.OrderLimit
+    case "subscription":
+        limit = rl.config.SubscriptionLimit
+    case "history":
+        limit = rl.config.HistoryLimit
+    default:
+        limit = 100 // デフォルト制限
+    }
+    
+    return rate.NewLimiter(rate.Every(rl.config.Window/time.Duration(limit)), limit)
+}
+
+// レート制限情報取得
+func (rl *RateLimiter) GetRateLimitInfo(endpoint string) *RateLimitInfo {
+    rl.mutex.RLock()
+    limiter, exists := rl.limiters[endpoint]
+    rl.mutex.RUnlock()
+    
+    if !exists {
+        return &RateLimitInfo{
+            Endpoint: endpoint,
+            Limit:    0,
+            Remaining: 0,
+            ResetTime: time.Now(),
+        }
+    }
+    
+    return &RateLimitInfo{
+        Endpoint:   endpoint,
+        Limit:      int(limiter.Limit()),
+        Remaining:  int(limiter.TokensAt(time.Now())),
+        ResetTime:  time.Now().Add(rl.config.Window),
+    }
+}
+
+type RateLimitInfo struct {
+    Endpoint   string    `json:"endpoint"`
+    Limit      int       `json:"limit"`
+    Remaining  int       `json:"remaining"`
+    ResetTime  time.Time `json:"reset_time"`
+}
+```
+
+## 2. 実装チェックリスト
+
+### 2.1 API統合実装
+- [ ] OpenD接続管理の実装
+- [ ] 認証処理の実装
+- [ ] 再接続機能の実装
+- [ ] 接続監視の実装
+- [ ] エラーハンドリングの実装
+
+### 2.2 購読管理実装
+- [ ] 購読制限管理の実装
+- [ ] 購読状態管理の実装
+- [ ] 購読再開機能の実装
+- [ ] データ受信処理の実装
+- [ ] 購読エラー処理の実装
+
+### 2.3 注文処理実装
+- [ ] 注文タイプ別処理の実装
+- [ ] 注文状態管理の実装
+- [ ] 注文キャンセル機能の実装
+- [ ] 約定処理の実装
+- [ ] 注文エラー処理の実装
+
+### 2.4 エラーハンドリング実装
+- [ ] エラー分類の実装
+- [ ] エラー処理ロジックの実装
+- [ ] エラーログ記録の実装
+- [ ] エラー通知機能の実装
+- [ ] エラー回復機能の実装
+
+### 2.5 レート制限実装
+- [ ] エンドポイント別制限の実装
+- [ ] レート制限チェックの実装
+- [ ] レート制限待機の実装
+- [ ] レート制限情報の実装
+- [ ] レート制限監視の実装

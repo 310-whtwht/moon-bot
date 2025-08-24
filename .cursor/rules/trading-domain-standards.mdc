@@ -1,0 +1,1208 @@
+# Trading Domain Standards & Best Practices
+
+## 1. 取引ドメイン実装規約
+
+### 1.1 エンティティ設計
+```go
+// 取引関連エンティティの定義
+package domain
+
+import (
+    "time"
+    "github.com/google/uuid"
+)
+
+// 注文エンティティ
+type Order struct {
+    ID              string    `json:"id"`
+    StrategyID      string    `json:"strategy_id"`
+    Symbol          string    `json:"symbol"`
+    Side            OrderSide `json:"side"`
+    OrderType       OrderType `json:"order_type"`
+    Quantity        int       `json:"quantity"`
+    Price           float64   `json:"price,omitempty"`
+    StopPrice       float64   `json:"stop_price,omitempty"`
+    LimitPrice      float64   `json:"limit_price,omitempty"`
+    Status          OrderStatus `json:"status"`
+    BrokerOrderID   string    `json:"broker_order_id,omitempty"`
+    ClientOrderID   string    `json:"client_order_id"`
+    FilledQuantity  int       `json:"filled_quantity"`
+    AveragePrice    float64   `json:"average_price,omitempty"`
+    Commission      float64   `json:"commission,omitempty"`
+    CreatedAt       time.Time `json:"created_at"`
+    UpdatedAt       time.Time `json:"updated_at"`
+    FilledAt        *time.Time `json:"filled_at,omitempty"`
+    CancelledAt     *time.Time `json:"cancelled_at,omitempty"`
+}
+
+// 約定エンティティ
+type Trade struct {
+    ID              string    `json:"id"`
+    OrderID         string    `json:"order_id"`
+    StrategyID      string    `json:"strategy_id"`
+    Symbol          string    `json:"symbol"`
+    Side            OrderSide `json:"side"`
+    Quantity        int       `json:"quantity"`
+    Price           float64   `json:"price"`
+    Commission      float64   `json:"commission"`
+    BrokerTradeID   string    `json:"broker_trade_id"`
+    ExecutedAt      time.Time `json:"executed_at"`
+    CreatedAt       time.Time `json:"created_at"`
+}
+
+// ポジションエンティティ
+type Position struct {
+    ID              string    `json:"id"`
+    StrategyID      string    `json:"strategy_id"`
+    Symbol          string    `json:"symbol"`
+    Side            OrderSide `json:"side"`
+    Quantity        int       `json:"quantity"`
+    AveragePrice    float64   `json:"average_price"`
+    MarketValue     float64   `json:"market_value"`
+    UnrealizedPnL   float64   `json:"unrealized_pnl"`
+    RealizedPnL     float64   `json:"realized_pnl"`
+    OpenedAt        time.Time `json:"opened_at"`
+    UpdatedAt       time.Time `json:"updated_at"`
+    ClosedAt        *time.Time `json:"closed_at,omitempty"`
+}
+
+// 戦略エンティティ
+type Strategy struct {
+    ID              string                 `json:"id"`
+    Name            string                 `json:"name"`
+    Template        string                 `json:"template"`
+    Parameters      map[string]interface{} `json:"parameters"`
+    Symbol          string                 `json:"symbol"`
+    Status          StrategyStatus         `json:"status"`
+    RiskSettings    RiskSettings           `json:"risk_settings"`
+    Performance     PerformanceMetrics     `json:"performance"`
+    CreatedAt       time.Time              `json:"created_at"`
+    UpdatedAt       time.Time              `json:"updated_at"`
+    StartedAt       *time.Time             `json:"started_at,omitempty"`
+    StoppedAt       *time.Time             `json:"stopped_at,omitempty"`
+}
+
+// 列挙型定義
+type OrderSide string
+const (
+    OrderSideBuy  OrderSide = "BUY"
+    OrderSideSell OrderSide = "SELL"
+)
+
+type OrderType string
+const (
+    OrderTypeMarket OrderType = "MARKET"
+    OrderTypeLimit  OrderType = "LIMIT"
+    OrderTypeStop   OrderType = "STOP"
+    OrderTypeStopLimit OrderType = "STOP_LIMIT"
+    OrderTypeTrailing OrderType = "TRAILING"
+)
+
+type OrderStatus string
+const (
+    OrderStatusPending   OrderStatus = "PENDING"
+    OrderStatusSubmitted OrderStatus = "SUBMITTED"
+    OrderStatusPartial   OrderStatus = "PARTIAL"
+    OrderStatusFilled    OrderStatus = "FILLED"
+    OrderStatusCancelled OrderStatus = "CANCELLED"
+    OrderStatusRejected  OrderStatus = "REJECTED"
+)
+
+type StrategyStatus string
+const (
+    StrategyStatusDraft     StrategyStatus = "DRAFT"
+    StrategyStatusActive    StrategyStatus = "ACTIVE"
+    StrategyStatusPaused    StrategyStatus = "PAUSED"
+    StrategyStatusStopped   StrategyStatus = "STOPPED"
+    StrategyStatusCompleted StrategyStatus = "COMPLETED"
+)
+```
+
+### 1.2 リポジトリインターフェース
+```go
+// 取引関連リポジトリインターフェース
+package repository
+
+import (
+    "context"
+    "time"
+    "github.com/your-org/trading-system/internal/domain"
+)
+
+type OrderRepository interface {
+    Create(ctx context.Context, order *domain.Order) error
+    GetByID(ctx context.Context, id string) (*domain.Order, error)
+    GetByClientOrderID(ctx context.Context, clientOrderID string) (*domain.Order, error)
+    Update(ctx context.Context, order *domain.Order) error
+    ListByStrategy(ctx context.Context, strategyID string, limit, offset int) ([]*domain.Order, error)
+    ListByStatus(ctx context.Context, status domain.OrderStatus, limit, offset int) ([]*domain.Order, error)
+    ListByDateRange(ctx context.Context, start, end time.Time, limit, offset int) ([]*domain.Order, error)
+}
+
+type TradeRepository interface {
+    Create(ctx context.Context, trade *domain.Trade) error
+    GetByID(ctx context.Context, id string) (*domain.Trade, error)
+    ListByOrder(ctx context.Context, orderID string) ([]*domain.Trade, error)
+    ListByStrategy(ctx context.Context, strategyID string, limit, offset int) ([]*domain.Trade, error)
+    ListByDateRange(ctx context.Context, start, end time.Time, limit, offset int) ([]*domain.Trade, error)
+    GetPnLByStrategy(ctx context.Context, strategyID string, start, end time.Time) (*domain.PnLSummary, error)
+}
+
+type PositionRepository interface {
+    Create(ctx context.Context, position *domain.Position) error
+    GetByID(ctx context.Context, id string) (*domain.Position, error)
+    GetByStrategyAndSymbol(ctx context.Context, strategyID, symbol string) (*domain.Position, error)
+    Update(ctx context.Context, position *domain.Position) error
+    ListByStrategy(ctx context.Context, strategyID string) ([]*domain.Position, error)
+    ListOpenPositions(ctx context.Context) ([]*domain.Position, error)
+}
+
+type StrategyRepository interface {
+    Create(ctx context.Context, strategy *domain.Strategy) error
+    GetByID(ctx context.Context, id string) (*domain.Strategy, error)
+    Update(ctx context.Context, strategy *domain.Strategy) error
+    List(ctx context.Context, limit, offset int) ([]*domain.Strategy, error)
+    ListByStatus(ctx context.Context, status domain.StrategyStatus) ([]*domain.Strategy, error)
+    Delete(ctx context.Context, id string) error
+}
+```
+
+### 1.3 ドメインサービス
+```go
+// 取引ドメインサービス
+package service
+
+import (
+    "context"
+    "fmt"
+    "time"
+    "github.com/your-org/trading-system/internal/domain"
+    "github.com/your-org/trading-system/internal/repository"
+)
+
+type TradingService struct {
+    orderRepo    repository.OrderRepository
+    tradeRepo    repository.TradeRepository
+    positionRepo repository.PositionRepository
+    strategyRepo repository.StrategyRepository
+    riskManager  RiskManager
+    broker       BrokerAdapter
+}
+
+func NewTradingService(
+    orderRepo repository.OrderRepository,
+    tradeRepo repository.TradeRepository,
+    positionRepo repository.PositionRepository,
+    strategyRepo repository.StrategyRepository,
+    riskManager RiskManager,
+    broker BrokerAdapter,
+) *TradingService {
+    return &TradingService{
+        orderRepo:    orderRepo,
+        tradeRepo:    tradeRepo,
+        positionRepo: positionRepo,
+        strategyRepo: strategyRepo,
+        riskManager:  riskManager,
+        broker:       broker,
+    }
+}
+
+// 注文作成
+func (s *TradingService) CreateOrder(ctx context.Context, req *CreateOrderRequest) (*domain.Order, error) {
+    // リスクチェック
+    if err := s.riskManager.ValidateOrder(ctx, req); err != nil {
+        return nil, fmt.Errorf("risk validation failed: %w", err)
+    }
+    
+    // 注文エンティティ作成
+    order := &domain.Order{
+        ID:            generateOrderID(),
+        StrategyID:    req.StrategyID,
+        Symbol:        req.Symbol,
+        Side:          req.Side,
+        OrderType:     req.OrderType,
+        Quantity:      req.Quantity,
+        Price:         req.Price,
+        StopPrice:     req.StopPrice,
+        LimitPrice:    req.LimitPrice,
+        Status:        domain.OrderStatusPending,
+        ClientOrderID: req.ClientOrderID,
+        CreatedAt:     time.Now(),
+        UpdatedAt:     time.Now(),
+    }
+    
+    // データベースに保存
+    if err := s.orderRepo.Create(ctx, order); err != nil {
+        return nil, fmt.Errorf("failed to create order: %w", err)
+    }
+    
+    // ブローカーに送信
+    if err := s.broker.PlaceOrder(ctx, order); err != nil {
+        // 注文ステータスを失敗に更新
+        order.Status = domain.OrderStatusRejected
+        s.orderRepo.Update(ctx, order)
+        return nil, fmt.Errorf("failed to place order with broker: %w", err)
+    }
+    
+    return order, nil
+}
+
+// 約定処理
+func (s *TradingService) ProcessTrade(ctx context.Context, trade *domain.Trade) error {
+    // 約定をデータベースに保存
+    if err := s.tradeRepo.Create(ctx, trade); err != nil {
+        return fmt.Errorf("failed to save trade: %w", err)
+    }
+    
+    // ポジション更新
+    if err := s.updatePosition(ctx, trade); err != nil {
+        return fmt.Errorf("failed to update position: %w", err)
+    }
+    
+    // 注文ステータス更新
+    if err := s.updateOrderStatus(ctx, trade); err != nil {
+        return fmt.Errorf("failed to update order status: %w", err)
+    }
+    
+    return nil
+}
+
+// ポジション更新
+func (s *TradingService) updatePosition(ctx context.Context, trade *domain.Trade) error {
+    position, err := s.positionRepo.GetByStrategyAndSymbol(ctx, trade.StrategyID, trade.Symbol)
+    if err != nil {
+        // 新しいポジションを作成
+        position = &domain.Position{
+            ID:           generatePositionID(),
+            StrategyID:   trade.StrategyID,
+            Symbol:       trade.Symbol,
+            Side:         trade.Side,
+            Quantity:     trade.Quantity,
+            AveragePrice: trade.Price,
+            OpenedAt:     trade.ExecutedAt,
+            UpdatedAt:    time.Now(),
+        }
+        return s.positionRepo.Create(ctx, position)
+    }
+    
+    // 既存ポジションを更新
+    if position.Side == trade.Side {
+        // 同方向の取引 - ポジション拡大
+        totalQuantity := position.Quantity + trade.Quantity
+        totalValue := (position.AveragePrice * float64(position.Quantity)) + (trade.Price * float64(trade.Quantity))
+        position.AveragePrice = totalValue / float64(totalQuantity)
+        position.Quantity = totalQuantity
+    } else {
+        // 逆方向の取引 - ポジション縮小または反転
+        remainingQuantity := position.Quantity - trade.Quantity
+        if remainingQuantity > 0 {
+            // ポジション縮小
+            position.Quantity = remainingQuantity
+        } else if remainingQuantity < 0 {
+            // ポジション反転
+            position.Side = trade.Side
+            position.Quantity = -remainingQuantity
+            position.AveragePrice = trade.Price
+        } else {
+            // ポジションクローズ
+            position.ClosedAt = &trade.ExecutedAt
+        }
+    }
+    
+    position.UpdatedAt = time.Now()
+    return s.positionRepo.Update(ctx, position)
+}
+```
+
+## 2. リスク管理実装規約
+
+### 2.1 リスク管理インターフェース
+```go
+// リスク管理インターフェース
+package risk
+
+import (
+    "context"
+    "github.com/your-org/trading-system/internal/domain"
+)
+
+type RiskManager interface {
+    ValidateOrder(ctx context.Context, req *CreateOrderRequest) error
+    CheckPositionLimit(ctx context.Context, strategyID, symbol string, quantity int) error
+    CheckDailyLossLimit(ctx context.Context, strategyID string, pnl float64) error
+    CheckDrawdownLimit(ctx context.Context, strategyID string, drawdown float64) error
+    CalculatePositionSize(ctx context.Context, strategyID, symbol string, riskAmount float64) (int, error)
+    GetRiskMetrics(ctx context.Context, strategyID string) (*RiskMetrics, error)
+}
+
+type RiskSettings struct {
+    MaxPositionSize    int     `json:"max_position_size"`
+    MaxDailyLoss       float64 `json:"max_daily_loss"`
+    MaxDrawdown        float64 `json:"max_drawdown"`
+    RiskPerTrade       float64 `json:"risk_per_trade"`
+    MaxOpenPositions   int     `json:"max_open_positions"`
+    StopLossATR        float64 `json:"stop_loss_atr"`
+    TakeProfitATR      float64 `json:"take_profit_atr"`
+    TrailingStopATR    float64 `json:"trailing_stop_atr"`
+}
+
+type RiskMetrics struct {
+    StrategyID         string    `json:"strategy_id"`
+    CurrentDrawdown    float64   `json:"current_drawdown"`
+    DailyPnL           float64   `json:"daily_pnl"`
+    OpenPositions      int       `json:"open_positions"`
+    TotalRisk          float64   `json:"total_risk"`
+    RiskUtilization    float64   `json:"risk_utilization"`
+    LastUpdated        time.Time `json:"last_updated"`
+}
+```
+
+### 2.2 リスク管理実装
+```go
+// リスク管理実装
+package risk
+
+import (
+    "context"
+    "fmt"
+    "time"
+    "github.com/your-org/trading-system/internal/domain"
+    "github.com/your-org/trading-system/internal/repository"
+)
+
+type RiskManagerImpl struct {
+    strategyRepo repository.StrategyRepository
+    positionRepo repository.PositionRepository
+    tradeRepo    repository.TradeRepository
+    marketData   MarketDataProvider
+}
+
+func NewRiskManager(
+    strategyRepo repository.StrategyRepository,
+    positionRepo repository.PositionRepository,
+    tradeRepo repository.TradeRepository,
+    marketData MarketDataProvider,
+) RiskManager {
+    return &RiskManagerImpl{
+        strategyRepo: strategyRepo,
+        positionRepo: positionRepo,
+        tradeRepo:    tradeRepo,
+        marketData:   marketData,
+    }
+}
+
+// 注文リスク検証
+func (rm *RiskManagerImpl) ValidateOrder(ctx context.Context, req *CreateOrderRequest) error {
+    // 戦略の取得
+    strategy, err := rm.strategyRepo.GetByID(ctx, req.StrategyID)
+    if err != nil {
+        return fmt.Errorf("failed to get strategy: %w", err)
+    }
+    
+    // ポジションサイズ制限チェック
+    if err := rm.CheckPositionLimit(ctx, req.StrategyID, req.Symbol, req.Quantity); err != nil {
+        return err
+    }
+    
+    // 日次損失制限チェック
+    dailyPnL, err := rm.calculateDailyPnL(ctx, req.StrategyID)
+    if err != nil {
+        return fmt.Errorf("failed to calculate daily PnL: %w", err)
+    }
+    
+    if dailyPnL < -strategy.RiskSettings.MaxDailyLoss {
+        return fmt.Errorf("daily loss limit exceeded: %.2f", dailyPnL)
+    }
+    
+    // ドローダウン制限チェック
+    drawdown, err := rm.calculateDrawdown(ctx, req.StrategyID)
+    if err != nil {
+        return fmt.Errorf("failed to calculate drawdown: %w", err)
+    }
+    
+    if drawdown > strategy.RiskSettings.MaxDrawdown {
+        return fmt.Errorf("drawdown limit exceeded: %.2f%%", drawdown*100)
+    }
+    
+    return nil
+}
+
+// ポジションサイズ制限チェック
+func (rm *RiskManagerImpl) CheckPositionLimit(ctx context.Context, strategyID, symbol string, quantity int) error {
+    // 現在のポジション取得
+    position, err := rm.positionRepo.GetByStrategyAndSymbol(ctx, strategyID, symbol)
+    if err != nil && err != repository.ErrNotFound {
+        return fmt.Errorf("failed to get position: %w", err)
+    }
+    
+    currentQuantity := 0
+    if position != nil {
+        currentQuantity = position.Quantity
+    }
+    
+    // 戦略設定取得
+    strategy, err := rm.strategyRepo.GetByID(ctx, strategyID)
+    if err != nil {
+        return fmt.Errorf("failed to get strategy: %w", err)
+    }
+    
+    // ポジションサイズ制限チェック
+    if currentQuantity+quantity > strategy.RiskSettings.MaxPositionSize {
+        return fmt.Errorf("position size limit exceeded: %d > %d", 
+            currentQuantity+quantity, strategy.RiskSettings.MaxPositionSize)
+    }
+    
+    return nil
+}
+
+// ポジションサイズ計算（リスクベース）
+func (rm *RiskManagerImpl) CalculatePositionSize(ctx context.Context, strategyID, symbol string, riskAmount float64) (int, error) {
+    // 戦略設定取得
+    strategy, err := rm.strategyRepo.GetByID(ctx, strategyID)
+    if err != nil {
+        return 0, fmt.Errorf("failed to get strategy: %w", err)
+    }
+    
+    // 現在価格取得
+    currentPrice, err := rm.marketData.GetCurrentPrice(ctx, symbol)
+    if err != nil {
+        return 0, fmt.Errorf("failed to get current price: %w", err)
+    }
+    
+    // ATR取得
+    atr, err := rm.marketData.GetATR(ctx, symbol, 14)
+    if err != nil {
+        return 0, fmt.Errorf("failed to get ATR: %w", err)
+    }
+    
+    // ストップロス計算
+    stopLoss := currentPrice - (atr * strategy.RiskSettings.StopLossATR)
+    riskPerShare := currentPrice - stopLoss
+    
+    if riskPerShare <= 0 {
+        return 0, fmt.Errorf("invalid risk per share: %.2f", riskPerShare)
+    }
+    
+    // ポジションサイズ計算
+    positionSize := int(riskAmount / riskPerShare)
+    
+    // 最小・最大制限チェック
+    if positionSize < 1 {
+        return 0, fmt.Errorf("position size too small: %d", positionSize)
+    }
+    
+    if positionSize > strategy.RiskSettings.MaxPositionSize {
+        positionSize = strategy.RiskSettings.MaxPositionSize
+    }
+    
+    return positionSize, nil
+}
+
+// 日次PnL計算
+func (rm *RiskManagerImpl) calculateDailyPnL(ctx context.Context, strategyID string) (float64, error) {
+    startOfDay := time.Now().Truncate(24 * time.Hour)
+    endOfDay := startOfDay.Add(24 * time.Hour)
+    
+    trades, err := rm.tradeRepo.ListByDateRange(ctx, startOfDay, endOfDay, 1000, 0)
+    if err != nil {
+        return 0, fmt.Errorf("failed to get trades: %w", err)
+    }
+    
+    var totalPnL float64
+    for _, trade := range trades {
+        if trade.StrategyID == strategyID {
+            if trade.Side == domain.OrderSideBuy {
+                totalPnL -= trade.Price * float64(trade.Quantity)
+            } else {
+                totalPnL += trade.Price * float64(trade.Quantity)
+            }
+            totalPnL -= trade.Commission
+        }
+    }
+    
+    return totalPnL, nil
+}
+
+// ドローダウン計算
+func (rm *RiskManagerImpl) calculateDrawdown(ctx context.Context, strategyID string) (float64, error) {
+    // 戦略の開始時点からの取引履歴取得
+    strategy, err := rm.strategyRepo.GetByID(ctx, strategyID)
+    if err != nil {
+        return 0, fmt.Errorf("failed to get strategy: %w", err)
+    }
+    
+    trades, err := rm.tradeRepo.ListByStrategy(ctx, strategyID, 1000, 0)
+    if err != nil {
+        return 0, fmt.Errorf("failed to get trades: %w", err)
+    }
+    
+    var peakValue float64
+    var currentValue float64
+    var maxDrawdown float64
+    
+    for _, trade := range trades {
+        if trade.Side == domain.OrderSideBuy {
+            currentValue -= trade.Price * float64(trade.Quantity)
+        } else {
+            currentValue += trade.Price * float64(trade.Quantity)
+        }
+        currentValue -= trade.Commission
+        
+        if currentValue > peakValue {
+            peakValue = currentValue
+        }
+        
+        if peakValue > 0 {
+            drawdown := (peakValue - currentValue) / peakValue
+            if drawdown > maxDrawdown {
+                maxDrawdown = drawdown
+            }
+        }
+    }
+    
+    return maxDrawdown, nil
+}
+```
+
+## 3. 戦略実行規約
+
+### 3.1 戦略実行エンジン
+```go
+// 戦略実行エンジン
+package strategy
+
+import (
+    "context"
+    "fmt"
+    "sync"
+    "time"
+    "github.com/your-org/trading-system/internal/domain"
+    "github.com/your-org/trading-system/internal/service"
+)
+
+type StrategyEngine struct {
+    tradingService *service.TradingService
+    marketData     MarketDataProvider
+    vm             StrategyVM
+    strategies     map[string]*RunningStrategy
+    mutex          sync.RWMutex
+}
+
+type RunningStrategy struct {
+    Strategy     *domain.Strategy
+    Context      *StrategyContext
+    Status       domain.StrategyStatus
+    LastExecuted time.Time
+    StopChan     chan struct{}
+}
+
+type StrategyContext struct {
+    StrategyID   string
+    Symbol       string
+    Parameters   map[string]interface{}
+    Positions    map[string]*domain.Position
+    Orders       map[string]*domain.Order
+    MarketData   map[string]interface{}
+}
+
+func NewStrategyEngine(
+    tradingService *service.TradingService,
+    marketData MarketDataProvider,
+    vm StrategyVM,
+) *StrategyEngine {
+    return &StrategyEngine{
+        tradingService: tradingService,
+        marketData:     marketData,
+        vm:             vm,
+        strategies:     make(map[string]*RunningStrategy),
+    }
+}
+
+// 戦略開始
+func (se *StrategyEngine) StartStrategy(ctx context.Context, strategyID string) error {
+    se.mutex.Lock()
+    defer se.mutex.Unlock()
+    
+    // 戦略取得
+    strategy, err := se.tradingService.GetStrategy(ctx, strategyID)
+    if err != nil {
+        return fmt.Errorf("failed to get strategy: %w", err)
+    }
+    
+    // 既に実行中の場合はエラー
+    if _, exists := se.strategies[strategyID]; exists {
+        return fmt.Errorf("strategy %s is already running", strategyID)
+    }
+    
+    // 戦略コンテキスト作成
+    context := &StrategyContext{
+        StrategyID: strategyID,
+        Symbol:     strategy.Symbol,
+        Parameters: strategy.Parameters,
+        Positions:  make(map[string]*domain.Position),
+        Orders:     make(map[string]*domain.Order),
+        MarketData: make(map[string]interface{}),
+    }
+    
+    // 実行中戦略として登録
+    runningStrategy := &RunningStrategy{
+        Strategy:     strategy,
+        Context:      context,
+        Status:       domain.StrategyStatusActive,
+        LastExecuted: time.Now(),
+        StopChan:     make(chan struct{}),
+    }
+    
+    se.strategies[strategyID] = runningStrategy
+    
+    // 戦略実行ループ開始
+    go se.runStrategyLoop(ctx, runningStrategy)
+    
+    // 戦略ステータス更新
+    strategy.Status = domain.StrategyStatusActive
+    strategy.StartedAt = &time.Now()
+    if err := se.tradingService.UpdateStrategy(ctx, strategy); err != nil {
+        return fmt.Errorf("failed to update strategy status: %w", err)
+    }
+    
+    return nil
+}
+
+// 戦略停止
+func (se *StrategyEngine) StopStrategy(ctx context.Context, strategyID string) error {
+    se.mutex.Lock()
+    defer se.mutex.Unlock()
+    
+    runningStrategy, exists := se.strategies[strategyID]
+    if !exists {
+        return fmt.Errorf("strategy %s is not running", strategyID)
+    }
+    
+    // 停止シグナル送信
+    close(runningStrategy.StopChan)
+    
+    // 戦略ステータス更新
+    strategy := runningStrategy.Strategy
+    strategy.Status = domain.StrategyStatusStopped
+    strategy.StoppedAt = &time.Now()
+    if err := se.tradingService.UpdateStrategy(ctx, strategy); err != nil {
+        return fmt.Errorf("failed to update strategy status: %w", err)
+    }
+    
+    // 実行中戦略から削除
+    delete(se.strategies, strategyID)
+    
+    return nil
+}
+
+// 戦略実行ループ
+func (se *StrategyEngine) runStrategyLoop(ctx context.Context, runningStrategy *RunningStrategy) {
+    strategy := runningStrategy.Strategy
+    context := runningStrategy.Context
+    
+    ticker := time.NewTicker(1 * time.Minute) // 1分間隔で実行
+    defer ticker.Stop()
+    
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-runningStrategy.StopChan:
+            return
+        case <-ticker.C:
+            if err := se.executeStrategy(ctx, runningStrategy); err != nil {
+                // エラーログ記録
+                log.Printf("Strategy execution error: %v", err)
+            }
+            runningStrategy.LastExecuted = time.Now()
+        }
+    }
+}
+
+// 戦略実行
+func (se *StrategyEngine) executeStrategy(ctx context.Context, runningStrategy *RunningStrategy) error {
+    strategy := runningStrategy.Strategy
+    context := runningStrategy.Context
+    
+    // 市場データ取得
+    marketData, err := se.getMarketData(ctx, strategy.Symbol)
+    if err != nil {
+        return fmt.Errorf("failed to get market data: %w", err)
+    }
+    context.MarketData = marketData
+    
+    // ポジション情報更新
+    positions, err := se.tradingService.GetPositionsByStrategy(ctx, strategy.ID)
+    if err != nil {
+        return fmt.Errorf("failed to get positions: %w", err)
+    }
+    context.Positions = positions
+    
+    // 注文情報更新
+    orders, err := se.tradingService.GetOrdersByStrategy(ctx, strategy.ID)
+    if err != nil {
+        return fmt.Errorf("failed to get orders: %w", err)
+    }
+    context.Orders = orders
+    
+    // 戦略スクリプト実行
+    signals, err := se.vm.ExecuteStrategy(ctx, strategy.Template, context)
+    if err != nil {
+        return fmt.Errorf("failed to execute strategy script: %w", err)
+    }
+    
+    // シグナル処理
+    for _, signal := range signals {
+        if err := se.processSignal(ctx, strategy, signal); err != nil {
+            log.Printf("Failed to process signal: %v", err)
+        }
+    }
+    
+    return nil
+}
+
+// シグナル処理
+func (se *StrategyEngine) processSignal(ctx context.Context, strategy *domain.Strategy, signal *Signal) error {
+    switch signal.Type {
+    case SignalTypeBuy:
+        return se.executeBuySignal(ctx, strategy, signal)
+    case SignalTypeSell:
+        return se.executeSellSignal(ctx, strategy, signal)
+    case SignalTypeStopLoss:
+        return se.executeStopLossSignal(ctx, strategy, signal)
+    case SignalTypeTakeProfit:
+        return se.executeTakeProfitSignal(ctx, strategy, signal)
+    default:
+        return fmt.Errorf("unknown signal type: %s", signal.Type)
+    }
+}
+
+// 買いシグナル実行
+func (se *StrategyEngine) executeBuySignal(ctx context.Context, strategy *domain.Strategy, signal *Signal) error {
+    // ポジションサイズ計算
+    positionSize, err := se.tradingService.CalculatePositionSize(ctx, strategy.ID, strategy.Symbol, signal.RiskAmount)
+    if err != nil {
+        return fmt.Errorf("failed to calculate position size: %w", err)
+    }
+    
+    // 注文作成
+    orderReq := &service.CreateOrderRequest{
+        StrategyID:    strategy.ID,
+        Symbol:        strategy.Symbol,
+        Side:          domain.OrderSideBuy,
+        OrderType:     domain.OrderTypeMarket,
+        Quantity:      positionSize,
+        ClientOrderID: generateClientOrderID(),
+    }
+    
+    _, err = se.tradingService.CreateOrder(ctx, orderReq)
+    if err != nil {
+        return fmt.Errorf("failed to create buy order: %w", err)
+    }
+    
+    return nil
+}
+```
+
+## 4. バックテスト規約
+
+### 4.1 バックテストエンジン
+```go
+// バックテストエンジン
+package backtest
+
+import (
+    "context"
+    "fmt"
+    "time"
+    "github.com/your-org/trading-system/internal/domain"
+)
+
+type BacktestEngine struct {
+    dataProvider DataProvider
+    strategyVM   StrategyVM
+    riskManager  RiskManager
+}
+
+type BacktestRequest struct {
+    StrategyID    string                 `json:"strategy_id"`
+    StartDate     time.Time              `json:"start_date"`
+    EndDate       time.Time              `json:"end_date"`
+    Symbol        string                 `json:"symbol"`
+    Parameters    map[string]interface{} `json:"parameters"`
+    InitialCapital float64               `json:"initial_capital"`
+    Commission    float64                `json:"commission"`
+    Slippage      float64                `json:"slippage"`
+}
+
+type BacktestResult struct {
+    StrategyID      string                 `json:"strategy_id"`
+    StartDate       time.Time              `json:"start_date"`
+    EndDate         time.Time              `json:"end_date"`
+    InitialCapital  float64                `json:"initial_capital"`
+    FinalCapital    float64                `json:"final_capital"`
+    TotalReturn     float64                `json:"total_return"`
+    AnnualReturn    float64                `json:"annual_return"`
+    SharpeRatio     float64                `json:"sharpe_ratio"`
+    MaxDrawdown     float64                `json:"max_drawdown"`
+    WinRate         float64                `json:"win_rate"`
+    ProfitFactor    float64                `json:"profit_factor"`
+    TotalTrades     int                    `json:"total_trades"`
+    WinningTrades   int                    `json:"winning_trades"`
+    LosingTrades    int                    `json:"losing_trades"`
+    AverageWin      float64                `json:"average_win"`
+    AverageLoss     float64                `json:"average_loss"`
+    EquityCurve     []EquityPoint          `json:"equity_curve"`
+    Trades          []BacktestTrade        `json:"trades"`
+    MonthlyReturns  []MonthlyReturn        `json:"monthly_returns"`
+}
+
+type EquityPoint struct {
+    Date   time.Time `json:"date"`
+    Equity float64   `json:"equity"`
+}
+
+type BacktestTrade struct {
+    ID          string    `json:"id"`
+    Symbol      string    `json:"symbol"`
+    Side        string    `json:"side"`
+    Quantity    int       `json:"quantity"`
+    EntryPrice  float64   `json:"entry_price"`
+    ExitPrice   float64   `json:"exit_price"`
+    EntryTime   time.Time `json:"entry_time"`
+    ExitTime    time.Time `json:"exit_time"`
+    PnL         float64   `json:"pnl"`
+    Commission  float64   `json:"commission"`
+    Slippage    float64   `json:"slippage"`
+}
+
+type MonthlyReturn struct {
+    Year   int     `json:"year"`
+    Month  int     `json:"month"`
+    Return float64 `json:"return"`
+}
+
+func NewBacktestEngine(
+    dataProvider DataProvider,
+    strategyVM StrategyVM,
+    riskManager RiskManager,
+) *BacktestEngine {
+    return &BacktestEngine{
+        dataProvider: dataProvider,
+        strategyVM:   strategyVM,
+        riskManager:  riskManager,
+    }
+}
+
+// バックテスト実行
+func (be *BacktestEngine) RunBacktest(ctx context.Context, req *BacktestRequest) (*BacktestResult, error) {
+    // データ取得
+    data, err := be.dataProvider.GetHistoricalData(ctx, req.Symbol, req.StartDate, req.EndDate)
+    if err != nil {
+        return nil, fmt.Errorf("failed to get historical data: %w", err)
+    }
+    
+    // バックテスト状態初期化
+    state := &BacktestState{
+        Capital:     req.InitialCapital,
+        Positions:   make(map[string]*Position),
+        Orders:      make(map[string]*Order),
+        Trades:      make([]*BacktestTrade, 0),
+        EquityCurve: make([]EquityPoint, 0),
+    }
+    
+    // 戦略コンテキスト作成
+    context := &StrategyContext{
+        StrategyID: req.StrategyID,
+        Symbol:     req.Symbol,
+        Parameters: req.Parameters,
+        MarketData: make(map[string]interface{}),
+    }
+    
+    // バーごとに処理
+    for i, bar := range data {
+        // 市場データ更新
+        context.MarketData = be.prepareMarketData(data[:i+1])
+        
+        // 戦略実行
+        signals, err := be.strategyVM.ExecuteStrategy(ctx, "backtest", context)
+        if err != nil {
+            return nil, fmt.Errorf("failed to execute strategy: %w", err)
+        }
+        
+        // シグナル処理
+        for _, signal := range signals {
+            if err := be.processBacktestSignal(ctx, state, signal, bar, req); err != nil {
+                return nil, fmt.Errorf("failed to process signal: %w", err)
+            }
+        }
+        
+        // ポジション更新
+        be.updatePositions(state, bar)
+        
+        // エクイティカーブ更新
+        equity := be.calculateEquity(state, bar.Close)
+        state.EquityCurve = append(state.EquityCurve, EquityPoint{
+            Date:   bar.Timestamp,
+            Equity: equity,
+        })
+    }
+    
+    // 結果計算
+    result := be.calculateBacktestResult(req, state)
+    
+    return result, nil
+}
+
+// バックテストシグナル処理
+func (be *BacktestEngine) processBacktestSignal(
+    ctx context.Context,
+    state *BacktestState,
+    signal *Signal,
+    bar *Bar,
+    req *BacktestRequest,
+) error {
+    switch signal.Type {
+    case SignalTypeBuy:
+        return be.executeBacktestBuy(state, signal, bar, req)
+    case SignalTypeSell:
+        return be.executeBacktestSell(state, signal, bar, req)
+    default:
+        return fmt.Errorf("unknown signal type: %s", signal.Type)
+    }
+}
+
+// バックテスト買い実行
+func (be *BacktestEngine) executeBacktestBuy(
+    state *BacktestState,
+    signal *Signal,
+    bar *Bar,
+    req *BacktestRequest,
+) error {
+    // ポジションサイズ計算
+    positionSize := int(signal.RiskAmount / bar.Close)
+    if positionSize < 1 {
+        return nil
+    }
+    
+    // 資金チェック
+    requiredCapital := float64(positionSize) * bar.Close * (1 + req.Commission + req.Slippage)
+    if requiredCapital > state.Capital {
+        positionSize = int(state.Capital / (bar.Close * (1 + req.Commission + req.Slippage)))
+        if positionSize < 1 {
+            return nil
+        }
+    }
+    
+    // ポジション作成
+    position := &Position{
+        Symbol:       signal.Symbol,
+        Side:         "LONG",
+        Quantity:     positionSize,
+        EntryPrice:   bar.Close,
+        EntryTime:    bar.Timestamp,
+    }
+    
+    state.Positions[signal.Symbol] = position
+    state.Capital -= float64(positionSize) * bar.Close * (1 + req.Commission + req.Slippage)
+    
+    return nil
+}
+
+// バックテスト結果計算
+func (be *BacktestEngine) calculateBacktestResult(req *BacktestRequest, state *BacktestState) *BacktestResult {
+    finalCapital := be.calculateEquity(state, 0) // 最終価格で計算
+    
+    result := &BacktestResult{
+        StrategyID:     req.StrategyID,
+        StartDate:      req.StartDate,
+        EndDate:        req.EndDate,
+        InitialCapital: req.InitialCapital,
+        FinalCapital:   finalCapital,
+        TotalReturn:    (finalCapital - req.InitialCapital) / req.InitialCapital,
+        Trades:         make([]BacktestTrade, len(state.Trades)),
+        EquityCurve:    state.EquityCurve,
+    }
+    
+    // 年率リターン計算
+    duration := req.EndDate.Sub(req.StartDate)
+    years := duration.Hours() / 8760
+    if years > 0 {
+        result.AnnualReturn = (finalCapital/req.InitialCapital - 1) / years
+    }
+    
+    // シャープレシオ計算
+    result.SharpeRatio = be.calculateSharpeRatio(state.EquityCurve)
+    
+    // 最大ドローダウン計算
+    result.MaxDrawdown = be.calculateMaxDrawdown(state.EquityCurve)
+    
+    // 取引統計計算
+    be.calculateTradeStatistics(state.Trades, result)
+    
+    // 月次リターン計算
+    result.MonthlyReturns = be.calculateMonthlyReturns(state.EquityCurve)
+    
+    return result
+}
+```
+
+## 5. パフォーマンス監視規約
+
+### 5.1 パフォーマンスメトリクス
+```go
+// パフォーマンスメトリクス
+package performance
+
+import (
+    "time"
+    "math"
+)
+
+type PerformanceMetrics struct {
+    StrategyID      string    `json:"strategy_id"`
+    TotalReturn     float64   `json:"total_return"`
+    AnnualReturn    float64   `json:"annual_return"`
+    SharpeRatio     float64   `json:"sharpe_ratio"`
+    SortinoRatio    float64   `json:"sortino_ratio"`
+    MaxDrawdown     float64   `json:"max_drawdown"`
+    CalmarRatio     float64   `json:"calmar_ratio"`
+    WinRate         float64   `json:"win_rate"`
+    ProfitFactor    float64   `json:"profit_factor"`
+    AverageWin      float64   `json:"average_win"`
+    AverageLoss     float64   `json:"average_loss"`
+    LargestWin      float64   `json:"largest_win"`
+    LargestLoss     float64   `json:"largest_loss"`
+    TotalTrades     int       `json:"total_trades"`
+    WinningTrades   int       `json:"winning_trades"`
+    LosingTrades    int       `json:"losing_trades"`
+    AverageHoldingPeriod time.Duration `json:"average_holding_period"`
+    LastUpdated     time.Time `json:"last_updated"`
+}
+
+type PerformanceCalculator struct{}
+
+func NewPerformanceCalculator() *PerformanceCalculator {
+    return &PerformanceCalculator{}
+}
+
+// シャープレシオ計算
+func (pc *PerformanceCalculator) CalculateSharpeRatio(returns []float64, riskFreeRate float64) float64 {
+    if len(returns) == 0 {
+        return 0
+    }
+    
+    // 平均リターン計算
+    var sum float64
+    for _, r := range returns {
+        sum += r
+    }
+    meanReturn := sum / float64(len(returns))
+    
+    // 標準偏差計算
+    var variance float64
+    for _, r := range returns {
+        variance += math.Pow(r-meanReturn, 2)
+    }
+    stdDev := math.Sqrt(variance / float64(len(returns)))
+    
+    if stdDev == 0 {
+        return 0
+    }
+    
+    return (meanReturn - riskFreeRate) / stdDev
+}
+
+// 最大ドローダウン計算
+func (pc *PerformanceCalculator) CalculateMaxDrawdown(equityCurve []float64) float64 {
+    if len(equityCurve) == 0 {
+        return 0
+    }
+    
+    var maxDrawdown float64
+    var peak float64 = equityCurve[0]
+    
+    for _, equity := range equityCurve {
+        if equity > peak {
+            peak = equity
+        }
+        
+        drawdown := (peak - equity) / peak
+        if drawdown > maxDrawdown {
+            maxDrawdown = drawdown
+        }
+    }
+    
+    return maxDrawdown
+}
+
+// 勝率計算
+func (pc *PerformanceCalculator) CalculateWinRate(trades []*domain.Trade) float64 {
+    if len(trades) == 0 {
+        return 0
+    }
+    
+    winningTrades := 0
+    for _, trade := range trades {
+        if trade.PnL > 0 {
+            winningTrades++
+        }
+    }
+    
+    return float64(winningTrades) / float64(len(trades))
+}
+
+// プロフィットファクター計算
+func (pc *PerformanceCalculator) CalculateProfitFactor(trades []*domain.Trade) float64 {
+    var grossProfit float64
+    var grossLoss float64
+    
+    for _, trade := range trades {
+        if trade.PnL > 0 {
+            grossProfit += trade.PnL
+        } else {
+            grossLoss += math.Abs(trade.PnL)
+        }
+    }
+    
+    if grossLoss == 0 {
+        return 0
+    }
+    
+    return grossProfit / grossLoss
+}
+```
+
+## 6. 実装チェックリスト
+
+### 6.1 取引ドメイン実装
+- [ ] エンティティ設計の完成
+- [ ] リポジトリインターフェースの定義
+- [ ] ドメインサービスの実装
+- [ ] 取引フローの実装
+- [ ] エラーハンドリングの実装
+- [ ] バリデーションの実装
+
+### 6.2 リスク管理実装
+- [ ] リスク管理インターフェースの定義
+- [ ] ポジションサイズ制限の実装
+- [ ] 日次損失制限の実装
+- [ ] ドローダウン制限の実装
+- [ ] リスクベースポジションサイズ計算の実装
+- [ ] リスクメトリクスの実装
+
+### 6.3 戦略実行実装
+- [ ] 戦略実行エンジンの実装
+- [ ] 戦略コンテキスト管理の実装
+- [ ] シグナル処理の実装
+- [ ] 注文実行の実装
+- [ ] ポジション管理の実装
+- [ ] エラー処理の実装
+
+### 6.4 バックテスト実装
+- [ ] バックテストエンジンの実装
+- [ ] データプロバイダーの実装
+- [ ] シグナル処理の実装
+- [ ] パフォーマンス計算の実装
+- [ ] 結果レポートの実装
+- [ ] 最適化機能の実装

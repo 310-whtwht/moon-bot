@@ -1,0 +1,988 @@
+# Monitoring Standards & Best Practices
+
+## 1. Prometheusメトリクス規約
+
+### 1.1 メトリクス定義
+```go
+// Prometheusメトリクス定義
+package metrics
+
+import (
+    "github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+var (
+    // HTTPメトリクス
+    httpRequestsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "http_requests_total",
+            Help: "Total number of HTTP requests",
+        },
+        []string{"method", "endpoint", "status"},
+    )
+    
+    httpRequestDuration = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name:    "http_request_duration_seconds",
+            Help:    "HTTP request duration in seconds",
+            Buckets: prometheus.DefBuckets,
+        },
+        []string{"method", "endpoint"},
+    )
+    
+    // データベースメトリクス
+    dbConnectionsActive = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "db_connections_active",
+            Help: "Number of active database connections",
+        },
+        []string{"database"},
+    )
+    
+    dbQueryDuration = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name:    "db_query_duration_seconds",
+            Help:    "Database query duration in seconds",
+            Buckets: prometheus.DefBuckets,
+        },
+        []string{"database", "query_type"},
+    )
+    
+    // Redisメトリクス
+    redisConnectionsActive = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "redis_connections_active",
+            Help: "Number of active Redis connections",
+        },
+        []string{"instance"},
+    )
+    
+    redisCommandsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "redis_commands_total",
+            Help: "Total number of Redis commands",
+        },
+        []string{"command", "status"},
+    )
+    
+    // 取引メトリクス
+    tradingOrdersTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "trading_orders_total",
+            Help: "Total number of trading orders",
+        },
+        []string{"strategy_id", "symbol", "side", "status"},
+    )
+    
+    tradingTradesTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "trading_trades_total",
+            Help: "Total number of trades",
+        },
+        []string{"strategy_id", "symbol", "side"},
+    )
+    
+    tradingPnL = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "trading_pnl",
+            Help: "Current PnL for strategies",
+        },
+        []string{"strategy_id", "symbol"},
+    )
+    
+    // 戦略メトリクス
+    strategyExecutionsTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "strategy_executions_total",
+            Help: "Total number of strategy executions",
+        },
+        []string{"strategy_id", "status"},
+    )
+    
+    strategyExecutionDuration = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name:    "strategy_execution_duration_seconds",
+            Help:    "Strategy execution duration in seconds",
+            Buckets: prometheus.DefBuckets,
+        },
+        []string{"strategy_id"},
+    )
+    
+    // システムメトリクス
+    systemGoroutines = prometheus.NewGauge(
+        prometheus.GaugeOpts{
+            Name: "system_goroutines",
+            Help: "Number of goroutines",
+        },
+    )
+    
+    systemMemoryUsage = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "system_memory_usage_bytes",
+            Help: "Memory usage in bytes",
+        },
+        []string{"type"},
+    )
+    
+    // ブローカー接続メトリクス
+    brokerConnectionStatus = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "broker_connection_status",
+            Help: "Broker connection status (1=connected, 0=disconnected)",
+        },
+        []string{"broker"},
+    )
+    
+    brokerOrdersTotal = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "broker_orders_total",
+            Help: "Total number of broker orders",
+        },
+        []string{"broker", "status"},
+    )
+    
+    brokerOrderLatency = prometheus.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name:    "broker_order_latency_seconds",
+            Help:    "Broker order latency in seconds",
+            Buckets: prometheus.DefBuckets,
+        },
+        []string{"broker"},
+    )
+)
+
+// メトリクス初期化
+func init() {
+    // メトリクスを登録
+    prometheus.MustRegister(
+        httpRequestsTotal,
+        httpRequestDuration,
+        dbConnectionsActive,
+        dbQueryDuration,
+        redisConnectionsActive,
+        redisCommandsTotal,
+        tradingOrdersTotal,
+        tradingTradesTotal,
+        tradingPnL,
+        strategyExecutionsTotal,
+        strategyExecutionDuration,
+        systemGoroutines,
+        systemMemoryUsage,
+        brokerConnectionStatus,
+        brokerOrdersTotal,
+        brokerOrderLatency,
+    )
+}
+```
+
+### 1.2 メトリクス収集
+```go
+// メトリクス収集
+package metrics
+
+import (
+    "context"
+    "runtime"
+    "time"
+    "github.com/prometheus/client_golang/prometheus"
+)
+
+type MetricsCollector struct {
+    ticker *time.Ticker
+    stop   chan struct{}
+}
+
+func NewMetricsCollector() *MetricsCollector {
+    return &MetricsCollector{
+        ticker: time.NewTicker(30 * time.Second),
+        stop:   make(chan struct{}),
+    }
+}
+
+// メトリクス収集開始
+func (mc *MetricsCollector) Start() {
+    go mc.collect()
+}
+
+// メトリクス収集停止
+func (mc *MetricsCollector) Stop() {
+    close(mc.stop)
+    mc.ticker.Stop()
+}
+
+// メトリクス収集ループ
+func (mc *MetricsCollector) collect() {
+    for {
+        select {
+        case <-mc.stop:
+            return
+        case <-mc.ticker.C:
+            mc.collectSystemMetrics()
+        }
+    }
+}
+
+// システムメトリクス収集
+func (mc *MetricsCollector) collectSystemMetrics() {
+    // ゴルーチン数
+    systemGoroutines.Set(float64(runtime.NumGoroutine()))
+    
+    // メモリ使用量
+    var m runtime.MemStats
+    runtime.ReadMemStats(&m)
+    
+    systemMemoryUsage.WithLabelValues("alloc").Set(float64(m.Alloc))
+    systemMemoryUsage.WithLabelValues("total_alloc").Set(float64(m.TotalAlloc))
+    systemMemoryUsage.WithLabelValues("sys").Set(float64(m.Sys))
+    systemMemoryUsage.WithLabelValues("heap_alloc").Set(float64(m.HeapAlloc))
+    systemMemoryUsage.WithLabelValues("heap_sys").Set(float64(m.HeapSys))
+}
+
+// HTTPメトリクス記録
+func RecordHTTPRequest(method, endpoint string, status int, duration time.Duration) {
+    httpRequestsTotal.WithLabelValues(method, endpoint, string(status)).Inc()
+    httpRequestDuration.WithLabelValues(method, endpoint).Observe(duration.Seconds())
+}
+
+// データベースメトリクス記録
+func RecordDBQuery(database, queryType string, duration time.Duration) {
+    dbQueryDuration.WithLabelValues(database, queryType).Observe(duration.Seconds())
+}
+
+// Redisメトリクス記録
+func RecordRedisCommand(command, status string) {
+    redisCommandsTotal.WithLabelValues(command, status).Inc()
+}
+
+// 取引メトリクス記録
+func RecordTradingOrder(strategyID, symbol, side, status string) {
+    tradingOrdersTotal.WithLabelValues(strategyID, symbol, side, status).Inc()
+}
+
+func RecordTradingTrade(strategyID, symbol, side string) {
+    tradingTradesTotal.WithLabelValues(strategyID, symbol, side).Inc()
+}
+
+func UpdateTradingPnL(strategyID, symbol string, pnl float64) {
+    tradingPnL.WithLabelValues(strategyID, symbol).Set(pnl)
+}
+
+// 戦略メトリクス記録
+func RecordStrategyExecution(strategyID, status string, duration time.Duration) {
+    strategyExecutionsTotal.WithLabelValues(strategyID, status).Inc()
+    strategyExecutionDuration.WithLabelValues(strategyID).Observe(duration.Seconds())
+}
+
+// ブローカー接続メトリクス記録
+func UpdateBrokerConnectionStatus(broker string, connected bool) {
+    status := 0
+    if connected {
+        status = 1
+    }
+    brokerConnectionStatus.WithLabelValues(broker).Set(float64(status))
+}
+
+func RecordBrokerOrder(broker, status string, latency time.Duration) {
+    brokerOrdersTotal.WithLabelValues(broker, status).Inc()
+    brokerOrderLatency.WithLabelValues(broker).Observe(latency.Seconds())
+}
+```
+
+## 2. Grafanaダッシュボード規約
+
+### 2.1 ダッシュボード定義
+```json
+{
+  "dashboard": {
+    "id": null,
+    "title": "Trading System Dashboard",
+    "tags": ["trading", "system"],
+    "style": "dark",
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "System Overview",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "system_goroutines",
+            "legendFormat": "Goroutines"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "displayMode": "list"
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "HTTP Requests",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total[5m])",
+            "legendFormat": "{{method}} {{endpoint}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Requests per second"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "HTTP Response Time",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "95th percentile"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Response time (seconds)"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Database Connections",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "db_connections_active",
+            "legendFormat": "{{database}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Active connections"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Trading Orders",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(trading_orders_total[5m])",
+            "legendFormat": "{{strategy_id}} {{symbol}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Orders per second"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Strategy PnL",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "trading_pnl",
+            "legendFormat": "{{strategy_id}} {{symbol}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "PnL"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Broker Connection Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "broker_connection_status",
+            "legendFormat": "{{broker}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": null
+                },
+                {
+                  "color": "green",
+                  "value": 1
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Memory Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "system_memory_usage_bytes",
+            "legendFormat": "{{type}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Memory (bytes)"
+          }
+        ]
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s"
+  }
+}
+```
+
+### 2.2 アラート設定
+```yaml
+# Grafanaアラート設定
+groups:
+  - name: trading_system_alerts
+    rules:
+      # システムアラート
+      - alert: HighGoroutineCount
+        expr: system_goroutines > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High goroutine count"
+          description: "Goroutine count is {{ $value }}"
+      
+      - alert: HighMemoryUsage
+        expr: system_memory_usage_bytes{type="alloc"} > 1e9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value }} bytes"
+      
+      # HTTPアラート
+      - alert: HighHTTPErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High HTTP error rate"
+          description: "HTTP error rate is {{ $value }}"
+      
+      - alert: SlowHTTPResponse
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow HTTP response"
+          description: "95th percentile response time is {{ $value }}s"
+      
+      # データベースアラート
+      - alert: DatabaseConnectionHigh
+        expr: db_connections_active > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High database connections"
+          description: "Database connections: {{ $value }}"
+      
+      - alert: SlowDatabaseQueries
+        expr: histogram_quantile(0.95, rate(db_query_duration_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow database queries"
+          description: "95th percentile query time is {{ $value }}s"
+      
+      # 取引アラート
+      - alert: HighOrderErrorRate
+        expr: rate(trading_orders_total{status="rejected"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High order error rate"
+          description: "Order error rate is {{ $value }}"
+      
+      - alert: StrategyExecutionFailure
+        expr: rate(strategy_executions_total{status="error"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Strategy execution failures"
+          description: "Strategy execution error rate is {{ $value }}"
+      
+      # ブローカーアラート
+      - alert: BrokerDisconnected
+        expr: broker_connection_status == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Broker disconnected"
+          description: "Broker connection is down"
+      
+      - alert: HighBrokerLatency
+        expr: histogram_quantile(0.95, rate(broker_order_latency_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High broker latency"
+          description: "95th percentile broker latency is {{ $value }}s"
+```
+
+## 3. ログ出力規約
+
+### 3.1 ログ設定
+```go
+// ログ設定
+package logging
+
+import (
+    "context"
+    "encoding/json"
+    "fmt"
+    "log"
+    "os"
+    "time"
+    "go.uber.org/zap"
+    "go.uber.org/zap/zapcore"
+)
+
+type Logger struct {
+    zap *zap.Logger
+}
+
+type LogEntry struct {
+    Timestamp   time.Time              `json:"timestamp"`
+    Level       string                 `json:"level"`
+    Message     string                 `json:"message"`
+    Service     string                 `json:"service"`
+    TraceID     string                 `json:"trace_id,omitempty"`
+    UserID      string                 `json:"user_id,omitempty"`
+    StrategyID  string                 `json:"strategy_id,omitempty"`
+    OrderID     string                 `json:"order_id,omitempty"`
+    Symbol      string                 `json:"symbol,omitempty"`
+    Duration    time.Duration          `json:"duration,omitempty"`
+    Error       string                 `json:"error,omitempty"`
+    Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+func NewLogger(service string, level string) (*Logger, error) {
+    // ログレベル設定
+    logLevel, err := zapcore.ParseLevel(level)
+    if err != nil {
+        return nil, fmt.Errorf("invalid log level: %w", err)
+    }
+    
+    // エンコーダー設定
+    encoderConfig := zap.NewProductionEncoderConfig()
+    encoderConfig.TimeKey = "timestamp"
+    encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+    encoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
+    
+    // 出力設定
+    var outputs []zapcore.WriteSyncer
+    outputs = append(outputs, zapcore.AddSync(os.Stdout))
+    
+    // ファイル出力（本番環境）
+    if os.Getenv("ENV") == "production" {
+        file, err := os.OpenFile("/var/log/trading-system/app.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+        if err == nil {
+            outputs = append(outputs, zapcore.AddSync(file))
+        }
+    }
+    
+    // ロガー作成
+    core := zapcore.NewCore(
+        zapcore.NewJSONEncoder(encoderConfig),
+        zapcore.NewMultiWriteSyncer(outputs...),
+        logLevel,
+    )
+    
+    logger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
+    
+    return &Logger{zap: logger}, nil
+}
+
+// ログ出力メソッド
+func (l *Logger) Info(ctx context.Context, message string, fields map[string]interface{}) {
+    entry := l.createLogEntry(ctx, "INFO", message, fields)
+    l.zap.Info(message, l.convertFields(entry)...)
+}
+
+func (l *Logger) Warn(ctx context.Context, message string, fields map[string]interface{}) {
+    entry := l.createLogEntry(ctx, "WARN", message, fields)
+    l.zap.Warn(message, l.convertFields(entry)...)
+}
+
+func (l *Logger) Error(ctx context.Context, message string, fields map[string]interface{}) {
+    entry := l.createLogEntry(ctx, "ERROR", message, fields)
+    l.zap.Error(message, l.convertFields(entry)...)
+}
+
+func (l *Logger) Debug(ctx context.Context, message string, fields map[string]interface{}) {
+    entry := l.createLogEntry(ctx, "DEBUG", message, fields)
+    l.zap.Debug(message, l.convertFields(entry)...)
+}
+
+// ログエントリ作成
+func (l *Logger) createLogEntry(ctx context.Context, level, message string, fields map[string]interface{}) LogEntry {
+    entry := LogEntry{
+        Timestamp: time.Now(),
+        Level:     level,
+        Message:   message,
+        Service:   "trading-system",
+        Metadata:  fields,
+    }
+    
+    // コンテキストから値を取得
+    if traceID, ok := ctx.Value("trace_id").(string); ok {
+        entry.TraceID = traceID
+    }
+    
+    if userID, ok := ctx.Value("user_id").(string); ok {
+        entry.UserID = userID
+    }
+    
+    // フィールドから値を取得
+    if strategyID, ok := fields["strategy_id"].(string); ok {
+        entry.StrategyID = strategyID
+    }
+    
+    if orderID, ok := fields["order_id"].(string); ok {
+        entry.OrderID = orderID
+    }
+    
+    if symbol, ok := fields["symbol"].(string); ok {
+        entry.Symbol = symbol
+    }
+    
+    if duration, ok := fields["duration"].(time.Duration); ok {
+        entry.Duration = duration
+    }
+    
+    if err, ok := fields["error"].(error); ok {
+        entry.Error = err.Error()
+    }
+    
+    return entry
+}
+
+// フィールド変換
+func (l *Logger) convertFields(entry LogEntry) []zap.Field {
+    var fields []zap.Field
+    
+    if entry.TraceID != "" {
+        fields = append(fields, zap.String("trace_id", entry.TraceID))
+    }
+    
+    if entry.UserID != "" {
+        fields = append(fields, zap.String("user_id", entry.UserID))
+    }
+    
+    if entry.StrategyID != "" {
+        fields = append(fields, zap.String("strategy_id", entry.StrategyID))
+    }
+    
+    if entry.OrderID != "" {
+        fields = append(fields, zap.String("order_id", entry.OrderID))
+    }
+    
+    if entry.Symbol != "" {
+        fields = append(fields, zap.String("symbol", entry.Symbol))
+    }
+    
+    if entry.Duration > 0 {
+        fields = append(fields, zap.Duration("duration", entry.Duration))
+    }
+    
+    if entry.Error != "" {
+        fields = append(fields, zap.String("error", entry.Error))
+    }
+    
+    // メタデータを追加
+    for key, value := range entry.Metadata {
+        fields = append(fields, zap.Any(key, value))
+    }
+    
+    return fields
+}
+```
+
+### 3.2 構造化ログ
+```go
+// 構造化ログ
+package logging
+
+import (
+    "context"
+    "time"
+)
+
+// 取引ログ
+func (l *Logger) LogOrderCreated(ctx context.Context, orderID, strategyID, symbol, side string, quantity int, price float64) {
+    l.Info(ctx, "Order created", map[string]interface{}{
+        "order_id":    orderID,
+        "strategy_id": strategyID,
+        "symbol":      symbol,
+        "side":        side,
+        "quantity":    quantity,
+        "price":       price,
+        "event_type":  "order_created",
+    })
+}
+
+func (l *Logger) LogOrderFilled(ctx context.Context, orderID, strategyID, symbol string, quantity int, price float64, commission float64) {
+    l.Info(ctx, "Order filled", map[string]interface{}{
+        "order_id":    orderID,
+        "strategy_id": strategyID,
+        "symbol":      symbol,
+        "quantity":    quantity,
+        "price":       price,
+        "commission":  commission,
+        "event_type":  "order_filled",
+    })
+}
+
+func (l *Logger) LogOrderCancelled(ctx context.Context, orderID, strategyID, symbol, reason string) {
+    l.Warn(ctx, "Order cancelled", map[string]interface{}{
+        "order_id":    orderID,
+        "strategy_id": strategyID,
+        "symbol":      symbol,
+        "reason":      reason,
+        "event_type":  "order_cancelled",
+    })
+}
+
+// 戦略ログ
+func (l *Logger) LogStrategyStarted(ctx context.Context, strategyID, symbol string, parameters map[string]interface{}) {
+    l.Info(ctx, "Strategy started", map[string]interface{}{
+        "strategy_id": strategyID,
+        "symbol":      symbol,
+        "parameters":  parameters,
+        "event_type":  "strategy_started",
+    })
+}
+
+func (l *Logger) LogStrategyStopped(ctx context.Context, strategyID, symbol, reason string) {
+    l.Info(ctx, "Strategy stopped", map[string]interface{}{
+        "strategy_id": strategyID,
+        "symbol":      symbol,
+        "reason":      reason,
+        "event_type":  "strategy_stopped",
+    })
+}
+
+func (l *Logger) LogStrategyError(ctx context.Context, strategyID, symbol string, err error) {
+    l.Error(ctx, "Strategy error", map[string]interface{}{
+        "strategy_id": strategyID,
+        "symbol":      symbol,
+        "error":       err,
+        "event_type":  "strategy_error",
+    })
+}
+
+// システムログ
+func (l *Logger) LogSystemStartup(ctx context.Context, version string, config map[string]interface{}) {
+    l.Info(ctx, "System startup", map[string]interface{}{
+        "version":    version,
+        "config":     config,
+        "event_type": "system_startup",
+    })
+}
+
+func (l *Logger) LogSystemShutdown(ctx context.Context, reason string) {
+    l.Info(ctx, "System shutdown", map[string]interface{}{
+        "reason":     reason,
+        "event_type": "system_shutdown",
+    })
+}
+
+// パフォーマンスログ
+func (l *Logger) LogPerformance(ctx context.Context, operation string, duration time.Duration, metadata map[string]interface{}) {
+    fields := map[string]interface{}{
+        "operation":  operation,
+        "duration":   duration,
+        "event_type": "performance",
+    }
+    
+    // メタデータをマージ
+    for key, value := range metadata {
+        fields[key] = value
+    }
+    
+    l.Info(ctx, "Performance measurement", fields)
+}
+```
+
+## 4. アラート設定規約
+
+### 4.1 アラート通知
+```go
+// アラート通知
+package alerting
+
+import (
+    "context"
+    "encoding/json"
+    "fmt"
+    "net/http"
+    "time"
+)
+
+type AlertManager struct {
+    webhookURL string
+    client     *http.Client
+}
+
+type Alert struct {
+    Title       string                 `json:"title"`
+    Message     string                 `json:"message"`
+    Severity    string                 `json:"severity"`
+    Service     string                 `json:"service"`
+    Timestamp   time.Time              `json:"timestamp"`
+    Labels      map[string]string      `json:"labels"`
+    Annotations map[string]interface{} `json:"annotations"`
+}
+
+func NewAlertManager(webhookURL string) *AlertManager {
+    return &AlertManager{
+        webhookURL: webhookURL,
+        client: &http.Client{
+            Timeout: 10 * time.Second,
+        },
+    }
+}
+
+// アラート送信
+func (am *AlertManager) SendAlert(ctx context.Context, alert *Alert) error {
+    payload, err := json.Marshal(alert)
+    if err != nil {
+        return fmt.Errorf("failed to marshal alert: %w", err)
+    }
+    
+    req, err := http.NewRequestWithContext(ctx, "POST", am.webhookURL, bytes.NewBuffer(payload))
+    if err != nil {
+        return fmt.Errorf("failed to create request: %w", err)
+    }
+    
+    req.Header.Set("Content-Type", "application/json")
+    
+    resp, err := am.client.Do(req)
+    if err != nil {
+        return fmt.Errorf("failed to send alert: %w", err)
+    }
+    defer resp.Body.Close()
+    
+    if resp.StatusCode != http.StatusOK {
+        return fmt.Errorf("alert sending failed with status: %d", resp.StatusCode)
+    }
+    
+    return nil
+}
+
+// アラート作成ヘルパー
+func (am *AlertManager) CreateAlert(title, message, severity string, labels map[string]string, annotations map[string]interface{}) *Alert {
+    return &Alert{
+        Title:       title,
+        Message:     message,
+        Severity:    severity,
+        Service:     "trading-system",
+        Timestamp:   time.Now(),
+        Labels:      labels,
+        Annotations: annotations,
+    }
+}
+
+// システムアラート
+func (am *AlertManager) SendSystemAlert(ctx context.Context, title, message string, severity string) error {
+    alert := am.CreateAlert(title, message, severity, nil, nil)
+    return am.SendAlert(ctx, alert)
+}
+
+// 取引アラート
+func (am *AlertManager) SendTradingAlert(ctx context.Context, title, message, strategyID, symbol string, severity string) error {
+    labels := map[string]string{
+        "strategy_id": strategyID,
+        "symbol":      symbol,
+    }
+    
+    alert := am.CreateAlert(title, message, severity, labels, nil)
+    return am.SendAlert(ctx, alert)
+}
+
+// エラーアラート
+func (am *AlertManager) SendErrorAlert(ctx context.Context, title string, err error, metadata map[string]interface{}) error {
+    annotations := map[string]interface{}{
+        "error": err.Error(),
+    }
+    
+    // メタデータをマージ
+    for key, value := range metadata {
+        annotations[key] = value
+    }
+    
+    alert := am.CreateAlert(title, err.Error(), "critical", nil, annotations)
+    return am.SendAlert(ctx, alert)
+}
+```
+
+## 5. 実装チェックリスト
+
+### 5.1 メトリクス実装
+- [ ] Prometheusメトリクス定義の実装
+- [ ] メトリクス収集の実装
+- [ ] カスタムメトリクスの実装
+- [ ] メトリクスエクスポートの実装
+- [ ] メトリクス監視の実装
+
+### 5.2 ダッシュボード実装
+- [ ] Grafanaダッシュボードの作成
+- [ ] パネルの設定
+- [ ] クエリの最適化
+- [ ] アラートの設定
+- [ ] ダッシュボードの更新
+
+### 5.3 ログ実装
+- [ ] 構造化ログの実装
+- [ ] ログレベルの設定
+- [ ] ログ出力の設定
+- [ ] ログローテーションの設定
+- [ ] ログ監視の実装
+
+### 5.4 アラート実装
+- [ ] アラートルールの設定
+- [ ] アラート通知の実装
+- [ ] アラートエスカレーションの実装
+- [ ] アラート抑制の実装
+- [ ] アラート履歴の管理

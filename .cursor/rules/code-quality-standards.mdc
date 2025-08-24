@@ -1,0 +1,419 @@
+# Code Quality Standards & Best Practices
+
+## 1. コード品質規約
+
+### 1.1 命名規約
+```go
+// 良い例
+type OrderService struct {
+    repository OrderRepository
+    logger     *zap.Logger
+}
+
+func (s *OrderService) CreateOrder(ctx context.Context, req CreateOrderRequest) (*Order, error) {
+    // 実装
+}
+
+// 悪い例
+type os struct {
+    repo OrderRepository
+    log  *zap.Logger
+}
+
+func (o *os) create(ctx context.Context, r CreateOrderRequest) (*Order, error) {
+    // 実装
+}
+```
+
+### 1.2 エラーハンドリング
+```go
+// 良い例
+func (s *OrderService) ProcessOrder(ctx context.Context, orderID string) error {
+    order, err := s.repository.GetByID(ctx, orderID)
+    if err != nil {
+        return fmt.Errorf("failed to get order %s: %w", orderID, err)
+    }
+    
+    if order.Status == OrderStatusFilled {
+        return ErrOrderAlreadyFilled
+    }
+    
+    return nil
+}
+
+// カスタムエラー
+var (
+    ErrOrderNotFound     = errors.New("order not found")
+    ErrOrderAlreadyFilled = errors.New("order already filled")
+    ErrInvalidOrderState = errors.New("invalid order state")
+)
+```
+
+### 1.3 関数設計
+```go
+// 単一責任の原則
+func (s *OrderService) ValidateOrder(order *Order) error {
+    if order.Quantity <= 0 {
+        return ErrInvalidQuantity
+    }
+    
+    if order.Price <= 0 {
+        return ErrInvalidPrice
+    }
+    
+    return nil
+}
+
+func (s *OrderService) CalculateCommission(order *Order) decimal.Decimal {
+    // 手数料計算ロジック
+    return order.Price.Mul(order.Quantity).Mul(decimal.NewFromFloat(0.001))
+}
+
+// 関数の長さ制限（50行以内）
+func (s *OrderService) ProcessOrder(ctx context.Context, orderID string) error {
+    // バリデーション
+    if err := s.validateOrderID(orderID); err != nil {
+        return err
+    }
+    
+    // 注文取得
+    order, err := s.repository.GetByID(ctx, orderID)
+    if err != nil {
+        return err
+    }
+    
+    // 処理実行
+    return s.executeOrder(ctx, order)
+}
+```
+
+## 2. 静的解析規約
+
+### 2.1 golangci-lint設定
+```yaml
+# .golangci.yml
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - gofmt
+    - goimports
+    - govet
+    - errcheck
+    - staticcheck
+    - gosimple
+    - ineffassign
+    - unused
+    - misspell
+    - gosec
+    - gocyclo
+    - dupl
+    - goconst
+    - gocritic
+    - godot
+    - gomnd
+    - goprintffuncname
+    - gosec
+    - gosimple
+    - govet
+    - ineffassign
+    - misspell
+    - nakedret
+    - noctx
+    - nolintlint
+    - rowserrcheck
+    - staticcheck
+    - structcheck
+    - stylecheck
+    - typecheck
+    - unconvert
+    - unparam
+    - unused
+    - varcheck
+    - whitespace
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+  dupl:
+    threshold: 100
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+  gomnd:
+    checks: argument,case,condition,operation,return,assign
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+    disabled-checks:
+      - commentFormatting
+      - hugeParam
+      - ifElseChain
+      - octalLiteral
+      - whyNoLint
+      - wrapperFunc
+```
+
+### 2.2 コード複雑度制御
+```go
+// 複雑度が高い関数の分割例
+// Before: 複雑度 25
+func (s *OrderService) ProcessComplexOrder(ctx context.Context, order *Order) error {
+    // 50行の複雑なロジック
+}
+
+// After: 複雑度 8, 5, 6
+func (s *OrderService) ProcessComplexOrder(ctx context.Context, order *Order) error {
+    if err := s.validateOrder(order); err != nil {
+        return err
+    }
+    
+    if err := s.calculateRisk(order); err != nil {
+        return err
+    }
+    
+    return s.executeOrder(ctx, order)
+}
+
+func (s *OrderService) validateOrder(order *Order) error {
+    // バリデーションロジック
+}
+
+func (s *OrderService) calculateRisk(order *Order) error {
+    // リスク計算ロジック
+}
+
+func (s *OrderService) executeOrder(ctx context.Context, order *Order) error {
+    // 実行ロジック
+}
+```
+
+## 3. コードレビュー規約
+
+### 3.1 レビューチェックリスト
+```markdown
+## コードレビューチェックリスト
+
+### 機能面
+- [ ] 要件を満たしているか
+- [ ] エラーハンドリングが適切か
+- [ ] エッジケースを考慮しているか
+- [ ] パフォーマンスに問題はないか
+
+### コード品質
+- [ ] 命名が適切か
+- [ ] 関数の長さは適切か（50行以内）
+- [ ] 複雑度は適切か（15以下）
+- [ ] 重複コードはないか
+- [ ] コメントは必要十分か
+
+### セキュリティ
+- [ ] SQLインジェクション対策はされているか
+- [ ] 入力値の検証はされているか
+- [ ] 機密情報の露出はないか
+- [ ] 認証・認可は適切か
+
+### テスト
+- [ ] 単体テストは書かれているか
+- [ ] テストカバレッジは十分か（80%以上）
+- [ ] エッジケースのテストはあるか
+- [ ] モックは適切に使われているか
+
+### ドキュメント
+- [ ] READMEは更新されているか
+- [ ] APIドキュメントは更新されているか
+- [ ] 変更履歴は記録されているか
+```
+
+### 3.2 レビューコメント例
+```go
+// 良いレビューコメント例
+
+// 1. 具体的な改善提案
+// この関数は複雑度が高いので、以下のように分割することを提案します：
+// - validateOrder()
+// - calculateRisk()
+// - executeOrder()
+
+// 2. セキュリティの指摘
+// このクエリはSQLインジェクションの脆弱性があります。
+// プリペアドステートメントを使用してください。
+
+// 3. パフォーマンスの指摘
+// このループ内でDBクエリを実行しているため、N+1問題が発生します。
+// バッチ処理またはJOINを使用してください。
+
+// 4. エラーハンドリングの指摘
+// このエラーは上位に伝播させるべきです。
+// ログ出力だけでなく、エラーを返してください。
+
+// 5. 命名の指摘
+// 変数名 'tmp' は具体的でないため、'orderSummary' のような
+// 意味のある名前に変更してください。
+```
+
+## 4. リファクタリング規約
+
+### 4.1 リファクタリングパターン
+```go
+// 1. メソッド抽出
+// Before
+func (s *OrderService) ProcessOrder(ctx context.Context, order *Order) error {
+    // バリデーション
+    if order.Quantity <= 0 {
+        return ErrInvalidQuantity
+    }
+    if order.Price <= 0 {
+        return ErrInvalidPrice
+    }
+    
+    // ビジネスロジック
+    commission := order.Price.Mul(order.Quantity).Mul(decimal.NewFromFloat(0.001))
+    order.Commission = commission
+    
+    // 保存
+    return s.repository.Save(ctx, order)
+}
+
+// After
+func (s *OrderService) ProcessOrder(ctx context.Context, order *Order) error {
+    if err := s.validateOrder(order); err != nil {
+        return err
+    }
+    
+    s.calculateCommission(order)
+    
+    return s.repository.Save(ctx, order)
+}
+
+func (s *OrderService) validateOrder(order *Order) error {
+    if order.Quantity <= 0 {
+        return ErrInvalidQuantity
+    }
+    if order.Price <= 0 {
+        return ErrInvalidPrice
+    }
+    return nil
+}
+
+func (s *OrderService) calculateCommission(order *Order) {
+    commission := order.Price.Mul(order.Quantity).Mul(decimal.NewFromFloat(0.001))
+    order.Commission = commission
+}
+
+// 2. 条件分岐の簡素化
+// Before
+func (s *OrderService) GetOrderStatus(order *Order) string {
+    if order.Status == "PENDING" {
+        return "pending"
+    } else if order.Status == "FILLED" {
+        return "filled"
+    } else if order.Status == "CANCELLED" {
+        return "cancelled"
+    } else {
+        return "unknown"
+    }
+}
+
+// After
+func (s *OrderService) GetOrderStatus(order *Order) string {
+    statusMap := map[string]string{
+        "PENDING":   "pending",
+        "FILLED":    "filled",
+        "CANCELLED": "cancelled",
+    }
+    
+    if status, exists := statusMap[order.Status]; exists {
+        return status
+    }
+    return "unknown"
+}
+
+// 3. 早期リターン
+// Before
+func (s *OrderService) ProcessOrder(ctx context.Context, order *Order) error {
+    if order != nil {
+        if order.Status != "CANCELLED" {
+            if order.Quantity > 0 {
+                return s.executeOrder(ctx, order)
+            } else {
+                return ErrInvalidQuantity
+            }
+        } else {
+            return ErrOrderCancelled
+        }
+    } else {
+        return ErrOrderNotFound
+    }
+}
+
+// After
+func (s *OrderService) ProcessOrder(ctx context.Context, order *Order) error {
+    if order == nil {
+        return ErrOrderNotFound
+    }
+    
+    if order.Status == "CANCELLED" {
+        return ErrOrderCancelled
+    }
+    
+    if order.Quantity <= 0 {
+        return ErrInvalidQuantity
+    }
+    
+    return s.executeOrder(ctx, order)
+}
+```
+
+### 4.2 リファクタリングチェックリスト
+```markdown
+## リファクタリングチェックリスト
+
+### 準備
+- [ ] テストが十分にあるか
+- [ ] 現在の動作を理解しているか
+- [ ] リファクタリングの範囲を明確にしているか
+
+### 実行
+- [ ] 小さなステップで進めているか
+- [ ] 各ステップでテストが通るか
+- [ ] コミットメッセージは適切か
+
+### 完了
+- [ ] 機能が変わっていないか
+- [ ] パフォーマンスは維持されているか
+- [ ] コードが読みやすくなったか
+- [ ] 複雑度は下がったか
+```
+
+## 5. 実装チェックリスト
+
+### 5.1 コード品質
+- [ ] 命名規約の遵守
+- [ ] エラーハンドリングの実装
+- [ ] 関数設計の最適化
+- [ ] コメントの適切な記述
+
+### 5.2 静的解析
+- [ ] golangci-lintの設定
+- [ ] コード複雑度の制御
+- [ ] 重複コードの除去
+- [ ] セキュリティチェックの実装
+
+### 5.3 コードレビュー
+- [ ] レビューチェックリストの作成
+- [ ] レビュープロセスの確立
+- [ ] レビューコメントの標準化
+- [ ] レビュー効率の向上
+
+### 5.4 リファクタリング
+- [ ] リファクタリングパターンの実装
+- [ ] リファクタリングチェックリストの作成
+- [ ] 継続的リファクタリングの実践
+- [ ] 技術的負債の管理
