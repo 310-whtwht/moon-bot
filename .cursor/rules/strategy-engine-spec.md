@@ -1,0 +1,865 @@
+# 戦略エンジン仕様（Starlark VM）
+
+## 1. Starlark VM設定
+
+### 1.1 VM設定
+```go
+type VMConfig struct {
+    MaxExecutionTime time.Duration `json:"max_execution_time"` // 最大実行時間（5秒）
+    MaxMemoryUsage   int64         `json:"max_memory_usage"`   // 最大メモリ使用量（100MB）
+    MaxIterations    int           `json:"max_iterations"`     // 最大ループ回数（10000）
+    EnableRecursion  bool          `json:"enable_recursion"`   // 再帰許可（false）
+    ThreadPoolSize   int           `json:"thread_pool_size"`   // スレッドプールサイズ（4）
+}
+```
+
+### 1.2 VM初期化
+```go
+func NewStrategyVM(config VMConfig) *starlark.Thread {
+    thread := &starlark.Thread{
+        Name: "strategy_vm",
+        Print: func(thread *starlark.Thread, msg string) {
+            log.Printf("[Strategy] %s", msg)
+        },
+    }
+    
+    // 実行時間制限
+    thread.SetMaxExecutionSteps(config.MaxIterations)
+    
+    // メモリ制限
+    thread.SetMaxMemoryUsage(config.MaxMemoryUsage)
+    
+    return thread
+}
+```
+
+## 2. ビルトイン関数
+
+### 2.1 注文関連関数
+```python
+# 注文発注
+def place_order(symbol, side, order_type, quantity, price=None, stop_price=None, trailing_percent=None):
+    """
+    注文を発注する
+    
+    Args:
+        symbol (str): 銘柄コード
+        side (str): buy/sell
+        order_type (str): market/limit/stop/stop_limit/trailing
+        quantity (int): 数量
+        price (float, optional): 指値価格
+        stop_price (float, optional): ストップ価格
+        trailing_percent (float, optional): トレーリング幅（%）
+    
+    Returns:
+        dict: 注文結果
+    """
+    pass
+
+# 注文キャンセル
+def cancel_order(order_id):
+    """
+    注文をキャンセルする
+    
+    Args:
+        order_id (str): 注文ID
+    
+    Returns:
+        bool: キャンセル成功
+    """
+    pass
+
+# 注文一覧取得
+def get_orders(symbol=None, status=None):
+    """
+    注文一覧を取得する
+    
+    Args:
+        symbol (str, optional): 銘柄コード
+        status (str, optional): 注文状態
+    
+    Returns:
+        list: 注文一覧
+    """
+    pass
+```
+
+### 2.2 データ取得関数
+```python
+# 市場データ取得
+def get_market_data(symbol, timeframe, limit=100):
+    """
+    市場データを取得する
+    
+    Args:
+        symbol (str): 銘柄コード
+        timeframe (str): 時間足（1m, 5m, 15m, 1d）
+        limit (int): 取得件数
+    
+    Returns:
+        list: OHLCVデータ
+    """
+    pass
+
+# 現在価格取得
+def get_current_price(symbol):
+    """
+    現在価格を取得する
+    
+    Args:
+        symbol (str): 銘柄コード
+    
+    Returns:
+        float: 現在価格
+    """
+    pass
+
+# ポジション取得
+def get_positions(symbol=None):
+    """
+    ポジションを取得する
+    
+    Args:
+        symbol (str, optional): 銘柄コード
+    
+    Returns:
+        list: ポジション一覧
+    """
+    pass
+```
+
+### 2.3 テクニカル指標関数
+```python
+# 移動平均
+def sma(data, period):
+    """
+    単純移動平均を計算する
+    
+    Args:
+        data (list): 価格データ
+        period (int): 期間
+    
+    Returns:
+        list: SMA値
+    """
+    pass
+
+def ema(data, period):
+    """
+    指数移動平均を計算する
+    
+    Args:
+        data (list): 価格データ
+        period (int): 期間
+    
+    Returns:
+        list: EMA値
+    """
+    pass
+
+# RSI
+def rsi(data, period=14):
+    """
+    RSIを計算する
+    
+    Args:
+        data (list): 価格データ
+        period (int): 期間
+    
+    Returns:
+        list: RSI値
+    """
+    pass
+
+# ボリンジャーバンド
+def bollinger_bands(data, period=20, std_dev=2):
+    """
+    ボリンジャーバンドを計算する
+    
+    Args:
+        data (list): 価格データ
+        period (int): 期間
+        std_dev (float): 標準偏差
+    
+    Returns:
+        dict: 上バンド、中バンド、下バンド
+    """
+    pass
+
+# ATR
+def atr(high, low, close, period=14):
+    """
+    ATRを計算する
+    
+    Args:
+        high (list): 高値データ
+        low (list): 安値データ
+        close (list): 終値データ
+        period (int): 期間
+    
+    Returns:
+        list: ATR値
+    """
+    pass
+
+# MACD
+def macd(data, fast_period=12, slow_period=26, signal_period=9):
+    """
+    MACDを計算する
+    
+    Args:
+        data (list): 価格データ
+        fast_period (int): 短期EMA期間
+        slow_period (int): 長期EMA期間
+        signal_period (int): シグナル期間
+    
+    Returns:
+        dict: MACD、シグナル、ヒストグラム
+    """
+    pass
+```
+
+### 2.4 リスク管理関数
+```python
+# サイズ計算
+def calculate_position_size(symbol, risk_per_trade, stop_loss_pct=None, atr_multiplier=None):
+    """
+    ポジションサイズを計算する
+    
+    Args:
+        symbol (str): 銘柄コード
+        risk_per_trade (float): 1トレードあたりのリスク（%）
+        stop_loss_pct (float, optional): ストップロス幅（%）
+        atr_multiplier (float, optional): ATR倍率
+    
+    Returns:
+        int: 数量
+    """
+    pass
+
+# ドローダウン計算
+def calculate_drawdown(equity_curve):
+    """
+    ドローダウンを計算する
+    
+    Args:
+        equity_curve (list): エクイティカーブ
+    
+    Returns:
+        float: 最大ドローダウン（%）
+    """
+    pass
+
+# リスクチェック
+def check_risk_limits():
+    """
+    リスク制限をチェックする
+    
+    Returns:
+        bool: リスク制限内
+    """
+    pass
+```
+
+### 2.5 ログ・通知関数
+```python
+# ログ出力
+def log_info(message):
+    """情報ログを出力する"""
+    pass
+
+def log_warning(message):
+    """警告ログを出力する"""
+    pass
+
+def log_error(message):
+    """エラーログを出力する"""
+    pass
+
+# 通知送信
+def send_notification(message, level="info"):
+    """
+    通知を送信する
+    
+    Args:
+        message (str): メッセージ
+        level (str): レベル（info, warning, error）
+    """
+    pass
+```
+
+## 3. 戦略テンプレート
+
+### 3.1 EMA クロス戦略
+```python
+# EMA クロス戦略テンプレート
+def ema_cross_strategy():
+    # パラメータ
+    fast_period = 9
+    slow_period = 21
+    min_volume = 100000
+    atr_sl = 2.0
+    atr_tp = 3.0
+    risk_per_trade = 0.0025
+    
+    def on_bar(context, data):
+        symbol = context.symbol
+        current_price = get_current_price(symbol)
+        
+        # 市場データ取得
+        market_data = get_market_data(symbol, "1d", 50)
+        if len(market_data) < slow_period:
+            return
+        
+        # 価格データ抽出
+        closes = [bar['close'] for bar in market_data]
+        volumes = [bar['volume'] for bar in market_data]
+        
+        # 指標計算
+        fast_ema = ema(closes, fast_period)
+        slow_ema = ema(closes, slow_period)
+        atr_values = atr(
+            [bar['high'] for bar in market_data],
+            [bar['low'] for bar in market_data],
+            closes,
+            14
+        )
+        
+        # 現在の値
+        current_fast_ema = fast_ema[-1]
+        current_slow_ema = slow_ema[-1]
+        current_atr = atr_values[-1]
+        current_volume = volumes[-1]
+        
+        # ポジション確認
+        positions = get_positions(symbol)
+        has_position = len(positions) > 0
+        
+        # シグナル生成
+        if not has_position and current_volume >= min_volume:
+            # 買いシグナル
+            if current_fast_ema > current_slow_ema and fast_ema[-2] <= slow_ema[-2]:
+                # サイズ計算
+                quantity = calculate_position_size(symbol, risk_per_trade, atr_sl * current_atr / current_price)
+                
+                # 注文発注
+                stop_loss = current_price - (atr_sl * current_atr)
+                take_profit = current_price + (atr_tp * current_atr)
+                
+                order = place_order(
+                    symbol=symbol,
+                    side="buy",
+                    order_type="market",
+                    quantity=quantity
+                )
+                
+                log_info(f"Buy signal: {symbol} at {current_price}, SL: {stop_loss}, TP: {take_profit}")
+                
+            # 売りシグナル
+            elif current_fast_ema < current_slow_ema and fast_ema[-2] >= slow_ema[-2]:
+                # 空売りチェック
+                if check_short_allowed(symbol):
+                    quantity = calculate_position_size(symbol, risk_per_trade, atr_sl * current_atr / current_price)
+                    
+                    stop_loss = current_price + (atr_sl * current_atr)
+                    take_profit = current_price - (atr_tp * current_atr)
+                    
+                    order = place_order(
+                        symbol=symbol,
+                        side="sell",
+                        order_type="market",
+                        quantity=quantity
+                    )
+                    
+                    log_info(f"Sell signal: {symbol} at {current_price}, SL: {stop_loss}, TP: {take_profit}")
+        
+        # 決済シグナル
+        elif has_position:
+            position = positions[0]
+            if position['side'] == 'long' and current_fast_ema < current_slow_ema:
+                # ロング決済
+                cancel_order(position['order_id'])
+                log_info(f"Close long position: {symbol}")
+            elif position['side'] == 'short' and current_fast_ema > current_slow_ema:
+                # ショート決済
+                cancel_order(position['order_id'])
+                log_info(f"Close short position: {symbol}")
+    
+    return on_bar
+```
+
+### 3.2 RSI リバーサル戦略
+```python
+# RSI リバーサル戦略テンプレート
+def rsi_reversal_strategy():
+    # パラメータ
+    period = 14
+    buy_threshold = 30
+    sell_threshold = 70
+    hold_max_bars = 10
+    trail_atr = 1.5
+    risk_per_trade = 0.0025
+    
+    def on_bar(context, data):
+        symbol = context.symbol
+        current_price = get_current_price(symbol)
+        
+        # 市場データ取得
+        market_data = get_market_data(symbol, "1d", 50)
+        if len(market_data) < period:
+            return
+        
+        # 価格データ抽出
+        closes = [bar['close'] for bar in market_data]
+        
+        # RSI計算
+        rsi_values = rsi(closes, period)
+        current_rsi = rsi_values[-1]
+        
+        # ATR計算
+        atr_values = atr(
+            [bar['high'] for bar in market_data],
+            [bar['low'] for bar in market_data],
+            closes,
+            14
+        )
+        current_atr = atr_values[-1]
+        
+        # ポジション確認
+        positions = get_positions(symbol)
+        has_position = len(positions) > 0
+        
+        # シグナル生成
+        if not has_position:
+            # 買いシグナル（RSI 30以下）
+            if current_rsi <= buy_threshold:
+                quantity = calculate_position_size(symbol, risk_per_trade, trail_atr * current_atr / current_price)
+                
+                order = place_order(
+                    symbol=symbol,
+                    side="buy",
+                    order_type="market",
+                    quantity=quantity
+                )
+                
+                log_info(f"RSI buy signal: {symbol} at {current_price}, RSI: {current_rsi}")
+                
+            # 売りシグナル（RSI 70以上）
+            elif current_rsi >= sell_threshold:
+                if check_short_allowed(symbol):
+                    quantity = calculate_position_size(symbol, risk_per_trade, trail_atr * current_atr / current_price)
+                    
+                    order = place_order(
+                        symbol=symbol,
+                        side="sell",
+                        order_type="market",
+                        quantity=quantity
+                    )
+                    
+                    log_info(f"RSI sell signal: {symbol} at {current_price}, RSI: {current_rsi}")
+        
+        # 決済シグナル
+        elif has_position:
+            position = positions[0]
+            bars_held = context.bars_held
+            
+            # 最大保有期間チェック
+            if bars_held >= hold_max_bars:
+                cancel_order(position['order_id'])
+                log_info(f"Close position due to max hold time: {symbol}")
+                return
+            
+            # 反対シグナルでの決済
+            if position['side'] == 'long' and current_rsi >= sell_threshold:
+                cancel_order(position['order_id'])
+                log_info(f"Close long position due to RSI: {symbol}")
+            elif position['side'] == 'short' and current_rsi <= buy_threshold:
+                cancel_order(position['order_id'])
+                log_info(f"Close short position due to RSI: {symbol}")
+    
+    return on_bar
+```
+
+### 3.3 ブレイクアウト戦略
+```python
+# ブレイクアウト戦略テンプレート
+def breakout_strategy():
+    # パラメータ
+    lookback = 20
+    filter_atr = 1.0
+    atr_sl = 1.5
+    atr_tp = 3.0
+    risk_per_trade = 0.0025
+    
+    def on_bar(context, data):
+        symbol = context.symbol
+        current_price = get_current_price(symbol)
+        
+        # 市場データ取得
+        market_data = get_market_data(symbol, "1d", lookback + 10)
+        if len(market_data) < lookback:
+            return
+        
+        # 価格データ抽出
+        highs = [bar['high'] for bar in market_data]
+        lows = [bar['low'] for bar in market_data]
+        closes = [bar['close'] for bar in market_data]
+        
+        # ATR計算
+        atr_values = atr(highs, lows, closes, 14)
+        current_atr = atr_values[-1]
+        
+        # フィルター条件
+        if current_atr < filter_atr:
+            return
+        
+        # ブレイクアウト計算
+        lookback_high = max(highs[-lookback:-1])
+        lookback_low = min(lows[-lookback:-1])
+        
+        # ポジション確認
+        positions = get_positions(symbol)
+        has_position = len(positions) > 0
+        
+        # シグナル生成
+        if not has_position:
+            # 上ブレイクアウト
+            if current_price > lookback_high:
+                quantity = calculate_position_size(symbol, risk_per_trade, atr_sl * current_atr / current_price)
+                
+                stop_loss = current_price - (atr_sl * current_atr)
+                take_profit = current_price + (atr_tp * current_atr)
+                
+                order = place_order(
+                    symbol=symbol,
+                    side="buy",
+                    order_type="market",
+                    quantity=quantity
+                )
+                
+                log_info(f"Breakout buy signal: {symbol} at {current_price}, SL: {stop_loss}, TP: {take_profit}")
+                
+            # 下ブレイクアウト
+            elif current_price < lookback_low:
+                if check_short_allowed(symbol):
+                    quantity = calculate_position_size(symbol, risk_per_trade, atr_sl * current_atr / current_price)
+                    
+                    stop_loss = current_price + (atr_sl * current_atr)
+                    take_profit = current_price - (atr_tp * current_atr)
+                    
+                    order = place_order(
+                        symbol=symbol,
+                        side="sell",
+                        order_type="market",
+                        quantity=quantity
+                    )
+                    
+                    log_info(f"Breakout sell signal: {symbol} at {current_price}, SL: {stop_loss}, TP: {take_profit}")
+        
+        # 決済シグナル
+        elif has_position:
+            position = positions[0]
+            if position['side'] == 'long' and current_price < lookback_low:
+                cancel_order(position['order_id'])
+                log_info(f"Close long position due to breakdown: {symbol}")
+            elif position['side'] == 'short' and current_price > lookback_high:
+                cancel_order(position['order_id'])
+                log_info(f"Close short position due to breakout: {symbol}")
+    
+    return on_bar
+```
+
+### 3.4 一目均衡表戦略
+```python
+# 一目均衡表戦略テンプレート
+def ichimoku_strategy():
+    # パラメータ
+    tenkan_period = 9
+    kijun_period = 26
+    span_b_period = 52
+    cloud_min_thickness = 0.005  # 0.5%
+    lag_confirm = True
+    
+    def on_bar(context, data):
+        symbol = context.symbol
+        current_price = get_current_price(symbol)
+        
+        # 市場データ取得
+        market_data = get_market_data(symbol, "1d", 100)
+        if len(market_data) < span_b_period + 26:
+            return
+        
+        # 価格データ抽出
+        highs = [bar['high'] for bar in market_data]
+        lows = [bar['low'] for bar in market_data]
+        closes = [bar['close'] for bar in market_data]
+        
+        # 一目均衡表計算
+        tenkan = calculate_tenkan(highs, lows, tenkan_period)
+        kijun = calculate_kijun(highs, lows, kijun_period)
+        span_a = (tenkan + kijun) / 2
+        span_b = calculate_span_b(highs, lows, span_b_period)
+        
+        # 雲の計算
+        cloud_high = max(span_a[-26], span_b[-26])
+        cloud_low = min(span_a[-26], span_b[-26])
+        cloud_thickness = (cloud_high - cloud_low) / cloud_low
+        
+        # 遅行スパン
+        lagging_span = closes[-26] if len(closes) >= 26 else None
+        
+        # ポジション確認
+        positions = get_positions(symbol)
+        has_position = len(positions) > 0
+        
+        # シグナル生成
+        if not has_position and cloud_thickness >= cloud_min_thickness:
+            # 買いシグナル
+            above_cloud = current_price > cloud_high
+            tenkan_above_kijun = tenkan[-1] > kijun[-1]
+            lagging_above_price = lagging_span > closes[-26] if lag_confirm else True
+            
+            if above_cloud and tenkan_above_kijun and lagging_above_price:
+                quantity = calculate_position_size(symbol, 0.0025)
+                
+                order = place_order(
+                    symbol=symbol,
+                    side="buy",
+                    order_type="market",
+                    quantity=quantity
+                )
+                
+                log_info(f"Ichimoku buy signal: {symbol} at {current_price}")
+                
+            # 売りシグナル
+            below_cloud = current_price < cloud_low
+            tenkan_below_kijun = tenkan[-1] < kijun[-1]
+            lagging_below_price = lagging_span < closes[-26] if lag_confirm else True
+            
+            if below_cloud and tenkan_below_kijun and lagging_below_price:
+                if check_short_allowed(symbol):
+                    quantity = calculate_position_size(symbol, 0.0025)
+                    
+                    order = place_order(
+                        symbol=symbol,
+                        side="sell",
+                        order_type="market",
+                        quantity=quantity
+                    )
+                    
+                    log_info(f"Ichimoku sell signal: {symbol} at {current_price}")
+        
+        # 決済シグナル
+        elif has_position:
+            position = positions[0]
+            if position['side'] == 'long' and current_price < cloud_low:
+                cancel_order(position['order_id'])
+                log_info(f"Close long position due to cloud breakdown: {symbol}")
+            elif position['side'] == 'short' and current_price > cloud_high:
+                cancel_order(position['order_id'])
+                log_info(f"Close short position due to cloud breakout: {symbol}")
+    
+    return on_bar
+```
+
+## 4. イベントハンドリング
+
+### 4.1 on_bar イベント
+```python
+def on_bar(context, data):
+    """
+    新しいバーが生成されたときに呼び出される
+    
+    Args:
+        context: 戦略コンテキスト
+        data: 市場データ
+    """
+    pass
+```
+
+### 4.2 on_order_fill イベント
+```python
+def on_order_fill(context, order):
+    """
+    注文が約定したときに呼び出される
+    
+    Args:
+        context: 戦略コンテキスト
+        order: 約定注文情報
+    """
+    pass
+```
+
+### 4.3 コンテキストオブジェクト
+```python
+class StrategyContext:
+    def __init__(self):
+        self.symbol = ""           # 銘柄コード
+        self.strategy_id = ""      # 戦略ID
+        self.parameters = {}       # パラメータ
+        self.state = {}           # 状態管理
+        self.bars_held = 0        # 保有バー数
+        self.last_signal = None   # 最終シグナル
+        self.equity = 0.0         # 現在のエクイティ
+```
+
+## 5. 状態管理
+
+### 5.1 状態永続化
+```python
+# 状態保存
+def save_state(context, key, value):
+    """
+    状態を保存する
+    
+    Args:
+        context: 戦略コンテキスト
+        key (str): キー
+        value: 値
+    """
+    context.state[key] = value
+
+# 状態取得
+def get_state(context, key, default=None):
+    """
+    状態を取得する
+    
+    Args:
+        context: 戦略コンテキスト
+        key (str): キー
+        default: デフォルト値
+    
+    Returns:
+        保存された値
+    """
+    return context.state.get(key, default)
+```
+
+### 5.2 状態例
+```python
+# トレーリングストップの状態管理
+def manage_trailing_stop(context, position, atr_multiplier=2.0):
+    symbol = context.symbol
+    current_price = get_current_price(symbol)
+    
+    # 現在のストップ価格を取得
+    current_stop = get_state(context, f"{symbol}_trailing_stop")
+    
+    if position['side'] == 'long':
+        # ロングポジションのトレーリングストップ
+        new_stop = current_price - (atr_multiplier * get_atr(symbol))
+        if current_stop is None or new_stop > current_stop:
+            save_state(context, f"{symbol}_trailing_stop", new_stop)
+            # ストップ注文更新
+            update_stop_order(position['order_id'], new_stop)
+    
+    elif position['side'] == 'short':
+        # ショートポジションのトレーリングストップ
+        new_stop = current_price + (atr_multiplier * get_atr(symbol))
+        if current_stop is None or new_stop < current_stop:
+            save_state(context, f"{symbol}_trailing_stop", new_stop)
+            # ストップ注文更新
+            update_stop_order(position['order_id'], new_stop)
+```
+
+## 6. エラーハンドリング
+
+### 6.1 実行時エラー処理
+```python
+def safe_execute_strategy(strategy_func, context, data):
+    """
+    戦略を安全に実行する
+    
+    Args:
+        strategy_func: 戦略関数
+        context: 戦略コンテキスト
+        data: 市場データ
+    
+    Returns:
+        error: エラー情報
+    """
+    try:
+        strategy_func(context, data)
+        return None
+    except Exception as e:
+        log_error(f"Strategy execution error: {e}")
+        send_notification(f"Strategy error: {e}", "error")
+        return e
+```
+
+### 6.2 タイムアウト処理
+```python
+def execute_with_timeout(strategy_func, context, data, timeout=5):
+    """
+    タイムアウト付きで戦略を実行する
+    
+    Args:
+        strategy_func: 戦略関数
+        context: 戦略コンテキスト
+        data: 市場データ
+        timeout (int): タイムアウト秒数
+    
+    Returns:
+        error: エラー情報
+    """
+    import signal
+    
+    def timeout_handler(signum, frame):
+        raise TimeoutError("Strategy execution timeout")
+    
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(timeout)
+    
+    try:
+        strategy_func(context, data)
+        signal.alarm(0)
+        return None
+    except TimeoutError as e:
+        log_error(f"Strategy timeout: {e}")
+        return e
+    except Exception as e:
+        signal.alarm(0)
+        log_error(f"Strategy error: {e}")
+        return e
+```
+
+## 7. パフォーマンス監視
+
+### 7.1 実行時間監視
+```python
+def monitor_execution_time(func):
+    """
+    実行時間を監視するデコレータ
+    
+    Args:
+        func: 監視対象関数
+    
+    Returns:
+        デコレートされた関数
+    """
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        execution_time = time.time() - start_time
+        
+        if execution_time > 1.0:  # 1秒以上
+            log_warning(f"Slow execution: {func.__name__} took {execution_time:.2f}s")
+        
+        return result
+    return wrapper
+```
+
+### 7.2 メモリ使用量監視
+```python
+def monitor_memory_usage():
+    """
+    メモリ使用量を監視する
+    
+    Returns:
+        float: メモリ使用量（MB）
+    """
+    import psutil
+    process = psutil.Process()
+    memory_info = process.memory_info()
+    return memory_info.rss / 1024 / 1024  # MB
+```

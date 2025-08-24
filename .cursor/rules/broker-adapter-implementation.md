@@ -1,0 +1,642 @@
+# ブローカーアダプタ実装仕様（moomoo/Futu OpenD）
+
+## 1. 接続管理
+
+### 1.1 OpenD接続設定
+```go
+type OpenDConfig struct {
+    Host     string `json:"host"`     // OpenDホスト（localhost:11111）
+    Port     int    `json:"port"`     // OpenDポート
+    APIKey   string `json:"api_key"`  // APIキー
+    Secret   string `json:"secret"`   // シークレットキー
+    Account  string `json:"account"`  // 口座番号
+    TrdEnv   string `json:"trd_env"`  // SIMULATE/LIVE
+    ReconnectInterval time.Duration `json:"reconnect_interval"` // 再接続間隔
+    MaxRetries int `json:"max_retries"` // 最大再試行回数
+}
+```
+
+### 1.2 接続状態管理
+```go
+type ConnectionState struct {
+    Status           string    `json:"status"`            // connected, disconnected, connecting
+    LastConnected    time.Time `json:"last_connected"`    // 最終接続時刻
+    LastDisconnected time.Time `json:"last_disconnected"` // 最終切断時刻
+    ReconnectCount   int       `json:"reconnect_count"`   // 再接続回数
+    ErrorCount       int       `json:"error_count"`       // エラー回数
+    Subscriptions    int       `json:"subscriptions"`     // 現在の購読数
+}
+```
+
+## 2. 購読管理
+
+### 2.1 購読制限管理
+```go
+type SubscriptionManager struct {
+    MaxSubscriptions int                    // 最大購読数（口座条件依存）
+    CurrentSubs      map[string]*Subscription
+    SymbolSubs       map[string]map[string]bool // symbol -> subscription_type
+    mu               sync.RWMutex
+}
+
+type Subscription struct {
+    Symbol    string    `json:"symbol"`
+    SubType   string    `json:"sub_type"`   // Ticker, KLine, OrderBook
+    Timeframe string    `json:"timeframe"`  // 1m, 5m, 15m, 1d
+    CreatedAt time.Time `json:"created_at"`
+    LastData  time.Time `json:"last_data"`
+}
+```
+
+### 2.2 購読ルール実装
+```go
+// 購読可能かチェック
+func (sm *SubscriptionManager) CanSubscribe(symbol, subType string) bool {
+    sm.mu.RLock()
+    defer sm.mu.RUnlock()
+    
+    // 同一銘柄の同一サブタイプは1枠
+    key := fmt.Sprintf("%s_%s", symbol, subType)
+    if _, exists := sm.CurrentSubs[key]; exists {
+        return true // 既に購読済み
+    }
+    
+    // 購読数制限チェック
+    if len(sm.CurrentSubs) >= sm.MaxSubscriptions {
+        return false
+    }
+    
+    return true
+}
+
+// 購読追加
+func (sm *SubscriptionManager) AddSubscription(symbol, subType, timeframe string) error {
+    sm.mu.Lock()
+    defer sm.mu.Unlock()
+    
+    key := fmt.Sprintf("%s_%s", symbol, subType)
+    if _, exists := sm.CurrentSubs[key]; exists {
+        return nil // 既に購読済み
+    }
+    
+    if len(sm.CurrentSubs) >= sm.MaxSubscriptions {
+        return errors.New("subscription limit exceeded")
+    }
+    
+    sm.CurrentSubs[key] = &Subscription{
+        Symbol:    symbol,
+        SubType:   subType,
+        Timeframe: timeframe,
+        CreatedAt: time.Now(),
+    }
+    
+    return nil
+}
+```
+
+## 3. レート制限実装
+
+### 3.1 トークンバケット制限器
+```go
+type RateLimiter struct {
+    limiters map[string]*rate.Limiter
+    mu       sync.RWMutex
+}
+
+// エンドポイント別制限設定
+var endpointLimits = map[string]rate.Limit{
+    "GetMarketSnapshot": 30.0 / 60.0,  // 30回/60秒
+    "GetKLine":          100.0 / 60.0, // 100回/60秒
+    "PlaceOrder":        50.0 / 60.0,  // 50回/60秒
+    "CancelOrder":       50.0 / 60.0,  // 50回/60秒
+    "GetOrderList":      30.0 / 60.0,  // 30回/60秒
+    "GetPositionList":   30.0 / 60.0,  // 30回/60秒
+}
+
+func (rl *RateLimiter) Wait(ctx context.Context, endpoint string) error {
+    rl.mu.RLock()
+    limiter, exists := rl.limiters[endpoint]
+    rl.mu.RUnlock()
+    
+    if !exists {
+        rl.mu.Lock()
+        if limit, ok := endpointLimits[endpoint]; ok {
+            limiter = rate.NewLimiter(limit, int(limit))
+            rl.limiters[endpoint] = limiter
+        }
+        rl.mu.Unlock()
+    }
+    
+    if limiter != nil {
+        return limiter.Wait(ctx)
+    }
+    
+    return nil
+}
+```
+
+### 3.2 指数バックオフ実装
+```go
+type BackoffConfig struct {
+    InitialDelay time.Duration `json:"initial_delay"`
+    MaxDelay     time.Duration `json:"max_delay"`
+    Multiplier   float64       `json:"multiplier"`
+    MaxRetries   int           `json:"max_retries"`
+}
+
+func ExponentialBackoff(config BackoffConfig, attempt int) time.Duration {
+    delay := config.InitialDelay
+    for i := 0; i < attempt; i++ {
+        delay = time.Duration(float64(delay) * config.Multiplier)
+        if delay > config.MaxDelay {
+            delay = config.MaxDelay
+            break
+        }
+    }
+    return delay
+}
+```
+
+## 4. 注文管理
+
+### 4.1 注文DTO変換
+```go
+type OrderRequest struct {
+    ClientOrderID string  `json:"client_order_id"`
+    Symbol        string  `json:"symbol"`
+    Side          string  `json:"side"`          // buy/sell
+    OrderType     string  `json:"order_type"`    // market/limit/stop/stop_limit/trailing
+    Quantity      int     `json:"quantity"`
+    Price         float64 `json:"price,omitempty"`
+    StopPrice     float64 `json:"stop_price,omitempty"`
+    TrailingPercent float64 `json:"trailing_percent,omitempty"`
+    TimeInForce   string  `json:"time_in_force"` // day/gtc
+}
+
+func (o *OrderRequest) ToFutuOrder() *futu.Order {
+    futuOrder := &futu.Order{
+        TrdEnv:       o.TrdEnv,
+        AccID:        o.Account,
+        TrdSide:      mapOrderSide(o.Side),
+        OrderType:    mapOrderType(o.OrderType),
+        Qty:          int32(o.Quantity),
+        TimeInForce:  mapTimeInForce(o.TimeInForce),
+        OrderID:      o.ClientOrderID,
+    }
+    
+    switch o.OrderType {
+    case "limit":
+        futuOrder.Price = o.Price
+    case "stop":
+        futuOrder.StopPrice = o.StopPrice
+    case "stop_limit":
+        futuOrder.Price = o.Price
+        futuOrder.StopPrice = o.StopPrice
+    case "trailing":
+        futuOrder.TrailingPercent = o.TrailingPercent
+    }
+    
+    return futuOrder
+}
+
+func mapOrderSide(side string) futu.TrdSide {
+    switch side {
+    case "buy":
+        return futu.TrdSide_TrdSide_Buy
+    case "sell":
+        return futu.TrdSide_TrdSide_Sell
+    default:
+        return futu.TrdSide_TrdSide_Unknown
+    }
+}
+
+func mapOrderType(orderType string) futu.OrderType {
+    switch orderType {
+    case "market":
+        return futu.OrderType_OrderType_Market
+    case "limit":
+        return futu.OrderType_OrderType_Limit
+    case "stop":
+        return futu.OrderType_OrderType_Stop
+    case "stop_limit":
+        return futu.OrderType_OrderType_StopLimit
+    case "trailing":
+        return futu.OrderType_OrderType_TrailingStop
+    default:
+        return futu.OrderType_OrderType_Unknown
+    }
+}
+```
+
+### 4.2 擬似OCO実装
+```go
+type OCOOrder struct {
+    ID           string    `json:"id"`
+    Symbol       string    `json:"symbol"`
+    Side         string    `json:"side"`
+    Quantity     int       `json:"quantity"`
+    LimitOrder   *Order    `json:"limit_order"`
+    StopOrder    *Order    `json:"stop_order"`
+    Status       string    `json:"status"` // active, partial_filled, cancelled
+    CreatedAt    time.Time `json:"created_at"`
+}
+
+type OCOManager struct {
+    orders map[string]*OCOOrder
+    mu     sync.RWMutex
+}
+
+func (om *OCOManager) CreateOCO(symbol, side string, quantity int, limitPrice, stopPrice float64) (*OCOOrder, error) {
+    ocoID := generateOCOID()
+    
+    // 指値注文作成
+    limitOrder := &Order{
+        ClientOrderID: fmt.Sprintf("%s_limit", ocoID),
+        Symbol:        symbol,
+        Side:          side,
+        OrderType:     "limit",
+        Quantity:      quantity,
+        Price:         limitPrice,
+        TimeInForce:   "day",
+    }
+    
+    // ストップ注文作成
+    stopOrder := &Order{
+        ClientOrderID: fmt.Sprintf("%s_stop", ocoID),
+        Symbol:        symbol,
+        Side:          side,
+        OrderType:     "stop",
+        Quantity:      quantity,
+        StopPrice:     stopPrice,
+        TimeInForce:   "day",
+    }
+    
+    oco := &OCOOrder{
+        ID:         ocoID,
+        Symbol:     symbol,
+        Side:       side,
+        Quantity:   quantity,
+        LimitOrder: limitOrder,
+        StopOrder:  stopOrder,
+        Status:     "active",
+        CreatedAt:  time.Now(),
+    }
+    
+    om.mu.Lock()
+    om.orders[ocoID] = oco
+    om.mu.Unlock()
+    
+    // 両方の注文を発注
+    if err := om.placeOrder(limitOrder); err != nil {
+        return nil, err
+    }
+    if err := om.placeOrder(stopOrder); err != nil {
+        return nil, err
+    }
+    
+    return oco, nil
+}
+
+func (om *OCOManager) HandleOrderUpdate(orderID string, status string) {
+    om.mu.Lock()
+    defer om.mu.Unlock()
+    
+    // OCO注文を検索
+    for ocoID, oco := range om.orders {
+        if oco.LimitOrder.ClientOrderID == orderID || oco.StopOrder.ClientOrderID == orderID {
+            // 片方が約定または部分約定した場合、もう片方をキャンセル
+            if status == "filled" || status == "partial_filled" {
+                om.cancelOtherOrder(oco, orderID)
+                if status == "filled" {
+                    oco.Status = "cancelled"
+                } else {
+                    oco.Status = "partial_filled"
+                }
+            }
+            break
+        }
+    }
+}
+
+func (om *OCOManager) cancelOtherOrder(oco *OCOOrder, filledOrderID string) {
+    var orderToCancel *Order
+    if oco.LimitOrder.ClientOrderID == filledOrderID {
+        orderToCancel = oco.StopOrder
+    } else {
+        orderToCancel = oco.LimitOrder
+    }
+    
+    // 注文キャンセル実行
+    om.cancelOrder(orderToCancel.ClientOrderID)
+}
+```
+
+## 5. 空売りチェック
+
+### 5.1 マージンデータ取得
+```go
+type MarginData struct {
+    Symbol           string  `json:"symbol"`
+    CanShort         bool    `json:"can_short"`
+    ShortableQty     int     `json:"shortable_qty"`
+    ShortInterest    float64 `json:"short_interest"`
+    ShortInterestRate float64 `json:"short_interest_rate"`
+    LastUpdated      time.Time `json:"last_updated"`
+}
+
+func (ba *BrokerAdapter) GetMarginData(symbol string) (*MarginData, error) {
+    // レート制限チェック
+    if err := ba.rateLimiter.Wait(context.Background(), "GetMarginData"); err != nil {
+        return nil, err
+    }
+    
+    // Futu API呼び出し
+    req := &futu.GetMarginDataRequest{
+        TrdEnv: ba.config.TrdEnv,
+        AccID:  ba.config.Account,
+        Symbol: symbol,
+    }
+    
+    resp, err := ba.client.GetMarginData(context.Background(), req)
+    if err != nil {
+        return nil, err
+    }
+    
+    if resp.RetType != futu.RetType_RetType_Succeed {
+        return nil, fmt.Errorf("get margin data failed: %s", resp.RetMsg)
+    }
+    
+    marginData := &MarginData{
+        Symbol:           symbol,
+        CanShort:         resp.Data.CanShort,
+        ShortableQty:     int(resp.Data.ShortableQty),
+        ShortInterest:    resp.Data.ShortInterest,
+        ShortInterestRate: resp.Data.ShortInterestRate,
+        LastUpdated:      time.Now(),
+    }
+    
+    return marginData, nil
+}
+
+func (ba *BrokerAdapter) ValidateShortOrder(symbol string, quantity int) error {
+    marginData, err := ba.GetMarginData(symbol)
+    if err != nil {
+        return fmt.Errorf("failed to get margin data: %w", err)
+    }
+    
+    if !marginData.CanShort {
+        return fmt.Errorf("symbol %s is not shortable", symbol)
+    }
+    
+    if marginData.ShortableQty < quantity {
+        return fmt.Errorf("insufficient shortable quantity for %s: requested %d, available %d", 
+            symbol, quantity, marginData.ShortableQty)
+    }
+    
+    return nil
+}
+```
+
+## 6. 再接続・再購読
+
+### 6.1 再接続ロジック
+```go
+type ReconnectionManager struct {
+    config           *OpenDConfig
+    connectionState  *ConnectionState
+    subscriptionMgr  *SubscriptionManager
+    backoffConfig    BackoffConfig
+    reconnectChan    chan struct{}
+    stopChan         chan struct{}
+}
+
+func (rm *ReconnectionManager) Start() {
+    go rm.reconnectionLoop()
+}
+
+func (rm *ReconnectionManager) reconnectionLoop() {
+    for {
+        select {
+        case <-rm.reconnectChan:
+            rm.performReconnection()
+        case <-rm.stopChan:
+            return
+        }
+    }
+}
+
+func (rm *ReconnectionManager) performReconnection() {
+    attempt := 0
+    for attempt < rm.config.MaxRetries {
+        rm.connectionState.Status = "connecting"
+        rm.connectionState.ReconnectCount++
+        
+        // 接続試行
+        if err := rm.connect(); err != nil {
+            attempt++
+            delay := ExponentialBackoff(rm.backoffConfig, attempt)
+            log.Printf("Reconnection attempt %d failed: %v, retrying in %v", attempt, err, delay)
+            time.Sleep(delay)
+            continue
+        }
+        
+        // 接続成功
+        rm.connectionState.Status = "connected"
+        rm.connectionState.LastConnected = time.Now()
+        
+        // 再購読実行
+        if err := rm.resubscribe(); err != nil {
+            log.Printf("Resubscription failed: %v", err)
+            rm.disconnect()
+            continue
+        }
+        
+        log.Printf("Reconnection successful after %d attempts", attempt+1)
+        return
+    }
+    
+    rm.connectionState.Status = "disconnected"
+    rm.connectionState.LastDisconnected = time.Now()
+    log.Printf("Reconnection failed after %d attempts", rm.config.MaxRetries)
+}
+
+func (rm *ReconnectionManager) resubscribe() error {
+    rm.subscriptionMgr.mu.RLock()
+    subscriptions := make([]*Subscription, 0, len(rm.subscriptionMgr.CurrentSubs))
+    for _, sub := range rm.subscriptionMgr.CurrentSubs {
+        subscriptions = append(subscriptions, sub)
+    }
+    rm.subscriptionMgr.mu.RUnlock()
+    
+    for _, sub := range subscriptions {
+        if err := rm.subscribe(sub.Symbol, sub.SubType, sub.Timeframe); err != nil {
+            return fmt.Errorf("failed to resubscribe %s %s: %w", sub.Symbol, sub.SubType, err)
+        }
+    }
+    
+    return nil
+}
+```
+
+### 6.2 データ補完
+```go
+type DataReplayManager struct {
+    maxReplayCount int
+    replayWindow   time.Duration
+}
+
+func (drm *DataReplayManager) ReplayTicks(symbol string, lastTimestamp time.Time) error {
+    // 最大50件のTickデータを補完
+    endTime := time.Now()
+    startTime := lastTimestamp.Add(-drm.replayWindow)
+    
+    if endTime.Sub(startTime) > drm.replayWindow {
+        startTime = endTime.Add(-drm.replayWindow)
+    }
+    
+    // ヒストリカルTickデータ取得
+    ticks, err := drm.getHistoricalTicks(symbol, startTime, endTime)
+    if err != nil {
+        return err
+    }
+    
+    // 最大50件に制限
+    if len(ticks) > drm.maxReplayCount {
+        ticks = ticks[len(ticks)-drm.maxReplayCount:]
+    }
+    
+    // データをストリームに送信
+    for _, tick := range ticks {
+        drm.publishTick(tick)
+    }
+    
+    return nil
+}
+```
+
+## 7. エラーハンドリング
+
+### 7.1 エラー分類
+```go
+type BrokerError struct {
+    Code    string `json:"code"`
+    Message string `json:"message"`
+    Details map[string]interface{} `json:"details,omitempty"`
+}
+
+var (
+    ErrConnectionFailed = &BrokerError{Code: "CONNECTION_FAILED", Message: "接続に失敗しました"}
+    ErrRateLimitExceeded = &BrokerError{Code: "RATE_LIMIT_EXCEEDED", Message: "レート制限を超過しました"}
+    ErrOrderRejected = &BrokerError{Code: "ORDER_REJECTED", Message: "注文が拒否されました"}
+    ErrInsufficientFunds = &BrokerError{Code: "INSUFFICIENT_FUNDS", Message: "資金が不足しています"}
+    ErrSymbolNotFound = &BrokerError{Code: "SYMBOL_NOT_FOUND", Message: "銘柄が見つかりません"}
+    ErrShortNotAllowed = &BrokerError{Code: "SHORT_NOT_ALLOWED", Message: "空売りが許可されていません"}
+)
+```
+
+### 7.2 リトライ戦略
+```go
+type RetryStrategy struct {
+    MaxRetries     int
+    BackoffConfig  BackoffConfig
+    RetryableErrors map[string]bool
+}
+
+func (rs *RetryStrategy) ShouldRetry(err error, attempt int) bool {
+    if attempt >= rs.MaxRetries {
+        return false
+    }
+    
+    var brokerErr *BrokerError
+    if errors.As(err, &brokerErr) {
+        return rs.RetryableErrors[brokerErr.Code]
+    }
+    
+    return false
+}
+
+func (rs *RetryStrategy) ExecuteWithRetry(operation func() error) error {
+    var lastErr error
+    
+    for attempt := 0; attempt <= rs.MaxRetries; attempt++ {
+        if err := operation(); err == nil {
+            return nil
+        } else {
+            lastErr = err
+            if !rs.ShouldRetry(err, attempt) {
+                return err
+            }
+            
+            if attempt < rs.MaxRetries {
+                delay := ExponentialBackoff(rs.BackoffConfig, attempt)
+                time.Sleep(delay)
+            }
+        }
+    }
+    
+    return lastErr
+}
+```
+
+## 8. 監視・メトリクス
+
+### 8.1 メトリクス定義
+```go
+type BrokerMetrics struct {
+    ConnectionStatus    prometheus.Gauge
+    SubscriptionCount   prometheus.Gauge
+    OrderCount          prometheus.Counter
+    OrderLatency        prometheus.Histogram
+    ErrorCount          prometheus.Counter
+    ReconnectCount      prometheus.Counter
+    RateLimitHits       prometheus.Counter
+}
+
+func NewBrokerMetrics() *BrokerMetrics {
+    return &BrokerMetrics{
+        ConnectionStatus: prometheus.NewGauge(prometheus.GaugeOpts{
+            Name: "broker_connection_status",
+            Help: "Broker connection status (0=disconnected, 1=connected)",
+        }),
+        SubscriptionCount: prometheus.NewGauge(prometheus.GaugeOpts{
+            Name: "broker_subscription_count",
+            Help: "Number of active subscriptions",
+        }),
+        OrderCount: prometheus.NewCounterVec(prometheus.CounterOpts{
+            Name: "broker_order_total",
+            Help: "Total number of orders",
+        }, []string{"order_type", "status"}),
+        OrderLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
+            Name:    "broker_order_latency_seconds",
+            Help:    "Order execution latency",
+            Buckets: prometheus.DefBuckets,
+        }),
+        ErrorCount: prometheus.NewCounterVec(prometheus.CounterOpts{
+            Name: "broker_error_total",
+            Help: "Total number of errors",
+        }, []string{"error_type"}),
+        ReconnectCount: prometheus.NewCounter(prometheus.CounterOpts{
+            Name: "broker_reconnect_total",
+            Help: "Total number of reconnections",
+        }),
+        RateLimitHits: prometheus.NewCounter(prometheus.CounterOpts{
+            Name: "broker_rate_limit_hits_total",
+            Help: "Total number of rate limit hits",
+        }),
+    }
+}
+```
+
+### 8.2 ヘルスチェック
+```go
+func (ba *BrokerAdapter) HealthCheck() map[string]interface{} {
+    return map[string]interface{}{
+        "status": ba.connectionState.Status,
+        "subscriptions": ba.connectionState.Subscriptions,
+        "last_connected": ba.connectionState.LastConnected,
+        "reconnect_count": ba.connectionState.ReconnectCount,
+        "error_count": ba.connectionState.ErrorCount,
+        "rate_limit_hits": ba.metrics.RateLimitHits,
+    }
+}
+```
