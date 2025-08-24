@@ -1,0 +1,1195 @@
+# Security Standards & Best Practices
+
+## 1. セキュリティコーディング規約
+
+### 1.1 入力検証・サニタイゼーション
+```go
+// 入力検証の標準パターン
+package security
+
+import (
+    "regexp"
+    "strings"
+    "unicode"
+)
+
+// SQLインジェクション対策
+func SanitizeSQLInput(input string) string {
+    // 危険な文字をエスケープ
+    dangerous := []string{"'", "\"", ";", "--", "/*", "*/", "xp_", "sp_"}
+    sanitized := input
+    
+    for _, char := range dangerous {
+        sanitized = strings.ReplaceAll(sanitized, char, "")
+    }
+    
+    return sanitized
+}
+
+// XSS対策
+func SanitizeHTMLInput(input string) string {
+    // HTMLタグをエスケープ
+    htmlEscaper := strings.NewReplacer(
+        "&", "&amp;",
+        "<", "&lt;",
+        ">", "&gt;",
+        "\"", "&quot;",
+        "'", "&#39;",
+    )
+    
+    return htmlEscaper.Replace(input)
+}
+
+// ファイルパス検証
+func ValidateFilePath(path string) bool {
+    // 危険なパスパターンをチェック
+    dangerousPatterns := []string{
+        "..", "~", "/etc", "/var", "/usr", "/bin", "/sbin",
+    }
+    
+    for _, pattern := range dangerousPatterns {
+        if strings.Contains(path, pattern) {
+            return false
+        }
+    }
+    
+    return true
+}
+
+// メールアドレス検証
+func ValidateEmail(email string) bool {
+    emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+    return emailRegex.MatchString(email)
+}
+
+// パスワード強度検証
+func ValidatePasswordStrength(password string) (bool, []string) {
+    var errors []string
+    
+    if len(password) < 8 {
+        errors = append(errors, "Password must be at least 8 characters long")
+    }
+    
+    var (
+        hasUpper   bool
+        hasLower   bool
+        hasNumber  bool
+        hasSpecial bool
+    )
+    
+    for _, char := range password {
+        switch {
+        case unicode.IsUpper(char):
+            hasUpper = true
+        case unicode.IsLower(char):
+            hasLower = true
+        case unicode.IsNumber(char):
+            hasNumber = true
+        case unicode.IsPunct(char) || unicode.IsSymbol(char):
+            hasSpecial = true
+        }
+    }
+    
+    if !hasUpper {
+        errors = append(errors, "Password must contain at least one uppercase letter")
+    }
+    if !hasLower {
+        errors = append(errors, "Password must contain at least one lowercase letter")
+    }
+    if !hasNumber {
+        errors = append(errors, "Password must contain at least one number")
+    }
+    if !hasSpecial {
+        errors = append(errors, "Password must contain at least one special character")
+    }
+    
+    return len(errors) == 0, errors
+}
+```
+
+### 1.2 認証・認可実装
+```go
+// JWT認証の実装
+package auth
+
+import (
+    "crypto/rand"
+    "encoding/base64"
+    "fmt"
+    "time"
+    
+    "github.com/golang-jwt/jwt/v5"
+    "golang.org/x/crypto/bcrypt"
+)
+
+type Claims struct {
+    UserID   string `json:"user_id"`
+    Username string `json:"username"`
+    Role     string `json:"role"`
+    jwt.RegisteredClaims
+}
+
+type AuthService struct {
+    secretKey []byte
+    issuer    string
+}
+
+func NewAuthService(secretKey string, issuer string) *AuthService {
+    return &AuthService{
+        secretKey: []byte(secretKey),
+        issuer:    issuer,
+    }
+}
+
+// パスワードハッシュ化
+func (a *AuthService) HashPassword(password string) (string, error) {
+    bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+    if err != nil {
+        return "", fmt.Errorf("failed to hash password: %w", err)
+    }
+    return string(bytes), nil
+}
+
+// パスワード検証
+func (a *AuthService) CheckPassword(password, hash string) bool {
+    err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+    return err == nil
+}
+
+// JWTトークン生成
+func (a *AuthService) GenerateToken(userID, username, role string) (string, error) {
+    claims := Claims{
+        UserID:   userID,
+        Username: username,
+        Role:     role,
+        RegisteredClaims: jwt.RegisteredClaims{
+            ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+            IssuedAt:  jwt.NewNumericDate(time.Now()),
+            NotBefore: jwt.NewNumericDate(time.Now()),
+            Issuer:    a.issuer,
+            Subject:   userID,
+        },
+    }
+    
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+    return token.SignedString(a.secretKey)
+}
+
+// JWTトークン検証
+func (a *AuthService) ValidateToken(tokenString string) (*Claims, error) {
+    token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+        if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+            return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+        }
+        return a.secretKey, nil
+    })
+    
+    if err != nil {
+        return nil, fmt.Errorf("failed to parse token: %w", err)
+    }
+    
+    if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+        return claims, nil
+    }
+    
+    return nil, fmt.Errorf("invalid token")
+}
+
+// リフレッシュトークン生成
+func (a *AuthService) GenerateRefreshToken() (string, error) {
+    bytes := make([]byte, 32)
+    if _, err := rand.Read(bytes); err != nil {
+        return "", fmt.Errorf("failed to generate refresh token: %w", err)
+    }
+    return base64.URLEncoding.EncodeToString(bytes), nil
+}
+```
+
+### 1.3 セッション管理
+```go
+// セッション管理の実装
+package session
+
+import (
+    "crypto/rand"
+    "encoding/base64"
+    "fmt"
+    "time"
+    
+    "github.com/go-redis/redis/v8"
+)
+
+type SessionManager struct {
+    redis *redis.Client
+}
+
+type Session struct {
+    ID        string                 `json:"id"`
+    UserID    string                 `json:"user_id"`
+    Data      map[string]interface{} `json:"data"`
+    CreatedAt time.Time             `json:"created_at"`
+    ExpiresAt time.Time             `json:"expires_at"`
+}
+
+func NewSessionManager(redisClient *redis.Client) *SessionManager {
+    return &SessionManager{
+        redis: redisClient,
+    }
+}
+
+// セッション生成
+func (sm *SessionManager) CreateSession(userID string, data map[string]interface{}) (*Session, error) {
+    sessionID, err := sm.generateSessionID()
+    if err != nil {
+        return nil, fmt.Errorf("failed to generate session ID: %w", err)
+    }
+    
+    session := &Session{
+        ID:        sessionID,
+        UserID:    userID,
+        Data:      data,
+        CreatedAt: time.Now(),
+        ExpiresAt: time.Now().Add(24 * time.Hour),
+    }
+    
+    // Redisに保存
+    key := fmt.Sprintf("session:%s", sessionID)
+    err = sm.redis.Set(ctx, key, session, 24*time.Hour).Err()
+    if err != nil {
+        return nil, fmt.Errorf("failed to store session: %w", err)
+    }
+    
+    return session, nil
+}
+
+// セッション取得
+func (sm *SessionManager) GetSession(sessionID string) (*Session, error) {
+    key := fmt.Sprintf("session:%s", sessionID)
+    
+    var session Session
+    err := sm.redis.Get(ctx, key).Scan(&session)
+    if err != nil {
+        return nil, fmt.Errorf("session not found: %w", err)
+    }
+    
+    // 有効期限チェック
+    if time.Now().After(session.ExpiresAt) {
+        sm.DeleteSession(sessionID)
+        return nil, fmt.Errorf("session expired")
+    }
+    
+    return &session, nil
+}
+
+// セッション削除
+func (sm *SessionManager) DeleteSession(sessionID string) error {
+    key := fmt.Sprintf("session:%s", sessionID)
+    return sm.redis.Del(ctx, key).Err()
+}
+
+// セッションID生成
+func (sm *SessionManager) generateSessionID() (string, error) {
+    bytes := make([]byte, 32)
+    if _, err := rand.Read(bytes); err != nil {
+        return "", fmt.Errorf("failed to generate session ID: %w", err)
+    }
+    return base64.URLEncoding.EncodeToString(bytes), nil
+}
+```
+
+## 2. 暗号化実装規約
+
+### 2.1 データ暗号化
+```go
+// AES暗号化の実装
+package crypto
+
+import (
+    "crypto/aes"
+    "crypto/cipher"
+    "crypto/rand"
+    "encoding/base64"
+    "fmt"
+    "io"
+)
+
+type CryptoService struct {
+    key []byte
+}
+
+func NewCryptoService(key string) (*CryptoService, error) {
+    if len(key) != 32 {
+        return nil, fmt.Errorf("key must be 32 bytes long")
+    }
+    return &CryptoService{key: []byte(key)}, nil
+}
+
+// AES-GCM暗号化
+func (cs *CryptoService) Encrypt(plaintext []byte) (string, error) {
+    block, err := aes.NewCipher(cs.key)
+    if err != nil {
+        return "", fmt.Errorf("failed to create cipher: %w", err)
+    }
+    
+    gcm, err := cipher.NewGCM(block)
+    if err != nil {
+        return "", fmt.Errorf("failed to create GCM: %w", err)
+    }
+    
+    nonce := make([]byte, gcm.NonceSize())
+    if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+        return "", fmt.Errorf("failed to generate nonce: %w", err)
+    }
+    
+    ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
+    return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+// AES-GCM復号化
+func (cs *CryptoService) Decrypt(encryptedText string) ([]byte, error) {
+    ciphertext, err := base64.StdEncoding.DecodeString(encryptedText)
+    if err != nil {
+        return nil, fmt.Errorf("failed to decode base64: %w", err)
+    }
+    
+    block, err := aes.NewCipher(cs.key)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create cipher: %w", err)
+    }
+    
+    gcm, err := cipher.NewGCM(block)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create GCM: %w", err)
+    }
+    
+    nonceSize := gcm.NonceSize()
+    if len(ciphertext) < nonceSize {
+        return nil, fmt.Errorf("ciphertext too short")
+    }
+    
+    nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+    plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+    if err != nil {
+        return nil, fmt.Errorf("failed to decrypt: %w", err)
+    }
+    
+    return plaintext, nil
+}
+
+// 機密データの暗号化
+func (cs *CryptoService) EncryptSensitiveData(data map[string]interface{}) (map[string]string, error) {
+    encrypted := make(map[string]string)
+    
+    sensitiveFields := []string{"password", "api_key", "secret", "token"}
+    
+    for key, value := range data {
+        shouldEncrypt := false
+        for _, field := range sensitiveFields {
+            if key == field {
+                shouldEncrypt = true
+                break
+            }
+        }
+        
+        if shouldEncrypt {
+            if strValue, ok := value.(string); ok {
+                encryptedValue, err := cs.Encrypt([]byte(strValue))
+                if err != nil {
+                    return nil, fmt.Errorf("failed to encrypt %s: %w", key, err)
+                }
+                encrypted[key] = encryptedValue
+            }
+        } else {
+            if strValue, ok := value.(string); ok {
+                encrypted[key] = strValue
+            }
+        }
+    }
+    
+    return encrypted, nil
+}
+```
+
+### 2.2 ハッシュ関数
+```go
+// ハッシュ関数の実装
+package hash
+
+import (
+    "crypto/sha256"
+    "crypto/sha512"
+    "encoding/hex"
+    "fmt"
+    "golang.org/x/crypto/bcrypt"
+    "golang.org/x/crypto/scrypt"
+)
+
+// SHA-256ハッシュ
+func SHA256Hash(data []byte) string {
+    hash := sha256.Sum256(data)
+    return hex.EncodeToString(hash[:])
+}
+
+// SHA-512ハッシュ
+func SHA512Hash(data []byte) string {
+    hash := sha512.Sum512(data)
+    return hex.EncodeToString(hash[:])
+}
+
+// ソルト付きハッシュ
+func SaltedHash(data []byte, salt []byte) string {
+    combined := append(data, salt...)
+    return SHA256Hash(combined)
+}
+
+// bcryptハッシュ（パスワード用）
+func BcryptHash(password string, cost int) (string, error) {
+    if cost == 0 {
+        cost = bcrypt.DefaultCost
+    }
+    
+    bytes, err := bcrypt.GenerateFromPassword([]byte(password), cost)
+    if err != nil {
+        return "", fmt.Errorf("failed to generate bcrypt hash: %w", err)
+    }
+    return string(bytes), nil
+}
+
+// scryptハッシュ（高強度）
+func ScryptHash(password string, salt []byte) (string, error) {
+    hash, err := scrypt.Key([]byte(password), salt, 16384, 8, 1, 32)
+    if err != nil {
+        return "", fmt.Errorf("failed to generate scrypt hash: %w", err)
+    }
+    return hex.EncodeToString(hash), nil
+}
+```
+
+## 3. 認証・認可実装規約
+
+### 3.1 ロールベースアクセス制御（RBAC）
+```go
+// RBAC実装
+package rbac
+
+import (
+    "fmt"
+    "sync"
+)
+
+type Role struct {
+    Name        string   `json:"name"`
+    Permissions []string `json:"permissions"`
+}
+
+type User struct {
+    ID    string   `json:"id"`
+    Roles []string `json:"roles"`
+}
+
+type RBACManager struct {
+    roles map[string]*Role
+    users map[string]*User
+    mutex sync.RWMutex
+}
+
+func NewRBACManager() *RBACManager {
+    return &RBACManager{
+        roles: make(map[string]*Role),
+        users: make(map[string]*User),
+    }
+}
+
+// ロール作成
+func (rbac *RBACManager) CreateRole(name string, permissions []string) error {
+    rbac.mutex.Lock()
+    defer rbac.mutex.Unlock()
+    
+    if _, exists := rbac.roles[name]; exists {
+        return fmt.Errorf("role %s already exists", name)
+    }
+    
+    rbac.roles[name] = &Role{
+        Name:        name,
+        Permissions: permissions,
+    }
+    
+    return nil
+}
+
+// ユーザーにロール割り当て
+func (rbac *RBACManager) AssignRole(userID, roleName string) error {
+    rbac.mutex.Lock()
+    defer rbac.mutex.Unlock()
+    
+    if _, exists := rbac.roles[roleName]; !exists {
+        return fmt.Errorf("role %s does not exist", roleName)
+    }
+    
+    user, exists := rbac.users[userID]
+    if !exists {
+        user = &User{ID: userID}
+        rbac.users[userID] = user
+    }
+    
+    // 重複チェック
+    for _, role := range user.Roles {
+        if role == roleName {
+            return nil // 既に割り当て済み
+        }
+    }
+    
+    user.Roles = append(user.Roles, roleName)
+    return nil
+}
+
+// 権限チェック
+func (rbac *RBACManager) HasPermission(userID, permission string) bool {
+    rbac.mutex.RLock()
+    defer rbac.mutex.RUnlock()
+    
+    user, exists := rbac.users[userID]
+    if !exists {
+        return false
+    }
+    
+    for _, roleName := range user.Roles {
+        role, exists := rbac.roles[roleName]
+        if !exists {
+            continue
+        }
+        
+        for _, perm := range role.Permissions {
+            if perm == permission {
+                return true
+            }
+        }
+    }
+    
+    return false
+}
+
+// ユーザーの権限一覧取得
+func (rbac *RBACManager) GetUserPermissions(userID string) ([]string, error) {
+    rbac.mutex.RLock()
+    defer rbac.mutex.RUnlock()
+    
+    user, exists := rbac.users[userID]
+    if !exists {
+        return nil, fmt.Errorf("user %s not found", userID)
+    }
+    
+    permissions := make(map[string]bool)
+    for _, roleName := range user.Roles {
+        role, exists := rbac.roles[roleName]
+        if !exists {
+            continue
+        }
+        
+        for _, perm := range role.Permissions {
+            permissions[perm] = true
+        }
+    }
+    
+    result := make([]string, 0, len(permissions))
+    for perm := range permissions {
+        result = append(result, perm)
+    }
+    
+    return result, nil
+}
+```
+
+### 3.2 2FA実装
+```go
+// 2FA（TOTP）実装
+package twofa
+
+import (
+    "crypto/hmac"
+    "crypto/sha1"
+    "encoding/base32"
+    "fmt"
+    "hash"
+    "strconv"
+    "time"
+    
+    "github.com/pquerna/otp/totp"
+)
+
+type TwoFAService struct {
+    issuer string
+}
+
+func NewTwoFAService(issuer string) *TwoFAService {
+    return &TwoFAService{issuer: issuer}
+}
+
+// TOTPシークレット生成
+func (tfa *TwoFAService) GenerateSecret(username string) (string, error) {
+    key, err := totp.Generate(totp.GenerateOpts{
+        Issuer:      tfa.issuer,
+        AccountName: username,
+    })
+    if err != nil {
+        return "", fmt.Errorf("failed to generate TOTP secret: %w", err)
+    }
+    
+    return key.Secret(), nil
+}
+
+// TOTPコード生成
+func (tfa *TwoFAService) GenerateCode(secret string) (string, error) {
+    code, err := totp.GenerateCode(secret, time.Now())
+    if err != nil {
+        return "", fmt.Errorf("failed to generate TOTP code: %w", err)
+    }
+    
+    return code, nil
+}
+
+// TOTPコード検証
+func (tfa *TwoFAService) ValidateCode(secret, code string) bool {
+    return totp.Validate(code, secret)
+}
+
+// QRコード用URL生成
+func (tfa *TwoFAService) GenerateQRURL(username, secret string) string {
+    return fmt.Sprintf("otpauth://totp/%s:%s?secret=%s&issuer=%s",
+        tfa.issuer, username, secret, tfa.issuer)
+}
+
+// バックアップコード生成
+func (tfa *TwoFAService) GenerateBackupCodes(count int) ([]string, error) {
+    codes := make([]string, count)
+    
+    for i := 0; i < count; i++ {
+        // 8桁の数字コードを生成
+        code := fmt.Sprintf("%08d", time.Now().UnixNano()%100000000)
+        codes[i] = code
+        time.Sleep(time.Nanosecond) // ユニーク性を確保
+    }
+    
+    return codes, nil
+}
+```
+
+## 4. 脆弱性対策規約
+
+### 4.1 SQLインジェクション対策
+```go
+// SQLインジェクション対策
+package database
+
+import (
+    "database/sql"
+    "fmt"
+    "strings"
+)
+
+// プリペアドステートメント使用
+func (db *Database) GetUserByID(userID string) (*User, error) {
+    query := "SELECT id, username, email, created_at FROM users WHERE id = ?"
+    
+    var user User
+    err := db.QueryRow(query, userID).Scan(
+        &user.ID,
+        &user.Username,
+        &user.Email,
+        &user.CreatedAt,
+    )
+    
+    if err != nil {
+        return nil, fmt.Errorf("failed to get user: %w", err)
+    }
+    
+    return &user, nil
+}
+
+// 動的クエリの安全な構築
+func (db *Database) SearchUsers(filters map[string]string) ([]User, error) {
+    query := "SELECT id, username, email, created_at FROM users WHERE 1=1"
+    args := []interface{}{}
+    
+    // フィルタの安全な追加
+    if username, exists := filters["username"]; exists && username != "" {
+        query += " AND username LIKE ?"
+        args = append(args, "%"+username+"%")
+    }
+    
+    if email, exists := filters["email"]; exists && email != "" {
+        query += " AND email LIKE ?"
+        args = append(args, "%"+email+"%")
+    }
+    
+    // 許可されたソートフィールドのみ
+    if sortBy, exists := filters["sort_by"]; exists {
+        allowedFields := []string{"username", "email", "created_at"}
+        if contains(allowedFields, sortBy) {
+            query += " ORDER BY " + sortBy
+            if order, exists := filters["order"]; exists && order == "DESC" {
+                query += " DESC"
+            }
+        }
+    }
+    
+    rows, err := db.Query(query, args...)
+    if err != nil {
+        return nil, fmt.Errorf("failed to search users: %w", err)
+    }
+    defer rows.Close()
+    
+    var users []User
+    for rows.Next() {
+        var user User
+        err := rows.Scan(&user.ID, &user.Username, &user.Email, &user.CreatedAt)
+        if err != nil {
+            return nil, fmt.Errorf("failed to scan user: %w", err)
+        }
+        users = append(users, user)
+    }
+    
+    return users, nil
+}
+
+// バッチ処理の安全な実装
+func (db *Database) BatchInsertUsers(users []User) error {
+    if len(users) == 0 {
+        return nil
+    }
+    
+    // プレースホルダーの構築
+    placeholders := make([]string, len(users))
+    args := make([]interface{}, 0, len(users)*3)
+    
+    for i, user := range users {
+        placeholders[i] = "(?, ?, ?)"
+        args = append(args, user.Username, user.Email, user.PasswordHash)
+    }
+    
+    query := fmt.Sprintf("INSERT INTO users (username, email, password_hash) VALUES %s",
+        strings.Join(placeholders, ","))
+    
+    _, err := db.Exec(query, args...)
+    if err != nil {
+        return fmt.Errorf("failed to batch insert users: %w", err)
+    }
+    
+    return nil
+}
+```
+
+### 4.2 XSS対策
+```go
+// XSS対策の実装
+package xss
+
+import (
+    "html"
+    "regexp"
+    "strings"
+)
+
+// HTMLエスケープ
+func EscapeHTML(input string) string {
+    return html.EscapeString(input)
+}
+
+// JavaScriptエスケープ
+func EscapeJavaScript(input string) string {
+    return strings.NewReplacer(
+        "\\", "\\\\",
+        "'", "\\'",
+        "\"", "\\\"",
+        "\n", "\\n",
+        "\r", "\\r",
+        "\t", "\\t",
+    ).Replace(input)
+}
+
+// URLエスケープ
+func EscapeURL(input string) string {
+    return strings.NewReplacer(
+        " ", "%20",
+        "<", "%3C",
+        ">", "%3E",
+        "\"", "%22",
+        "'", "%27",
+        "&", "%26",
+    ).Replace(input)
+}
+
+// 危険なHTMLタグの除去
+func RemoveDangerousTags(input string) string {
+    dangerousTags := []string{
+        "script", "iframe", "object", "embed", "form", "input",
+        "textarea", "select", "button", "link", "meta", "style",
+    }
+    
+    result := input
+    for _, tag := range dangerousTags {
+        // 開始タグと終了タグを除去
+        pattern := regexp.MustCompile(fmt.Sprintf(`</?%s[^>]*>`, regexp.QuoteMeta(tag)))
+        result = pattern.ReplaceAllString(result, "")
+    }
+    
+    return result
+}
+
+// CSP（Content Security Policy）ヘッダー生成
+func GenerateCSPHeader() string {
+    return strings.Join([]string{
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: https:",
+        "font-src 'self'",
+        "connect-src 'self'",
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+    }, "; ")
+}
+```
+
+### 4.3 CSRF対策
+```go
+// CSRF対策の実装
+package csrf
+
+import (
+    "crypto/rand"
+    "encoding/base64"
+    "fmt"
+    "time"
+    
+    "github.com/gin-gonic/gin"
+)
+
+type CSRFProtection struct {
+    secretKey []byte
+    tokenTTL  time.Duration
+}
+
+func NewCSRFProtection(secretKey string, tokenTTL time.Duration) *CSRFProtection {
+    return &CSRFProtection{
+        secretKey: []byte(secretKey),
+        tokenTTL:  tokenTTL,
+    }
+}
+
+// CSRFトークン生成
+func (csrf *CSRFProtection) GenerateToken(userID string) (string, error) {
+    // ランダムなトークン生成
+    tokenBytes := make([]byte, 32)
+    if _, err := rand.Read(tokenBytes); err != nil {
+        return "", fmt.Errorf("failed to generate CSRF token: %w", err)
+    }
+    
+    token := base64.URLEncoding.EncodeToString(tokenBytes)
+    
+    // セッションに保存
+    session := gin.Context{}
+    session.Set("csrf_token", token)
+    session.Set("csrf_user_id", userID)
+    session.Set("csrf_expires", time.Now().Add(csrf.tokenTTL))
+    
+    return token, nil
+}
+
+// CSRFトークン検証
+func (csrf *CSRFProtection) ValidateToken(c *gin.Context, token string) bool {
+    // セッションからトークンを取得
+    sessionToken, exists := c.Get("csrf_token")
+    if !exists {
+        return false
+    }
+    
+    // トークン比較
+    if sessionToken != token {
+        return false
+    }
+    
+    // 有効期限チェック
+    expires, exists := c.Get("csrf_expires")
+    if !exists {
+        return false
+    }
+    
+    if time.Now().After(expires.(time.Time)) {
+        return false
+    }
+    
+    return true
+}
+
+// CSRFミドルウェア
+func (csrf *CSRFProtection) CSRFMiddleware() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        // GETリクエストはスキップ
+        if c.Request.Method == "GET" {
+            c.Next()
+            return
+        }
+        
+        // CSRFトークンの検証
+        token := c.GetHeader("X-CSRF-Token")
+        if token == "" {
+            token = c.PostForm("csrf_token")
+        }
+        
+        if !csrf.ValidateToken(c, token) {
+            c.JSON(403, gin.H{"error": "CSRF token validation failed"})
+            c.Abort()
+            return
+        }
+        
+        c.Next()
+    }
+}
+```
+
+## 5. セキュリティヘッダー設定
+
+### 5.1 HTTPセキュリティヘッダー
+```go
+// セキュリティヘッダーミドルウェア
+package security
+
+import (
+    "github.com/gin-gonic/gin"
+)
+
+// セキュリティヘッダー設定
+func SecurityHeaders() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        // HSTS（HTTP Strict Transport Security）
+        c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+        
+        // X-Content-Type-Options
+        c.Header("X-Content-Type-Options", "nosniff")
+        
+        // X-Frame-Options
+        c.Header("X-Frame-Options", "DENY")
+        
+        // X-XSS-Protection
+        c.Header("X-XSS-Protection", "1; mode=block")
+        
+        // Referrer-Policy
+        c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+        
+        // Content-Security-Policy
+        c.Header("Content-Security-Policy", generateCSP())
+        
+        // Permissions-Policy
+        c.Header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        
+        c.Next()
+    }
+}
+
+// CSP生成
+func generateCSP() string {
+    return strings.Join([]string{
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: https:",
+        "font-src 'self'",
+        "connect-src 'self'",
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "upgrade-insecure-requests",
+    }, "; ")
+}
+```
+
+## 6. ログ・監査規約
+
+### 6.1 セキュリティログ
+```go
+// セキュリティログの実装
+package audit
+
+import (
+    "encoding/json"
+    "fmt"
+    "time"
+)
+
+type SecurityEvent struct {
+    Timestamp   time.Time              `json:"timestamp"`
+    EventType   string                 `json:"event_type"`
+    UserID      string                 `json:"user_id,omitempty"`
+    IPAddress   string                 `json:"ip_address"`
+    UserAgent   string                 `json:"user_agent"`
+    Resource    string                 `json:"resource"`
+    Action      string                 `json:"action"`
+    Status      string                 `json:"status"`
+    Details     map[string]interface{} `json:"details,omitempty"`
+    RiskLevel   string                 `json:"risk_level"`
+}
+
+type SecurityLogger struct {
+    logger Logger
+}
+
+func NewSecurityLogger(logger Logger) *SecurityLogger {
+    return &SecurityLogger{logger: logger}
+}
+
+// ログイン試行ログ
+func (sl *SecurityLogger) LogLoginAttempt(userID, ipAddress, userAgent string, success bool) {
+    event := SecurityEvent{
+        Timestamp: time.Now(),
+        EventType: "login_attempt",
+        UserID:    userID,
+        IPAddress: ipAddress,
+        UserAgent: userAgent,
+        Resource:  "authentication",
+        Action:    "login",
+        Status:    map[bool]string{true: "success", false: "failure"}[success],
+        RiskLevel: map[bool]string{true: "low", false: "medium"}[success],
+    }
+    
+    sl.logger.Info("Security event", event)
+}
+
+// 権限違反ログ
+func (sl *SecurityLogger) LogPermissionViolation(userID, resource, action, ipAddress string) {
+    event := SecurityEvent{
+        Timestamp: time.Now(),
+        EventType: "permission_violation",
+        UserID:    userID,
+        IPAddress: ipAddress,
+        Resource:  resource,
+        Action:    action,
+        Status:    "denied",
+        RiskLevel: "high",
+        Details: map[string]interface{}{
+            "reason": "insufficient_permissions",
+        },
+    }
+    
+    sl.logger.Warn("Security event", event)
+}
+
+// 異常アクセスログ
+func (sl *SecurityLogger) LogSuspiciousActivity(userID, activity, ipAddress string, details map[string]interface{}) {
+    event := SecurityEvent{
+        Timestamp: time.Now(),
+        EventType: "suspicious_activity",
+        UserID:    userID,
+        IPAddress: ipAddress,
+        Resource:  "system",
+        Action:    activity,
+        Status:    "detected",
+        RiskLevel: "high",
+        Details:   details,
+    }
+    
+    sl.logger.Error("Security event", event)
+}
+```
+
+## 7. セキュリティテスト規約
+
+### 7.1 セキュリティテスト
+```go
+// セキュリティテストの実装
+package security_test
+
+import (
+    "net/http"
+    "net/http/httptest"
+    "testing"
+    
+    "github.com/gin-gonic/gin"
+    "github.com/stretchr/testify/assert"
+)
+
+func TestSQLInjectionProtection(t *testing.T) {
+    router := gin.New()
+    router.Use(SecurityHeaders())
+    
+    // SQLインジェクション攻撃のテスト
+    maliciousInputs := []string{
+        "'; DROP TABLE users; --",
+        "' OR '1'='1",
+        "'; INSERT INTO users VALUES ('hacker', 'password'); --",
+    }
+    
+    for _, input := range maliciousInputs {
+        req := httptest.NewRequest("GET", "/users?username="+input, nil)
+        w := httptest.NewRecorder()
+        
+        router.ServeHTTP(w, req)
+        
+        // エラーレスポンスを期待
+        assert.NotEqual(t, http.StatusOK, w.Code)
+    }
+}
+
+func TestXSSProtection(t *testing.T) {
+    router := gin.New()
+    router.Use(SecurityHeaders())
+    
+    // XSS攻撃のテスト
+    maliciousInputs := []string{
+        "<script>alert('xss')</script>",
+        "javascript:alert('xss')",
+        "<img src=x onerror=alert('xss')>",
+    }
+    
+    for _, input := range maliciousInputs {
+        req := httptest.NewRequest("POST", "/api/data", strings.NewReader("data="+input))
+        req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+        w := httptest.NewRecorder()
+        
+        router.ServeHTTP(w, req)
+        
+        // レスポンスにスクリプトが含まれていないことを確認
+        assert.NotContains(t, w.Body.String(), "<script>")
+    }
+}
+
+func TestCSRFProtection(t *testing.T) {
+    router := gin.New()
+    csrf := NewCSRFProtection("secret", time.Hour)
+    router.Use(csrf.CSRFMiddleware())
+    
+    // CSRF攻撃のテスト
+    req := httptest.NewRequest("POST", "/api/action", nil)
+    w := httptest.NewRecorder()
+    
+    router.ServeHTTP(w, req)
+    
+    // CSRFトークンなしでアクセスした場合、403エラーを期待
+    assert.Equal(t, http.StatusForbidden, w.Code)
+}
+```
+
+## 8. セキュリティ設定チェックリスト
+
+### 8.1 実装時チェックリスト
+- [ ] 入力検証・サニタイゼーションを実装
+- [ ] SQLインジェクション対策（プリペアドステートメント使用）
+- [ ] XSS対策（HTMLエスケープ、CSP設定）
+- [ ] CSRF対策（トークン検証）
+- [ ] 認証・認可の適切な実装
+- [ ] セッション管理の安全な実装
+- [ ] パスワードの安全な保存（ハッシュ化）
+- [ ] 暗号化通信（HTTPS/TLS）
+- [ ] セキュリティヘッダーの設定
+- [ ] ログ・監査の実装
+
+### 8.2 運用時チェックリスト
+- [ ] 定期的なセキュリティスキャン
+- [ ] 脆弱性情報の監視
+- [ ] アクセスログの監視
+- [ ] 異常アクセスの検知
+- [ ] セキュリティパッチの適用
+- [ ] バックアップの暗号化
+- [ ] インシデント対応手順の整備
+- [ ] セキュリティトレーニングの実施

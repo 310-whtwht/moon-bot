@@ -1,0 +1,676 @@
+# Compliance Standards & Best Practices
+
+## 1. コンプライアンス規約
+
+### 1.1 金融規制対応
+```go
+// internal/compliance/financial_regulations.go
+package compliance
+
+import (
+	"context"
+	"time"
+	"go.uber.org/zap"
+)
+
+// 金融規制管理
+type FinancialCompliance struct {
+	logger *zap.Logger
+}
+
+// 取引記録保持
+type TradeRecord struct {
+	ID              string    `json:"id"`
+	Symbol          string    `json:"symbol"`
+	Side            string    `json:"side"`
+	Quantity        int       `json:"quantity"`
+	Price           float64   `json:"price"`
+	Timestamp       time.Time `json:"timestamp"`
+	UserID          string    `json:"user_id"`
+	StrategyID      string    `json:"strategy_id"`
+	BrokerOrderID   string    `json:"broker_order_id"`
+	Commission      float64   `json:"commission"`
+	RegulatoryData  map[string]interface{} `json:"regulatory_data"`
+}
+
+// 規制対応取引記録
+func (fc *FinancialCompliance) RecordTrade(ctx context.Context, trade *TradeRecord) error {
+	// 7年間の記録保持義務
+	trade.RegulatoryData = map[string]interface{}{
+		"retention_period": "7_years",
+		"regulation":       "SEC_17a-4",
+		"record_type":      "trade_execution",
+		"audit_trail":      true,
+	}
+	
+	// 取引記録を保存
+	return fc.saveTradeRecord(ctx, trade)
+}
+
+// リスク管理
+type RiskLimits struct {
+	MaxPositionSize    float64 `json:"max_position_size"`
+	MaxDailyLoss       float64 `json:"max_daily_loss"`
+	MaxDrawdown        float64 `json:"max_drawdown"`
+	MaxLeverage        float64 `json:"max_leverage"`
+	MinMargin          float64 `json:"min_margin"`
+}
+
+// リスクチェック
+func (fc *FinancialCompliance) CheckRiskLimits(ctx context.Context, order *Order, limits *RiskLimits) error {
+	// ポジションサイズチェック
+	if order.Quantity*order.Price > limits.MaxPositionSize {
+		return ErrPositionSizeExceeded
+	}
+	
+	// レバレッジチェック
+	if order.Leverage > limits.MaxLeverage {
+		return ErrLeverageExceeded
+	}
+	
+	// マージンチェック
+	if order.Margin < limits.MinMargin {
+		return ErrInsufficientMargin
+	}
+	
+	return nil
+}
+
+// 規制報告
+type RegulatoryReport struct {
+	ReportType    string    `json:"report_type"`
+	Period        string    `json:"period"`
+	GeneratedAt   time.Time `json:"generated_at"`
+	Data          []TradeRecord `json:"data"`
+}
+
+// 月次報告書生成
+func (fc *FinancialCompliance) GenerateMonthlyReport(ctx context.Context, month string) (*RegulatoryReport, error) {
+	trades, err := fc.getTradesForPeriod(ctx, month)
+	if err != nil {
+		return nil, err
+	}
+	
+	report := &RegulatoryReport{
+		ReportType:  "monthly_trading_report",
+		Period:      month,
+		GeneratedAt: time.Now(),
+		Data:        trades,
+	}
+	
+	// 報告書を保存
+	return report, fc.saveRegulatoryReport(ctx, report)
+}
+```
+
+### 1.2 データ保護規約
+```go
+// internal/compliance/data_protection.go
+package compliance
+
+import (
+	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
+	"io"
+	"time"
+)
+
+// データ保護管理
+type DataProtection struct {
+	encryptionKey []byte
+}
+
+// 個人情報
+type PersonalData struct {
+	UserID      string    `json:"user_id"`
+	Email       string    `json:"email"`
+	Phone       string    `json:"phone"`
+	Address     string    `json:"address"`
+	SSN         string    `json:"ssn"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// データ暗号化
+func (dp *DataProtection) EncryptPersonalData(data *PersonalData) error {
+	// SSN暗号化
+	if data.SSN != "" {
+		encrypted, err := dp.encrypt(data.SSN)
+		if err != nil {
+			return err
+		}
+		data.SSN = encrypted
+	}
+	
+	// 電話番号暗号化
+	if data.Phone != "" {
+		encrypted, err := dp.encrypt(data.Phone)
+		if err != nil {
+			return err
+		}
+		data.Phone = encrypted
+	}
+	
+	return nil
+}
+
+// データ復号化
+func (dp *DataProtection) DecryptPersonalData(data *PersonalData) error {
+	// SSN復号化
+	if data.SSN != "" {
+		decrypted, err := dp.decrypt(data.SSN)
+		if err != nil {
+			return err
+		}
+		data.SSN = decrypted
+	}
+	
+	// 電話番号復号化
+	if data.Phone != "" {
+		decrypted, err := dp.decrypt(data.Phone)
+		if err != nil {
+			return err
+		}
+		data.Phone = decrypted
+	}
+	
+	return nil
+}
+
+// AES暗号化
+func (dp *DataProtection) encrypt(plaintext string) (string, error) {
+	block, err := aes.NewCipher(dp.encryptionKey)
+	if err != nil {
+		return "", err
+	}
+	
+	ciphertext := make([]byte, aes.BlockSize+len(plaintext))
+	iv := ciphertext[:aes.BlockSize]
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return "", err
+	}
+	
+	stream := cipher.NewCFBEncrypter(block, iv)
+	stream.XORKeyStream(ciphertext[aes.BlockSize:], []byte(plaintext))
+	
+	return base64.URLEncoding.EncodeToString(ciphertext), nil
+}
+
+// AES復号化
+func (dp *DataProtection) decrypt(ciphertext string) (string, error) {
+	data, err := base64.URLEncoding.DecodeString(ciphertext)
+	if err != nil {
+		return "", err
+	}
+	
+	block, err := aes.NewCipher(dp.encryptionKey)
+	if err != nil {
+		return "", err
+	}
+	
+	if len(data) < aes.BlockSize {
+		return "", ErrInvalidCiphertext
+	}
+	
+	iv := data[:aes.BlockSize]
+	data = data[aes.BlockSize:]
+	
+	stream := cipher.NewCFBDecrypter(block, iv)
+	stream.XORKeyStream(data, data)
+	
+	return string(data), nil
+}
+
+// データ保持期間管理
+type DataRetentionPolicy struct {
+	DataType        string        `json:"data_type"`
+	RetentionPeriod time.Duration `json:"retention_period"`
+	AutoDelete      bool          `json:"auto_delete"`
+}
+
+// データ削除
+func (dp *DataProtection) DeleteExpiredData(ctx context.Context, policy *DataRetentionPolicy) error {
+	cutoffDate := time.Now().Add(-policy.RetentionPeriod)
+	
+	// 期限切れデータの削除
+	return dp.deleteDataBefore(ctx, policy.DataType, cutoffDate)
+}
+```
+
+## 2. 監査規約
+
+### 2.1 監査ログ
+```go
+// internal/audit/audit_log.go
+package audit
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+	"go.uber.org/zap"
+)
+
+// 監査ログエントリ
+type AuditLogEntry struct {
+	ID          string                 `json:"id"`
+	Timestamp   time.Time              `json:"timestamp"`
+	UserID      string                 `json:"user_id"`
+	Action      string                 `json:"action"`
+	Resource    string                 `json:"resource"`
+	ResourceID  string                 `json:"resource_id"`
+	IPAddress   string                 `json:"ip_address"`
+	UserAgent   string                 `json:"user_agent"`
+	RequestID   string                 `json:"request_id"`
+	Status      string                 `json:"status"`
+	Details     map[string]interface{} `json:"details"`
+	Metadata    map[string]interface{} `json:"metadata"`
+}
+
+// 監査ログ管理
+type AuditLogger struct {
+	logger *zap.Logger
+}
+
+// 監査ログ記録
+func (al *AuditLogger) LogEvent(ctx context.Context, entry *AuditLogEntry) error {
+	// 監査ログを構造化ログとして記録
+	al.logger.Info("audit_event",
+		zap.String("audit_id", entry.ID),
+		zap.String("user_id", entry.UserID),
+		zap.String("action", entry.Action),
+		zap.String("resource", entry.Resource),
+		zap.String("resource_id", entry.ResourceID),
+		zap.String("ip_address", entry.IPAddress),
+		zap.String("request_id", entry.RequestID),
+		zap.String("status", entry.Status),
+		zap.Any("details", entry.Details),
+		zap.Any("metadata", entry.Metadata),
+	)
+	
+	// 監査ログをデータベースに保存
+	return al.saveAuditLog(ctx, entry)
+}
+
+// 取引監査
+func (al *AuditLogger) LogTradeEvent(ctx context.Context, trade *Trade, userID, requestID string) error {
+	entry := &AuditLogEntry{
+		ID:         generateAuditID(),
+		Timestamp:  time.Now(),
+		UserID:     userID,
+		Action:     "trade_execution",
+		Resource:   "trade",
+		ResourceID: trade.ID,
+		RequestID:  requestID,
+		Status:     "success",
+		Details: map[string]interface{}{
+			"symbol":     trade.Symbol,
+			"side":       trade.Side,
+			"quantity":   trade.Quantity,
+			"price":      trade.Price,
+			"commission": trade.Commission,
+		},
+		Metadata: map[string]interface{}{
+			"compliance_required": true,
+			"retention_period":    "7_years",
+		},
+	}
+	
+	return al.LogEvent(ctx, entry)
+}
+
+// 監査ログ検索
+func (al *AuditLogger) SearchAuditLogs(ctx context.Context, filters *AuditLogFilters) ([]*AuditLogEntry, error) {
+	// 監査ログの検索
+	return al.queryAuditLogs(ctx, filters)
+}
+
+// 監査ログフィルタ
+type AuditLogFilters struct {
+	UserID     string    `json:"user_id"`
+	Action     string    `json:"action"`
+	Resource   string    `json:"resource"`
+	StartTime  time.Time `json:"start_time"`
+	EndTime    time.Time `json:"end_time"`
+	Status     string    `json:"status"`
+	Limit      int       `json:"limit"`
+	Offset     int       `json:"offset"`
+}
+```
+
+### 2.2 監査トレイル
+```go
+// internal/audit/audit_trail.go
+package audit
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"time"
+)
+
+// 監査トレイル
+type AuditTrail struct {
+	ID        string           `json:"id"`
+	EntityID  string           `json:"entity_id"`
+	EntityType string          `json:"entity_type"`
+	Events    []AuditTrailEvent `json:"events"`
+	Hash      string           `json:"hash"`
+	CreatedAt time.Time        `json:"created_at"`
+	UpdatedAt time.Time        `json:"updated_at"`
+}
+
+// 監査トレイルイベント
+type AuditTrailEvent struct {
+	ID        string                 `json:"id"`
+	Timestamp time.Time              `json:"timestamp"`
+	Action    string                 `json:"action"`
+	UserID    string                 `json:"user_id"`
+	Changes   map[string]interface{} `json:"changes"`
+	Hash      string                 `json:"hash"`
+}
+
+// 監査トレイル管理
+type AuditTrailManager struct {
+	logger *zap.Logger
+}
+
+// トレイル作成
+func (atm *AuditTrailManager) CreateTrail(ctx context.Context, entityID, entityType string) (*AuditTrail, error) {
+	trail := &AuditTrail{
+		ID:         generateTrailID(),
+		EntityID:   entityID,
+		EntityType: entityType,
+		Events:     []AuditTrailEvent{},
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+	
+	// 初期ハッシュ計算
+	trail.Hash = atm.calculateTrailHash(trail)
+	
+	return trail, atm.saveAuditTrail(ctx, trail)
+}
+
+// イベント追加
+func (atm *AuditTrailManager) AddEvent(ctx context.Context, trailID string, event *AuditTrailEvent) error {
+	trail, err := atm.getAuditTrail(ctx, trailID)
+	if err != nil {
+		return err
+	}
+	
+	// イベントハッシュ計算
+	event.Hash = atm.calculateEventHash(event)
+	
+	// イベント追加
+	trail.Events = append(trail.Events, *event)
+	trail.UpdatedAt = time.Now()
+	
+	// トレイルハッシュ更新
+	trail.Hash = atm.calculateTrailHash(trail)
+	
+	return atm.updateAuditTrail(ctx, trail)
+}
+
+// トレイル検証
+func (atm *AuditTrailManager) VerifyTrail(ctx context.Context, trailID string) (bool, error) {
+	trail, err := atm.getAuditTrail(ctx, trailID)
+	if err != nil {
+		return false, err
+	}
+	
+	// ハッシュ検証
+	expectedHash := atm.calculateTrailHash(trail)
+	return trail.Hash == expectedHash, nil
+}
+
+// ハッシュ計算
+func (atm *AuditTrailManager) calculateTrailHash(trail *AuditTrail) string {
+	data, _ := json.Marshal(trail.Events)
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
+}
+
+func (atm *AuditTrailManager) calculateEventHash(event *AuditTrailEvent) string {
+	data, _ := json.Marshal(event)
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
+}
+```
+
+## 3. セキュリティ規約
+
+### 3.1 アクセス制御
+```go
+// internal/security/access_control.go
+package security
+
+import (
+	"context"
+	"time"
+	"github.com/gin-gonic/gin"
+)
+
+// アクセス制御
+type AccessControl struct {
+	permissions map[string][]string
+}
+
+// 権限チェック
+func (ac *AccessControl) CheckPermission(ctx context.Context, userID, resource, action string) (bool, error) {
+	userPermissions, exists := ac.permissions[userID]
+	if !exists {
+		return false, ErrUserNotFound
+	}
+	
+	requiredPermission := resource + ":" + action
+	for _, permission := range userPermissions {
+		if permission == requiredPermission {
+			return true, nil
+		}
+	}
+	
+	return false, ErrPermissionDenied
+}
+
+// ロールベースアクセス制御
+type Role struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Permissions []string `json:"permissions"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type UserRole struct {
+	UserID    string    `json:"user_id"`
+	RoleID    string    `json:"role_id"`
+	AssignedAt time.Time `json:"assigned_at"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+}
+
+// RBAC管理
+type RBACManager struct {
+	roles    map[string]*Role
+	userRoles map[string][]UserRole
+}
+
+// 権限チェック
+func (rm *RBACManager) CheckPermission(ctx context.Context, userID, resource, action string) (bool, error) {
+	userRoles, exists := rm.userRoles[userID]
+	if !exists {
+		return false, ErrUserNotFound
+	}
+	
+	requiredPermission := resource + ":" + action
+	
+	for _, userRole := range userRoles {
+		// 期限チェック
+		if userRole.ExpiresAt != nil && time.Now().After(*userRole.ExpiresAt) {
+			continue
+		}
+		
+		role, exists := rm.roles[userRole.RoleID]
+		if !exists {
+			continue
+		}
+		
+		for _, permission := range role.Permissions {
+			if permission == requiredPermission {
+				return true, nil
+			}
+		}
+	}
+	
+	return false, ErrPermissionDenied
+}
+
+// アクセス制御ミドルウェア
+func (rm *RBACManager) AccessControlMiddleware(resource, action string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetString("user_id")
+		if userID == "" {
+			c.JSON(401, gin.H{"error": "unauthorized"})
+			c.Abort()
+			return
+		}
+		
+		hasPermission, err := rm.CheckPermission(c.Request.Context(), userID, resource, action)
+		if err != nil || !hasPermission {
+			c.JSON(403, gin.H{"error": "forbidden"})
+			c.Abort()
+			return
+		}
+		
+		c.Next()
+	}
+}
+```
+
+### 3.2 データ暗号化
+```go
+// internal/security/encryption.go
+package security
+
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/pem"
+	"io"
+)
+
+// 暗号化管理
+type EncryptionManager struct {
+	aesKey []byte
+	rsaKey *rsa.PrivateKey
+}
+
+// AES暗号化
+func (em *EncryptionManager) EncryptAES(plaintext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(em.aesKey)
+	if err != nil {
+		return nil, err
+	}
+	
+	ciphertext := make([]byte, aes.BlockSize+len(plaintext))
+	iv := ciphertext[:aes.BlockSize]
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return nil, err
+	}
+	
+	stream := cipher.NewCFBEncrypter(block, iv)
+	stream.XORKeyStream(ciphertext[aes.BlockSize:], plaintext)
+	
+	return ciphertext, nil
+}
+
+// AES復号化
+func (em *EncryptionManager) DecryptAES(ciphertext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(em.aesKey)
+	if err != nil {
+		return nil, err
+	}
+	
+	if len(ciphertext) < aes.BlockSize {
+		return nil, ErrInvalidCiphertext
+	}
+	
+	iv := ciphertext[:aes.BlockSize]
+	ciphertext = ciphertext[aes.BlockSize:]
+	
+	stream := cipher.NewCFBDecrypter(block, iv)
+	stream.XORKeyStream(ciphertext, ciphertext)
+	
+	return ciphertext, nil
+}
+
+// RSA暗号化
+func (em *EncryptionManager) EncryptRSA(plaintext []byte) ([]byte, error) {
+	return rsa.EncryptOAEP(sha256.New(), rand.Reader, &em.rsaKey.PublicKey, plaintext, nil)
+}
+
+// RSA復号化
+func (em *EncryptionManager) DecryptRSA(ciphertext []byte) ([]byte, error) {
+	return rsa.DecryptOAEP(sha256.New(), rand.Reader, em.rsaKey, ciphertext, nil)
+}
+
+// 鍵管理
+func (em *EncryptionManager) GenerateAESKey() ([]byte, error) {
+	key := make([]byte, 32)
+	_, err := io.ReadFull(rand.Reader, key)
+	return key, err
+}
+
+func (em *EncryptionManager) LoadRSAKey(privateKeyPEM []byte) error {
+	block, _ := pem.Decode(privateKeyPEM)
+	if block == nil {
+		return ErrInvalidPrivateKey
+	}
+	
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return err
+	}
+	
+	em.rsaKey = privateKey
+	return nil
+}
+```
+
+## 4. 実装チェックリスト
+
+### 4.1 コンプライアンス
+- [ ] 金融規制対応の実装
+- [ ] 取引記録保持の実装
+- [ ] リスク管理の実装
+- [ ] 規制報告の実装
+- [ ] データ保護の実装
+
+### 4.2 監査
+- [ ] 監査ログの実装
+- [ ] 監査トレイルの実装
+- [ ] ログ検索の実装
+- [ ] トレイル検証の実装
+- [ ] 監査レポートの実装
+
+### 4.3 セキュリティ
+- [ ] アクセス制御の実装
+- [ ] RBACの実装
+- [ ] データ暗号化の実装
+- [ ] 鍵管理の実装
+- [ ] セキュリティ監査の実装
+
+### 4.4 データ保護
+- [ ] 個人情報保護の実装
+- [ ] データ暗号化の実装
+- [ ] データ保持期間管理の実装
+- [ ] データ削除の実装
+- [ ] プライバシー保護の実装

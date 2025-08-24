@@ -1,0 +1,648 @@
+# Scalability Standards & Best Practices
+
+## 1. スケーラビリティ規約
+
+### 1.1 水平スケーリング
+```yaml
+# scaling/horizontal-scaling.yml
+horizontal_scaling:
+  # API サービス
+  api_service:
+    min_replicas: 3
+    max_replicas: 20
+    target_cpu_utilization: 70
+    target_memory_utilization: 80
+    scale_up_cooldown: 300s
+    scale_down_cooldown: 600s
+    
+  # Bot サービス
+  bot_service:
+    min_replicas: 2
+    max_replicas: 10
+    target_cpu_utilization: 60
+    target_memory_utilization: 70
+    scale_up_cooldown: 180s
+    scale_down_cooldown: 300s
+    
+  # Web サービス
+  web_service:
+    min_replicas: 2
+    max_replicas: 15
+    target_cpu_utilization: 65
+    target_memory_utilization: 75
+    scale_up_cooldown: 240s
+    scale_down_cooldown: 480s
+```
+
+```yaml
+# scaling/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: trading-api-hpa
+  namespace: trading-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: trading-api
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+```
+
+### 1.2 垂直スケーリング
+```yaml
+# scaling/vertical-scaling.yml
+vertical_scaling:
+  # リソース制限
+  resource_limits:
+    api_service:
+      cpu:
+        request: "250m"
+        limit: "1000m"
+      memory:
+        request: "512Mi"
+        limit: "2Gi"
+        
+    bot_service:
+      cpu:
+        request: "200m"
+        limit: "800m"
+      memory:
+        request: "256Mi"
+        limit: "1Gi"
+        
+    web_service:
+      cpu:
+        request: "200m"
+        limit: "800m"
+      memory:
+        request: "256Mi"
+        limit: "1Gi"
+        
+  # 自動垂直スケーリング
+  vpa:
+    enabled: true
+    mode: "Auto"
+    min_allowed:
+      cpu: "100m"
+      memory: "128Mi"
+    max_allowed:
+      cpu: "2000m"
+      memory: "4Gi"
+```
+
+```yaml
+# scaling/vpa.yaml
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: trading-api-vpa
+  namespace: trading-system
+spec:
+  targetRef:
+    apiVersion: "apps/v1"
+    kind: Deployment
+    name: trading-api
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: '*'
+      minAllowed:
+        cpu: 100m
+        memory: 128Mi
+      maxAllowed:
+        cpu: 2000m
+        memory: 4Gi
+      controlledValues: RequestsAndLimits
+```
+
+## 2. 負荷分散規約
+
+### 2.1 ロードバランサー設定
+```yaml
+# loadbalancer/nginx-config.yml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: trading-system
+data:
+  nginx.conf: |
+    events {
+      worker_connections 1024;
+    }
+    
+    http {
+      upstream api_backend {
+        least_conn;
+        server trading-api-1:8080 weight=1 max_fails=3 fail_timeout=30s;
+        server trading-api-2:8080 weight=1 max_fails=3 fail_timeout=30s;
+        server trading-api-3:8080 weight=1 max_fails=3 fail_timeout=30s;
+        keepalive 32;
+      }
+      
+      upstream web_backend {
+        ip_hash;
+        server trading-web-1:3000;
+        server trading-web-2:3000;
+        server trading-web-3:3000;
+      }
+      
+      server {
+        listen 80;
+        server_name api.trading.example.com;
+        
+        location / {
+          proxy_pass http://api_backend;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          
+          # タイムアウト設定
+          proxy_connect_timeout 5s;
+          proxy_send_timeout 60s;
+          proxy_read_timeout 60s;
+          
+          # バッファ設定
+          proxy_buffering on;
+          proxy_buffer_size 4k;
+          proxy_buffers 8 4k;
+        }
+        
+        # ヘルスチェック
+        location /health {
+          access_log off;
+          return 200 "healthy\n";
+          add_header Content-Type text/plain;
+        }
+      }
+    }
+```
+
+### 2.2 セッション管理
+```go
+// internal/session/distributed_session.go
+package session
+
+import (
+	"context"
+	"time"
+	"github.com/redis/go-redis/v9"
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+)
+
+// 分散セッション管理
+type DistributedSessionManager struct {
+	redis  *redis.Client
+	logger *zap.Logger
+}
+
+func NewDistributedSessionManager(redis *redis.Client, logger *zap.Logger) *DistributedSessionManager {
+	return &DistributedSessionManager{
+		redis:  redis,
+		logger: logger,
+	}
+}
+
+// セッション作成
+func (sm *DistributedSessionManager) CreateSession(ctx context.Context, userID string) (string, error) {
+	sessionID := generateSessionID()
+	
+	sessionData := map[string]interface{}{
+		"user_id":    userID,
+		"created_at": time.Now().Unix(),
+		"expires_at": time.Now().Add(24 * time.Hour).Unix(),
+	}
+	
+	// Redisにセッション保存
+	err := sm.redis.HMSet(ctx, "session:"+sessionID, sessionData).Err()
+	if err != nil {
+		return "", err
+	}
+	
+	// TTL設定
+	sm.redis.Expire(ctx, "session:"+sessionID, 24*time.Hour)
+	
+	return sessionID, nil
+}
+
+// セッション取得
+func (sm *DistributedSessionManager) GetSession(ctx context.Context, sessionID string) (map[string]string, error) {
+	result, err := sm.redis.HGetAll(ctx, "session:"+sessionID).Result()
+	if err != nil {
+		return nil, err
+	}
+	
+	if len(result) == 0 {
+		return nil, ErrSessionNotFound
+	}
+	
+	// 期限チェック
+	expiresAt, _ := time.Parse(time.RFC3339, result["expires_at"])
+	if time.Now().After(expiresAt) {
+		sm.redis.Del(ctx, "session:"+sessionID)
+		return nil, ErrSessionExpired
+	}
+	
+	return result, nil
+}
+
+// セッション削除
+func (sm *DistributedSessionManager) DeleteSession(ctx context.Context, sessionID string) error {
+	return sm.redis.Del(ctx, "session:"+sessionID).Err()
+}
+
+// セッションミドルウェア
+func (sm *DistributedSessionManager) SessionMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		sessionID := c.GetHeader("X-Session-ID")
+		if sessionID == "" {
+			sessionID = c.Query("session_id")
+		}
+		
+		if sessionID != "" {
+			session, err := sm.GetSession(c.Request.Context(), sessionID)
+			if err == nil {
+				c.Set("session", session)
+				c.Set("user_id", session["user_id"])
+			}
+		}
+		
+		c.Next()
+	}
+}
+```
+
+## 3. データベーススケーリング
+
+### 3.1 読み取りレプリカ
+```go
+// internal/database/replica.go
+package database
+
+import (
+	"context"
+	"database/sql"
+	"sync"
+	"time"
+	"go.uber.org/zap"
+)
+
+// 読み取りレプリカ管理
+type ReplicaManager struct {
+	master  *sql.DB
+	replicas []*sql.DB
+	current  int
+	mutex    sync.RWMutex
+	logger   *zap.Logger
+}
+
+func NewReplicaManager(master *sql.DB, replicaURLs []string, logger *zap.Logger) (*ReplicaManager, error) {
+	replicas := make([]*sql.DB, len(replicaURLs))
+	
+	for i, url := range replicaURLs {
+		db, err := sql.Open("mysql", url)
+		if err != nil {
+			return nil, err
+		}
+		
+		// レプリカ設定
+		db.SetMaxOpenConns(50)
+		db.SetMaxIdleConns(10)
+		db.SetConnMaxLifetime(time.Hour)
+		
+		replicas[i] = db
+	}
+	
+	return &ReplicaManager{
+		master:   master,
+		replicas: replicas,
+		logger:   logger,
+	}, nil
+}
+
+// 読み取り専用クエリ用DB取得
+func (rm *ReplicaManager) GetReadDB() *sql.DB {
+	rm.mutex.RLock()
+	defer rm.mutex.RUnlock()
+	
+	if len(rm.replicas) == 0 {
+		return rm.master
+	}
+	
+	// ラウンドロビン
+	rm.current = (rm.current + 1) % len(rm.replicas)
+	return rm.replicas[rm.current]
+}
+
+// 書き込み用DB取得
+func (rm *ReplicaManager) GetWriteDB() *sql.DB {
+	return rm.master
+}
+
+// レプリカヘルスチェック
+func (rm *ReplicaManager) HealthCheck(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			rm.checkReplicaHealth(ctx)
+		}
+	}
+}
+
+func (rm *ReplicaManager) checkReplicaHealth(ctx context.Context) {
+	for i, replica := range rm.replicas {
+		err := replica.PingContext(ctx)
+		if err != nil {
+			rm.logger.Error("Replica health check failed",
+				zap.Int("replica_index", i),
+				zap.Error(err),
+			)
+		}
+	}
+}
+```
+
+### 3.2 シャーディング
+```go
+// internal/database/sharding.go
+package database
+
+import (
+	"context"
+	"database/sql"
+	"hash/fnv"
+	"strconv"
+	"go.uber.org/zap"
+)
+
+// シャーディング管理
+type ShardingManager struct {
+	shards []*sql.DB
+	logger *zap.Logger
+}
+
+func NewShardingManager(shardURLs []string, logger *zap.Logger) (*ShardingManager, error) {
+	shards := make([]*sql.DB, len(shardURLs))
+	
+	for i, url := range shardURLs {
+		db, err := sql.Open("mysql", url)
+		if err != nil {
+			return nil, err
+		}
+		
+		shards[i] = db
+	}
+	
+	return &ShardingManager{
+		shards: shards,
+		logger: logger,
+	}, nil
+}
+
+// シャード選択
+func (sm *ShardingManager) GetShard(key string) *sql.DB {
+	hash := fnv.New32a()
+	hash.Write([]byte(key))
+	shardIndex := int(hash.Sum32()) % len(sm.shards)
+	return sm.shards[shardIndex]
+}
+
+// ユーザーIDによるシャード選択
+func (sm *ShardingManager) GetShardByUserID(userID string) *sql.DB {
+	return sm.GetShard("user:" + userID)
+}
+
+// 注文IDによるシャード選択
+func (sm *ShardingManager) GetShardByOrderID(orderID string) *sql.DB {
+	return sm.GetShard("order:" + orderID)
+}
+
+// 全シャードに対するクエリ実行
+func (sm *ShardingManager) QueryAllShards(ctx context.Context, query string, args ...interface{}) ([]*sql.Rows, error) {
+	var allRows []*sql.Rows
+	
+	for i, shard := range sm.shards {
+		rows, err := shard.QueryContext(ctx, query, args...)
+		if err != nil {
+			sm.logger.Error("Query failed on shard",
+				zap.Int("shard_index", i),
+				zap.Error(err),
+			)
+			continue
+		}
+		
+		allRows = append(allRows, rows)
+	}
+	
+	return allRows, nil
+}
+```
+
+## 4. キャッシュスケーリング
+
+### 4.1 Redis クラスター
+```yaml
+# scaling/redis-cluster.yml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  namespace: trading-system
+spec:
+  serviceName: redis-cluster
+  replicas: 6
+  selector:
+    matchLabels:
+      app: redis-cluster
+  template:
+    metadata:
+      labels:
+        app: redis-cluster
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        command:
+        - redis-server
+        - /etc/redis/redis.conf
+        - --cluster-enabled
+        - yes
+        - --cluster-config-file
+        - nodes.conf
+        - --cluster-node-timeout
+        - "5000"
+        volumeMounts:
+        - name: redis-config
+          mountPath: /etc/redis
+        - name: redis-data
+          mountPath: /data
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+```
+
+### 4.2 キャッシュ分散
+```go
+// internal/cache/distributed_cache.go
+package cache
+
+import (
+	"context"
+	"crypto/md5"
+	"fmt"
+	"time"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+)
+
+// 分散キャッシュ管理
+type DistributedCache struct {
+	clients []*redis.Client
+	logger  *zap.Logger
+}
+
+func NewDistributedCache(redisURLs []string, logger *zap.Logger) (*DistributedCache, error) {
+	clients := make([]*redis.Client, len(redisURLs))
+	
+	for i, url := range redisURLs {
+		opt, err := redis.ParseURL(url)
+		if err != nil {
+			return nil, err
+		}
+		
+		clients[i] = redis.NewClient(opt)
+	}
+	
+	return &DistributedCache{
+		clients: clients,
+		logger:  logger,
+	}, nil
+}
+
+// キーに基づくRedisインスタンス選択
+func (dc *DistributedCache) getClient(key string) *redis.Client {
+	hash := md5.Sum([]byte(key))
+	index := int(hash[0]) % len(dc.clients)
+	return dc.clients[index]
+}
+
+// 分散キャッシュ操作
+func (dc *DistributedCache) Get(ctx context.Context, key string) (string, error) {
+	client := dc.getClient(key)
+	return client.Get(ctx, key).Result()
+}
+
+func (dc *DistributedCache) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+	client := dc.getClient(key)
+	return client.Set(ctx, key, value, ttl).Err()
+}
+
+func (dc *DistributedCache) Delete(ctx context.Context, key string) error {
+	client := dc.getClient(key)
+	return client.Del(ctx, key).Err()
+}
+
+// パターンマッチ削除（全インスタンス）
+func (dc *DistributedCache) DeletePattern(ctx context.Context, pattern string) error {
+	for _, client := range dc.clients {
+		keys, err := client.Keys(ctx, pattern).Result()
+		if err != nil {
+			dc.logger.Error("Failed to get keys from Redis instance",
+				zap.Error(err),
+			)
+			continue
+		}
+		
+		if len(keys) > 0 {
+			err = client.Del(ctx, keys...).Err()
+			if err != nil {
+				dc.logger.Error("Failed to delete keys from Redis instance",
+					zap.Error(err),
+				)
+			}
+		}
+	}
+	
+	return nil
+}
+```
+
+## 5. 実装チェックリスト
+
+### 5.1 水平スケーリング
+- [ ] HPA設定の実装
+- [ ] メトリクス収集の実装
+- [ ] スケーリング条件の定義
+- [ ] スケーリング制限の設定
+- [ ] スケーリング監視の実装
+
+### 5.2 垂直スケーリング
+- [ ] VPA設定の実装
+- [ ] リソース制限の設定
+- [ ] リソース監視の実装
+- [ ] 自動調整の実装
+- [ ] 手動調整の実装
+
+### 5.3 負荷分散
+- [ ] ロードバランサーの設定
+- [ ] セッション管理の実装
+- [ ] ヘルスチェックの実装
+- [ ] フェイルオーバーの実装
+- [ ] 負荷分散監視の実装
+
+### 5.4 データベーススケーリング
+- [ ] 読み取りレプリカの実装
+- [ ] シャーディングの実装
+- [ ] レプリケーション監視の実装
+- [ ] フェイルオーバーの実装
+- [ ] データ整合性の確保
+
+### 5.5 キャッシュスケーリング
+- [ ] Redisクラスターの実装
+- [ ] 分散キャッシュの実装
+- [ ] キャッシュ監視の実装
+- [ ] キャッシュ無効化の実装
+- [ ] キャッシュパフォーマンスの最適化
