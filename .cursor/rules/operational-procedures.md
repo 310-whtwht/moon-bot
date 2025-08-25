@@ -1,0 +1,613 @@
+# 運用・監視手順仕様
+
+## 1. 日常運用
+
+### 1.1 システム監視
+```bash
+# ヘルスチェック
+curl -f https://api.trading-system.com/healthz
+
+# メトリクス確認
+curl https://api.trading-system.com/metrics
+
+# ログ確認
+kubectl logs -n trading-system deployment/trading-api --tail=100
+kubectl logs -n trading-system deployment/trading-bot --tail=100
+```
+
+### 1.2 データベース監視
+```sql
+-- 接続数確認
+SHOW PROCESSLIST;
+
+-- スロークエリ確認
+SELECT * FROM mysql.slow_log ORDER BY start_time DESC LIMIT 10;
+
+-- テーブルサイズ確認
+SELECT 
+    table_name,
+    ROUND(((data_length + index_length) / 1024 / 1024), 2) AS 'Size (MB)'
+FROM information_schema.tables 
+WHERE table_schema = 'trading_system'
+ORDER BY (data_length + index_length) DESC;
+```
+
+### 1.3 パフォーマンス監視
+```bash
+# CPU使用率確認
+kubectl top pods -n trading-system
+
+# メモリ使用率確認
+kubectl top pods -n trading-system --containers
+
+# ディスク使用率確認
+kubectl exec -n trading-system deployment/mysql -- df -h
+```
+
+## 2. 障害対応
+
+### 2.1 障害検知
+```yaml
+# monitoring/alerts/incident-detection.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: incident-detection
+  namespace: monitoring
+spec:
+  groups:
+  - name: incident
+    rules:
+    - alert: APIDown
+      expr: up{job="trading-api"} == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: "API is down"
+        description: "Trading API has been down for more than 1 minute"
+        
+    - alert: HighErrorRate
+      expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High error rate detected"
+        description: "Error rate is {{ $value | humanizePercentage }}"
+        
+    - alert: DatabaseConnectionFailed
+      expr: mysql_up == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Database connection failed"
+        description: "MySQL database is not responding"
+```
+
+### 2.2 障害対応手順
+```bash
+#!/bin/bash
+# scripts/incident-response.sh
+
+set -e
+
+INCIDENT_TYPE=$1
+SEVERITY=$2
+
+echo "Starting incident response for $INCIDENT_TYPE (Severity: $SEVERITY)"
+
+case $INCIDENT_TYPE in
+    "api_down")
+        echo "1. Checking API status..."
+        kubectl get pods -n trading-system -l app=trading-api
+        
+        echo "2. Checking logs..."
+        kubectl logs -n trading-system deployment/trading-api --tail=50
+        
+        echo "3. Restarting API deployment..."
+        kubectl rollout restart deployment/trading-api -n trading-system
+        
+        echo "4. Monitoring restart..."
+        kubectl rollout status deployment/trading-api -n trading-system
+        ;;
+        
+    "database_down")
+        echo "1. Checking database status..."
+        kubectl get pods -n trading-system -l app=mysql
+        
+        echo "2. Checking database logs..."
+        kubectl logs -n trading-system deployment/mysql --tail=50
+        
+        echo "3. Checking database connectivity..."
+        kubectl exec -n trading-system deployment/mysql -- mysqladmin ping
+        
+        echo "4. Restarting database if needed..."
+        kubectl rollout restart deployment/mysql -n trading-system
+        ;;
+        
+    "high_error_rate")
+        echo "1. Checking error logs..."
+        kubectl logs -n trading-system deployment/trading-api --tail=100 | grep ERROR
+        
+        echo "2. Checking system resources..."
+        kubectl top pods -n trading-system
+        
+        echo "3. Scaling up if needed..."
+        kubectl scale deployment trading-api -n trading-system --replicas=5
+        ;;
+        
+    *)
+        echo "Unknown incident type: $INCIDENT_TYPE"
+        exit 1
+        ;;
+esac
+
+echo "Incident response completed"
+```
+
+## 3. バックアップ・復旧
+
+### 3.1 データベースバックアップ
+```bash
+#!/bin/bash
+# scripts/backup-database.sh
+
+set -e
+
+BACKUP_DIR="/backup/mysql"
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="$BACKUP_DIR/full_backup_$DATE.sql"
+
+echo "Starting database backup..."
+
+# フルバックアップ
+mysqldump \
+    --single-transaction \
+    --routines \
+    --triggers \
+    --all-databases \
+    --result-file="$BACKUP_FILE"
+
+# 圧縮
+gzip "$BACKUP_FILE"
+
+# 古いバックアップを削除（30日以上）
+find "$BACKUP_DIR" -name "*.sql.gz" -mtime +30 -delete
+
+echo "Backup completed: $BACKUP_FILE.gz"
+```
+
+### 3.2 復旧手順
+```bash
+#!/bin/bash
+# scripts/restore-database.sh
+
+set -e
+
+BACKUP_FILE=$1
+
+if [ -z "$BACKUP_FILE" ]; then
+    echo "Usage: $0 <backup_file>"
+    exit 1
+fi
+
+echo "Starting database restore from $BACKUP_FILE..."
+
+# データベース停止
+kubectl scale deployment trading-api -n trading-system --replicas=0
+kubectl scale deployment trading-bot -n trading-system --replicas=0
+
+# 復旧実行
+gunzip -c "$BACKUP_FILE" | mysql
+
+# アプリケーション再起動
+kubectl scale deployment trading-api -n trading-system --replicas=3
+kubectl scale deployment trading-bot -n trading-system --replicas=2
+
+echo "Database restore completed"
+```
+
+## 4. デプロイメント
+
+### 4.1 本番デプロイ
+```bash
+#!/bin/bash
+# scripts/deploy-production.sh
+
+set -e
+
+VERSION=$1
+
+if [ -z "$VERSION" ]; then
+    echo "Usage: $0 <version>"
+    exit 1
+fi
+
+echo "Deploying version $VERSION to production..."
+
+# 1. 事前チェック
+echo "1. Running pre-deployment checks..."
+kubectl get pods -n trading-system
+kubectl get services -n trading-system
+
+# 2. イメージ更新
+echo "2. Updating images..."
+kubectl set image deployment/trading-api api=trading-system/api:$VERSION -n trading-system
+kubectl set image deployment/trading-bot bot=trading-system/bot:$VERSION -n trading-system
+kubectl set image deployment/trading-web web=trading-system/web:$VERSION -n trading-system
+
+# 3. デプロイメント監視
+echo "3. Monitoring deployment..."
+kubectl rollout status deployment/trading-api -n trading-system
+kubectl rollout status deployment/trading-bot -n trading-system
+kubectl rollout status deployment/trading-web -n trading-system
+
+# 4. ヘルスチェック
+echo "4. Running health checks..."
+for i in {1..10}; do
+    if curl -f https://api.trading-system.com/healthz; then
+        echo "Health check passed"
+        break
+    else
+        echo "Health check failed, retrying..."
+        sleep 10
+    fi
+done
+
+# 5. ロールバック準備
+echo "5. Setting up rollback..."
+kubectl rollout history deployment/trading-api -n trading-system
+
+echo "Deployment completed successfully"
+```
+
+### 4.2 ロールバック手順
+```bash
+#!/bin/bash
+# scripts/rollback.sh
+
+set -e
+
+REVISION=$1
+
+if [ -z "$REVISION" ]; then
+    echo "Usage: $0 <revision>"
+    exit 1
+fi
+
+echo "Rolling back to revision $REVISION..."
+
+# ロールバック実行
+kubectl rollout undo deployment/trading-api -n trading-system --to-revision=$REVISION
+kubectl rollout undo deployment/trading-bot -n trading-system --to-revision=$REVISION
+kubectl rollout undo deployment/trading-web -n trading-system --to-revision=$REVISION
+
+# 監視
+kubectl rollout status deployment/trading-api -n trading-system
+kubectl rollout status deployment/trading-bot -n trading-system
+kubectl rollout status deployment/trading-web -n trading-system
+
+echo "Rollback completed"
+```
+
+## 5. ログ管理
+
+### 5.1 ログローテーション
+```yaml
+# config/logging/fluentd-config.yaml
+<source>
+  @type tail
+  path /var/log/containers/*.log
+  pos_file /var/log/fluentd-containers.log.pos
+  tag kubernetes.*
+  read_from_head true
+  <parse>
+    @type json
+    time_format %Y-%m-%dT%H:%M:%S.%NZ
+  </parse>
+</source>
+
+<filter kubernetes.**>
+  @type record_transformer
+  enable_ruby true
+  <record>
+    @timestamp ${time.strftime('%Y-%m-%dT%H:%M:%S.%NZ')}
+    level ${record['level'] || 'info'}
+    message ${record['message'] || record['log']}
+  </record>
+</filter>
+
+<match kubernetes.**>
+  @type elasticsearch
+  host elasticsearch-service
+  port 9200
+  logstash_format true
+  logstash_prefix k8s
+  <buffer>
+    @type file
+    path /var/log/fluentd-buffers/kubernetes.system.buffer
+    flush_mode interval
+    retry_type exponential_backoff
+    flush_interval 5s
+    retry_forever false
+    retry_max_interval 30
+    chunk_limit_size 2M
+    queue_limit_length 8
+    overflow_action block
+  </buffer>
+</match>
+```
+
+### 5.2 ログ分析
+```bash
+# エラーログ検索
+kubectl logs -n trading-system deployment/trading-api | grep ERROR
+
+# 特定時間のログ
+kubectl logs -n trading-system deployment/trading-api --since=1h
+
+# ログ統計
+kubectl logs -n trading-system deployment/trading-api | grep -c ERROR
+```
+
+## 6. パフォーマンス監視
+
+### 6.1 メトリクス収集
+```yaml
+# monitoring/prometheus/rules/performance.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: performance-alerts
+  namespace: monitoring
+spec:
+  groups:
+  - name: performance
+    rules:
+    - alert: HighResponseTime
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1.0
+      for: 3m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High response time detected"
+        description: "95th percentile response time is {{ $value }}s"
+        
+    - alert: HighMemoryUsage
+      expr: (container_memory_usage_bytes{container="api"} / container_spec_memory_limit_bytes{container="api"}) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High memory usage"
+        description: "Memory usage is {{ $value | humanizePercentage }}"
+        
+    - alert: HighCPUUsage
+      expr: (rate(container_cpu_usage_seconds_total{container="api"}[5m]) / container_spec_cpu_quota{container="api"}) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High CPU usage"
+        description: "CPU usage is {{ $value | humanizePercentage }}"
+```
+
+### 6.2 パフォーマンス分析
+```bash
+# レスポンス時間分析
+curl -s https://api.trading-system.com/metrics | grep http_request_duration_seconds
+
+# スループット確認
+curl -s https://api.trading-system.com/metrics | grep http_requests_total
+
+# リソース使用率
+kubectl top pods -n trading-system --containers
+```
+
+## 7. セキュリティ監視
+
+### 7.1 セキュリティアラート
+```yaml
+# monitoring/prometheus/rules/security.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: security-alerts
+  namespace: monitoring
+spec:
+  groups:
+  - name: security
+    rules:
+    - alert: FailedLoginAttempts
+      expr: rate(login_attempts_total{status="failed"}[5m]) > 10
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High number of failed login attempts"
+        description: "{{ $value }} failed login attempts per second"
+        
+    - alert: UnauthorizedAccess
+      expr: rate(http_requests_total{status="401"}[5m]) > 5
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High number of unauthorized access attempts"
+        description: "{{ $value }} unauthorized requests per second"
+        
+    - alert: SuspiciousActivity
+      expr: rate(http_requests_total{status="403"}[5m]) > 3
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Suspicious activity detected"
+        description: "{{ $value }} forbidden requests per second"
+```
+
+### 7.2 セキュリティ監査
+```bash
+# 認証ログ確認
+kubectl logs -n trading-system deployment/trading-api | grep "authentication"
+
+# アクセスログ分析
+kubectl logs -n trading-system deployment/trading-api | grep "access"
+
+# セキュリティイベント確認
+kubectl logs -n trading-system deployment/trading-api | grep "security"
+```
+
+## 8. 定期メンテナンス
+
+### 8.1 日次メンテナンス
+```bash
+#!/bin/bash
+# scripts/daily-maintenance.sh
+
+set -e
+
+echo "Starting daily maintenance..."
+
+# 1. システム状態確認
+echo "1. Checking system status..."
+kubectl get pods -n trading-system
+kubectl get services -n trading-system
+
+# 2. ログ確認
+echo "2. Checking logs..."
+kubectl logs -n trading-system deployment/trading-api --since=24h | grep ERROR | wc -l
+
+# 3. リソース使用率確認
+echo "3. Checking resource usage..."
+kubectl top pods -n trading-system
+
+# 4. データベースメンテナンス
+echo "4. Database maintenance..."
+kubectl exec -n trading-system deployment/mysql -- mysql -e "OPTIMIZE TABLE strategies, orders, trades;"
+
+# 5. 古いログ削除
+echo "5. Cleaning old logs..."
+find /var/log -name "*.log" -mtime +7 -delete
+
+echo "Daily maintenance completed"
+```
+
+### 8.2 週次メンテナンス
+```bash
+#!/bin/bash
+# scripts/weekly-maintenance.sh
+
+set -e
+
+echo "Starting weekly maintenance..."
+
+# 1. セキュリティアップデート確認
+echo "1. Checking security updates..."
+kubectl get pods -n trading-system -o jsonpath='{.items[*].spec.containers[*].image}' | tr ' ' '\n' | sort | uniq
+
+# 2. バックアップ確認
+echo "2. Verifying backups..."
+ls -la /backup/mysql/ | tail -5
+
+# 3. パフォーマンス分析
+echo "3. Performance analysis..."
+curl -s https://api.trading-system.com/metrics | grep -E "(http_request_duration_seconds|http_requests_total)"
+
+# 4. ディスク使用率確認
+echo "4. Checking disk usage..."
+kubectl exec -n trading-system deployment/mysql -- df -h
+
+# 5. 設定ファイル確認
+echo "5. Verifying configuration..."
+kubectl get configmaps -n trading-system
+kubectl get secrets -n trading-system
+
+echo "Weekly maintenance completed"
+```
+
+## 9. 緊急時対応
+
+### 9.1 緊急時連絡先
+```yaml
+# config/emergency-contacts.yaml
+emergency_contacts:
+  primary:
+    name: "System Administrator"
+    email: "admin@trading-system.com"
+    phone: "+81-90-1234-5678"
+    slack: "@admin"
+  
+  secondary:
+    name: "Backup Administrator"
+    email: "backup-admin@trading-system.com"
+    phone: "+81-90-8765-4321"
+    slack: "@backup-admin"
+  
+  escalation:
+    name: "CTO"
+    email: "cto@trading-system.com"
+    phone: "+81-90-1111-2222"
+    slack: "@cto"
+```
+
+### 9.2 緊急時手順
+```bash
+#!/bin/bash
+# scripts/emergency-response.sh
+
+set -e
+
+EMERGENCY_TYPE=$1
+
+echo "EMERGENCY: $EMERGENCY_TYPE detected at $(date)"
+
+case $EMERGENCY_TYPE in
+    "system_down")
+        echo "1. Notifying emergency contacts..."
+        # Slack通知
+        curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":"🚨 SYSTEM DOWN: Trading system is completely down"}' \
+            $SLACK_WEBHOOK_URL
+        
+        echo "2. Stopping all trading activities..."
+        kubectl scale deployment trading-bot -n trading-system --replicas=0
+        
+        echo "3. Initiating emergency recovery..."
+        kubectl rollout restart deployment/trading-api -n trading-system
+        kubectl rollout restart deployment/trading-bot -n trading-system
+        ;;
+        
+    "data_breach")
+        echo "1. Immediate system lockdown..."
+        kubectl scale deployment trading-api -n trading-system --replicas=0
+        kubectl scale deployment trading-bot -n trading-system --replicas=0
+        
+        echo "2. Notifying security team..."
+        # セキュリティチーム通知
+        
+        echo "3. Preserving evidence..."
+        # ログ保存
+        ;;
+        
+    "financial_loss")
+        echo "1. Stopping all trading..."
+        kubectl scale deployment trading-bot -n trading-system --replicas=0
+        
+        echo "2. Notifying management..."
+        # 経営陣通知
+        
+        echo "3. Preserving trading records..."
+        # 取引記録保存
+        ;;
+        
+    *)
+        echo "Unknown emergency type: $EMERGENCY_TYPE"
+        exit 1
+        ;;
+esac
+
+echo "Emergency response initiated"
+```
