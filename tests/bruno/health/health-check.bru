@@ -1,0 +1,31 @@
+meta {
+  name: Health Check
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/healthz
+  body: none
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  name: Health Check
+  description: Check if the API server is healthy
+}
+
+tests {
+  test("should return 200", function() {
+    expect(response.status).to.equal(200);
+  });
+
+  test("should return healthy status", function() {
+    const body = response.body;
+    expect(body.status).to.equal("healthy");
+    expect(body.service).to.equal("moomoo-trading-api");
+  });
+}
