@@ -1,0 +1,281 @@
+# データベーススキーマ仕様（MySQL 8）
+
+## 1. テーブル定義
+
+### 1.1 戦略管理テーブル
+
+#### strategy_packages
+```sql
+CREATE TABLE strategy_packages (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL COMMENT '戦略名',
+    description TEXT COMMENT '戦略説明',
+    category ENUM('trend_following', 'mean_reversion', 'breakout', 'oscillator') NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_category (category),
+    INDEX idx_active (is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+#### strategy_versions
+```sql
+CREATE TABLE strategy_versions (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    package_id BIGINT UNSIGNED NOT NULL,
+    version VARCHAR(20) NOT NULL COMMENT 'バージョン番号（例: 1.0.0）',
+    script_content LONGTEXT NOT NULL COMMENT 'Starlarkスクリプト',
+    schema_definition JSON NOT NULL COMMENT 'パラメータスキーマ（zod形式）',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (package_id) REFERENCES strategy_packages(id) ON DELETE CASCADE,
+    UNIQUE KEY uk_package_version (package_id, version),
+    INDEX idx_active (is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+#### strategy_params
+```sql
+CREATE TABLE strategy_params (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    version_id BIGINT UNSIGNED NOT NULL,
+    param_name VARCHAR(50) NOT NULL COMMENT 'パラメータ名',
+    param_value JSON NOT NULL COMMENT 'パラメータ値',
+    is_default BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (version_id) REFERENCES strategy_versions(id) ON DELETE CASCADE,
+    UNIQUE KEY uk_version_param (version_id, param_name),
+    INDEX idx_default (is_default)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+### 1.2 取引管理テーブル
+
+#### orders
+```sql
+CREATE TABLE orders (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    client_order_id VARCHAR(100) NOT NULL COMMENT '冪等キー',
+    broker_order_id VARCHAR(100) COMMENT 'ブローカー注文ID',
+    strategy_version_id BIGINT UNSIGNED NOT NULL,
+    symbol VARCHAR(20) NOT NULL COMMENT '銘柄コード',
+    side ENUM('buy', 'sell') NOT NULL,
+    order_type ENUM('market', 'limit', 'stop', 'stop_limit', 'trailing') NOT NULL,
+    quantity INT UNSIGNED NOT NULL COMMENT '数量',
+    price DECIMAL(10,4) COMMENT '指値価格',
+    stop_price DECIMAL(10,4) COMMENT 'ストップ価格',
+    trailing_percent DECIMAL(5,2) COMMENT 'トレーリング幅（%）',
+    status ENUM('pending', 'submitted', 'partial_filled', 'filled', 'cancelled', 'rejected') NOT NULL DEFAULT 'pending',
+    filled_quantity INT UNSIGNED DEFAULT 0,
+    avg_fill_price DECIMAL(10,4),
+    commission DECIMAL(10,4) DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    filled_at TIMESTAMP NULL,
+    FOREIGN KEY (strategy_version_id) REFERENCES strategy_versions(id),
+    UNIQUE KEY uk_client_order_id (client_order_id),
+    INDEX idx_symbol (symbol),
+    INDEX idx_status (status),
+    INDEX idx_created_at (created_at),
+    INDEX idx_strategy_version (strategy_version_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+#### trades
+```sql
+CREATE TABLE trades (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    trade_id VARCHAR(100) NOT NULL COMMENT '取引ID（UUID）',
+    strategy_version_id BIGINT UNSIGNED NOT NULL,
+    symbol VARCHAR(20) NOT NULL,
+    side ENUM('long', 'short') NOT NULL,
+    open_order_id BIGINT UNSIGNED NOT NULL,
+    close_order_id BIGINT UNSIGNED COMMENT '決済注文ID',
+    quantity INT UNSIGNED NOT NULL,
+    open_price DECIMAL(10,4) NOT NULL,
+    close_price DECIMAL(10,4) COMMENT '決済価格',
+    realized_pnl DECIMAL(12,4) COMMENT '実現損益',
+    commission DECIMAL(10,4) DEFAULT 0,
+    dividend DECIMAL(10,4) DEFAULT 0,
+    tax_withheld DECIMAL(10,4) DEFAULT 0,
+    currency VARCHAR(3) DEFAULT 'USD',
+    opened_at TIMESTAMP NOT NULL,
+    closed_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (strategy_version_id) REFERENCES strategy_versions(id),
+    FOREIGN KEY (open_order_id) REFERENCES orders(id),
+    FOREIGN KEY (close_order_id) REFERENCES orders(id),
+    UNIQUE KEY uk_trade_id (trade_id),
+    INDEX idx_symbol (symbol),
+    INDEX idx_opened_at (opened_at),
+    INDEX idx_closed_at (closed_at),
+    INDEX idx_strategy_version (strategy_version_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+### 1.3 監査ログテーブル
+
+#### audit_logs
+```sql
+CREATE TABLE audit_logs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    trade_id VARCHAR(100) COMMENT '取引ID',
+    stage ENUM('input', 'signal', 'order', 'fill', 'close') NOT NULL,
+    event_type VARCHAR(50) NOT NULL COMMENT 'イベントタイプ',
+    event_data JSON NOT NULL COMMENT 'イベントデータ',
+    ts_utc TIMESTAMP NOT NULL COMMENT 'UTCタイムスタンプ',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_trade_id (trade_id),
+    INDEX idx_stage (stage),
+    INDEX idx_ts_utc (ts_utc),
+    INDEX idx_event_type (event_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+### 1.4 市場データテーブル
+
+#### market_data
+```sql
+CREATE TABLE market_data (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    symbol VARCHAR(20) NOT NULL,
+    timeframe ENUM('1m', '5m', '15m', '1d') NOT NULL,
+    ts_utc TIMESTAMP NOT NULL,
+    open_price DECIMAL(10,4) NOT NULL,
+    high_price DECIMAL(10,4) NOT NULL,
+    low_price DECIMAL(10,4) NOT NULL,
+    close_price DECIMAL(10,4) NOT NULL,
+    volume BIGINT UNSIGNED NOT NULL,
+    adjusted_close DECIMAL(10,4) COMMENT '調整後終値',
+    data_source ENUM('moomoo', 'tiingo', 'yahoo') NOT NULL DEFAULT 'moomoo',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_symbol_timeframe_ts (symbol, timeframe, ts_utc),
+    INDEX idx_symbol_timeframe (symbol, timeframe),
+    INDEX idx_ts_utc (ts_utc),
+    INDEX idx_data_source (data_source)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+### 1.5 ユニバース管理テーブル
+
+#### universe_symbols
+```sql
+CREATE TABLE universe_symbols (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    symbol VARCHAR(20) NOT NULL,
+    exchange VARCHAR(10) NOT NULL COMMENT '取引所',
+    sector VARCHAR(50) COMMENT 'セクター',
+    market_cap DECIMAL(20,2) COMMENT '時価総額',
+    avg_volume BIGINT UNSIGNED COMMENT '平均出来高',
+    price_range_min DECIMAL(10,4) COMMENT '価格帯下限',
+    price_range_max DECIMAL(10,4) COMMENT '価格帯上限',
+    volatility_threshold DECIMAL(5,2) COMMENT 'ボラティリティ閾値',
+    is_active BOOLEAN DEFAULT TRUE,
+    last_screened_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_symbol (symbol),
+    INDEX idx_active (is_active),
+    INDEX idx_exchange (exchange),
+    INDEX idx_sector (sector)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+### 1.6 システム設定テーブル
+
+#### system_configs
+```sql
+CREATE TABLE system_configs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    config_key VARCHAR(100) NOT NULL,
+    config_value JSON NOT NULL,
+    description TEXT COMMENT '設定説明',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_config_key (config_key),
+    INDEX idx_active (is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+## 2. インデックス戦略
+
+### 2.1 パフォーマンス最適化インデックス
+```sql
+-- 取引履歴の高速検索
+CREATE INDEX idx_trades_symbol_date ON trades(symbol, opened_at, closed_at);
+
+-- 注文状態の高速検索
+CREATE INDEX idx_orders_status_symbol ON orders(status, symbol, created_at);
+
+-- 市場データの時系列検索
+CREATE INDEX idx_market_data_symbol_ts ON market_data(symbol, ts_utc DESC);
+
+-- 監査ログの時系列検索
+CREATE INDEX idx_audit_logs_trade_stage ON audit_logs(trade_id, stage, ts_utc);
+```
+
+### 2.2 パーティショニング戦略
+```sql
+-- market_dataテーブルの月次パーティショニング
+ALTER TABLE market_data PARTITION BY RANGE (YEAR(ts_utc) * 100 + MONTH(ts_utc)) (
+    PARTITION p202401 VALUES LESS THAN (202402),
+    PARTITION p202402 VALUES LESS THAN (202403),
+    -- 必要に応じて追加
+    PARTITION p_future VALUES LESS THAN MAXVALUE
+);
+
+-- audit_logsテーブルの日次パーティショニング
+ALTER TABLE audit_logs PARTITION BY RANGE (TO_DAYS(ts_utc)) (
+    PARTITION p20240101 VALUES LESS THAN (TO_DAYS('2024-01-02')),
+    PARTITION p20240102 VALUES LESS THAN (TO_DAYS('2024-01-03')),
+    -- 必要に応じて追加
+    PARTITION p_future VALUES LESS THAN MAXVALUE
+);
+```
+
+## 3. データ保持ポリシー
+
+### 3.1 ホットデータ（MySQL）
+- **market_data**: 直近30日
+- **audit_logs**: 直近90日
+- **orders**: 直近1年
+- **trades**: 永続保持
+
+### 3.2 ウォームデータ（Object Storage）
+- **market_data**: 30日〜90日（gzip圧縮）
+- **audit_logs**: 90日〜365日（gzip圧縮）
+
+### 3.3 アーカイブデータ（Object Storage）
+- **market_data**: 90日以降（zstd圧縮）
+- **audit_logs**: 365日以降（zstd圧縮）
+
+## 4. バックアップ戦略
+
+### 4.1 フルバックアップ
+```bash
+#!/bin/bash
+# 日次フルバックアップ
+mysqldump --single-transaction --routines --triggers \
+  --databases trading_system > /backup/full_$(date +%Y%m%d).sql
+```
+
+### 4.2 増分バックアップ
+```bash
+#!/bin/bash
+# 時間次増分バックアップ
+mysqlbinlog --start-datetime="$(date -d '1 hour ago' '+%Y-%m-%d %H:%M:%S')" \
+  /var/lib/mysql/mysql-bin.* | gzip > /backup/incremental_$(date +%Y%m%d_%H).sql.gz
+```
+
+### 4.3 ポイントインタイムリカバリ
+```sql
+-- 特定時点への復旧
+RESTORE FROM '/backup/full_20240101.sql';
+mysqlbinlog --start-datetime="2024-01-01 10:00:00" --stop-datetime="2024-01-01 11:00:00" \
+  /var/lib/mysql/mysql-bin.* | mysql
+```

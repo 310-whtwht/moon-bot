@@ -1,0 +1,928 @@
+# Testing Standards & Best Practices
+
+## 1. エンドポイントテスト規約（Bruno）
+
+### 1.1 Bruno設定
+```json
+// bruno.json
+{
+  "version": "1",
+  "name": "moon-bot-api",
+  "type": "collection"
+}
+```
+
+### 1.2 フォルダ構成
+```
+bruno/
+├── 戦略管理/
+│   ├── 戦略一覧取得.bruno
+│   ├── 戦略詳細取得.bruno
+│   ├── 戦略作成.bruno
+│   ├── 戦略編集.bruno
+│   └── 戦略削除.bruno
+├── 注文管理/
+│   ├── 注文一覧取得.bruno
+│   ├── 注文詳細取得.bruno
+│   ├── 注文作成.bruno
+│   ├── 注文編集.bruno
+│   └── 注文キャンセル.bruno
+├── バックテスト/
+│   ├── バックテスト一覧取得.bruno
+│   ├── バックテスト実行.bruno
+│   └── バックテスト結果取得.bruno
+├── 監視/
+│   ├── PnL取得.bruno
+│   ├── サーキット状態取得.bruno
+│   └── 戦略ログ取得.bruno
+└── エクスポート/
+    ├── 税務エクスポートTWS.bruno
+    └── 税務エクスポート日本.bruno
+```
+
+### 1.3 テストファイル例
+```bruno
+# 戦略一覧取得.bruno
+meta {
+  name: 戦略一覧取得
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/strategies
+  body: none
+  auth: {
+    type: bearer
+    token: {{authToken}}
+  }
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+tests {
+  test("ステータスコードが200であること", function() {
+    expect(response.status).to.equal(200);
+  });
+  
+  test("レスポンスが配列であること", function() {
+    expect(response.body).to.be.an('array');
+  });
+  
+  test("各戦略に必須フィールドが含まれていること", function() {
+    response.body.forEach(strategy => {
+      expect(strategy).to.have.property('id');
+      expect(strategy).to.have.property('name');
+      expect(strategy).to.have.property('status');
+    });
+  });
+}
+```
+
+## 2. 単体テスト規約
+
+### 1.1 Go単体テスト
+```go
+// 単体テストの基本構造
+package user_test
+
+import (
+    "testing"
+    "time"
+    
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/mock"
+    "github.com/stretchr/testify/suite"
+)
+
+// テストスイートの定義
+type UserServiceTestSuite struct {
+    suite.Suite
+    userService *UserService
+    mockRepo    *MockUserRepository
+}
+
+func (suite *UserServiceTestSuite) SetupTest() {
+    suite.mockRepo = NewMockUserRepository()
+    suite.userService = NewUserService(suite.mockRepo)
+}
+
+func (suite *UserServiceTestSuite) TestCreateUser_Success() {
+    // Arrange
+    user := &User{
+        Username: "testuser",
+        Email:    "test@example.com",
+        Password: "password123",
+    }
+    
+    suite.mockRepo.On("Create", mock.AnythingOfType("*User")).Return(user, nil)
+    
+    // Act
+    result, err := suite.userService.CreateUser(user)
+    
+    // Assert
+    suite.NoError(err)
+    suite.NotNil(result)
+    suite.Equal(user.Username, result.Username)
+    suite.Equal(user.Email, result.Email)
+    suite.mockRepo.AssertExpectations(suite.T())
+}
+
+func (suite *UserServiceTestSuite) TestCreateUser_ValidationError() {
+    // Arrange
+    user := &User{
+        Username: "", // 無効なユーザー名
+        Email:    "invalid-email",
+        Password: "123", // 短すぎるパスワード
+    }
+    
+    // Act
+    result, err := suite.userService.CreateUser(user)
+    
+    // Assert
+    suite.Error(err)
+    suite.Nil(result)
+    suite.Contains(err.Error(), "validation failed")
+}
+
+// テスト実行
+func TestUserServiceTestSuite(t *testing.T) {
+    suite.Run(t, new(UserServiceTestSuite))
+}
+```
+
+### 1.2 テーブル駆動テスト
+```go
+// テーブル駆動テストの例
+func TestValidateEmail(t *testing.T) {
+    tests := []struct {
+        name     string
+        email    string
+        expected bool
+    }{
+        {
+            name:     "valid email",
+            email:    "test@example.com",
+            expected: true,
+        },
+        {
+            name:     "invalid email - missing @",
+            email:    "testexample.com",
+            expected: false,
+        },
+        {
+            name:     "invalid email - missing domain",
+            email:    "test@",
+            expected: false,
+        },
+        {
+            name:     "invalid email - empty string",
+            email:    "",
+            expected: false,
+        },
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            result := ValidateEmail(tt.email)
+            assert.Equal(t, tt.expected, result)
+        })
+    }
+}
+```
+
+### 1.3 モック・スタブ
+```go
+// モックの実装例
+type MockUserRepository struct {
+    mock.Mock
+}
+
+func (m *MockUserRepository) Create(user *User) (*User, error) {
+    args := m.Called(user)
+    if args.Get(0) == nil {
+        return nil, args.Error(1)
+    }
+    return args.Get(0).(*User), args.Error(1)
+}
+
+func (m *MockUserRepository) GetByID(id string) (*User, error) {
+    args := m.Called(id)
+    if args.Get(0) == nil {
+        return nil, args.Error(1)
+    }
+    return args.Get(0).(*User), args.Error(1)
+}
+
+// スタブの実装例
+type StubEmailService struct{}
+
+func (s *StubEmailService) SendWelcomeEmail(user *User) error {
+    // テスト用のスタブ実装
+    return nil
+}
+```
+
+## 2. 統合テスト規約
+
+### 2.1 データベース統合テスト
+```go
+// データベース統合テスト
+package integration
+
+import (
+    "database/sql"
+    "testing"
+    "time"
+    
+    _ "github.com/go-sql-driver/mysql"
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/suite"
+)
+
+type DatabaseIntegrationTestSuite struct {
+    suite.Suite
+    db *sql.DB
+}
+
+func (suite *DatabaseIntegrationTestSuite) SetupSuite() {
+    // テスト用データベースに接続
+    db, err := sql.Open("mysql", "test_user:test_pass@tcp(localhost:3306)/test_db")
+    assert.NoError(suite.T(), err)
+    suite.db = db
+    
+    // テスト用テーブルの作成
+    suite.createTestTables()
+}
+
+func (suite *DatabaseIntegrationTestSuite) TearDownSuite() {
+    if suite.db != nil {
+        suite.db.Close()
+    }
+}
+
+func (suite *DatabaseIntegrationTestSuite) SetupTest() {
+    // 各テスト前にデータをクリア
+    suite.clearTestData()
+}
+
+func (suite *DatabaseIntegrationTestSuite) TestUserRepository_CreateAndGet() {
+    // Arrange
+    repo := NewUserRepository(suite.db)
+    user := &User{
+        Username: "integration_test_user",
+        Email:    "integration@test.com",
+        Password: "password123",
+    }
+    
+    // Act - Create
+    createdUser, err := repo.Create(user)
+    
+    // Assert - Create
+    assert.NoError(suite.T(), err)
+    assert.NotNil(suite.T(), createdUser)
+    assert.NotEmpty(suite.T(), createdUser.ID)
+    
+    // Act - Get
+    retrievedUser, err := repo.GetByID(createdUser.ID)
+    
+    // Assert - Get
+    assert.NoError(suite.T(), err)
+    assert.NotNil(suite.T(), retrievedUser)
+    assert.Equal(suite.T(), createdUser.Username, retrievedUser.Username)
+    assert.Equal(suite.T(), createdUser.Email, retrievedUser.Email)
+}
+
+func (suite *DatabaseIntegrationTestSuite) createTestTables() {
+    queries := []string{
+        `CREATE TABLE IF NOT EXISTS users (
+            id VARCHAR(36) PRIMARY KEY,
+            username VARCHAR(255) UNIQUE NOT NULL,
+            email VARCHAR(255) UNIQUE NOT NULL,
+            password_hash VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )`,
+    }
+    
+    for _, query := range queries {
+        _, err := suite.db.Exec(query)
+        assert.NoError(suite.T(), err)
+    }
+}
+
+func (suite *DatabaseIntegrationTestSuite) clearTestData() {
+    queries := []string{
+        "DELETE FROM users WHERE username LIKE 'integration_test_%'",
+    }
+    
+    for _, query := range queries {
+        suite.db.Exec(query)
+    }
+}
+
+func TestDatabaseIntegrationTestSuite(t *testing.T) {
+    suite.Run(t, new(DatabaseIntegrationTestSuite))
+}
+```
+
+### 2.2 API統合テスト
+```go
+// API統合テスト
+package api_test
+
+import (
+    "bytes"
+    "encoding/json"
+    "net/http"
+    "net/http/httptest"
+    "testing"
+    
+    "github.com/gin-gonic/gin"
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/suite"
+)
+
+type APIIntegrationTestSuite struct {
+    suite.Suite
+    router *gin.Engine
+    server *httptest.Server
+}
+
+func (suite *APIIntegrationTestSuite) SetupSuite() {
+    gin.SetMode(gin.TestMode)
+    suite.router = gin.New()
+    setupRoutes(suite.router)
+    suite.server = httptest.NewServer(suite.router)
+}
+
+func (suite *APIIntegrationTestSuite) TearDownSuite() {
+    if suite.server != nil {
+        suite.server.Close()
+    }
+}
+
+func (suite *APIIntegrationTestSuite) TestCreateUserAPI() {
+    // Arrange
+    userData := map[string]interface{}{
+        "username": "api_test_user",
+        "email":    "api@test.com",
+        "password": "password123",
+    }
+    
+    jsonData, _ := json.Marshal(userData)
+    
+    // Act
+    req := httptest.NewRequest("POST", "/api/users", bytes.NewBuffer(jsonData))
+    req.Header.Set("Content-Type", "application/json")
+    w := httptest.NewRecorder()
+    
+    suite.router.ServeHTTP(w, req)
+    
+    // Assert
+    assert.Equal(suite.T(), http.StatusCreated, w.Code)
+    
+    var response map[string]interface{}
+    err := json.Unmarshal(w.Body.Bytes(), &response)
+    assert.NoError(suite.T(), err)
+    assert.Equal(suite.T(), userData["username"], response["username"])
+    assert.Equal(suite.T(), userData["email"], response["email"])
+}
+
+func (suite *APIIntegrationTestSuite) TestGetUserAPI() {
+    // Arrange - ユーザー作成
+    userData := map[string]interface{}{
+        "username": "get_test_user",
+        "email":    "get@test.com",
+        "password": "password123",
+    }
+    
+    jsonData, _ := json.Marshal(userData)
+    req := httptest.NewRequest("POST", "/api/users", bytes.NewBuffer(jsonData))
+    req.Header.Set("Content-Type", "application/json")
+    w := httptest.NewRecorder()
+    suite.router.ServeHTTP(w, req)
+    
+    var createResponse map[string]interface{}
+    json.Unmarshal(w.Body.Bytes(), &createResponse)
+    userID := createResponse["id"].(string)
+    
+    // Act - ユーザー取得
+    req = httptest.NewRequest("GET", "/api/users/"+userID, nil)
+    w = httptest.NewRecorder()
+    suite.router.ServeHTTP(w, req)
+    
+    // Assert
+    assert.Equal(suite.T(), http.StatusOK, w.Code)
+    
+    var response map[string]interface{}
+    err := json.Unmarshal(w.Body.Bytes(), &response)
+    assert.NoError(suite.T(), err)
+    assert.Equal(suite.T(), userData["username"], response["username"])
+}
+
+func TestAPIIntegrationTestSuite(t *testing.T) {
+    suite.Run(t, new(APIIntegrationTestSuite))
+}
+```
+
+## 3. E2Eテスト規約
+
+### 3.1 Playwright E2Eテスト
+```typescript
+// E2Eテスト（Playwright）
+import { test, expect } from '@playwright/test';
+
+test.describe('Trading System E2E Tests', () => {
+  test.beforeEach(async ({ page }) => {
+    // テスト用データのセットアップ
+    await page.goto('http://localhost:3000');
+  });
+
+  test('should login and access dashboard', async ({ page }) => {
+    // ログインフロー
+    await page.fill('[data-testid="username"]', 'testuser');
+    await page.fill('[data-testid="password"]', 'password123');
+    await page.click('[data-testid="login-button"]');
+
+    // ダッシュボードへの遷移確認
+    await expect(page).toHaveURL(/.*dashboard/);
+    await expect(page.locator('[data-testid="dashboard-title"]')).toBeVisible();
+  });
+
+  test('should create and execute strategy', async ({ page }) => {
+    // ログイン
+    await page.fill('[data-testid="username"]', 'testuser');
+    await page.fill('[data-testid="password"]', 'password123');
+    await page.click('[data-testid="login-button"]');
+
+    // 戦略作成ページへ移動
+    await page.click('[data-testid="create-strategy"]');
+    await expect(page).toHaveURL(/.*strategy\/create/);
+
+    // 戦略設定
+    await page.selectOption('[data-testid="strategy-template"]', 'ema_cross');
+    await page.fill('[data-testid="fast-ema"]', '9');
+    await page.fill('[data-testid="slow-ema"]', '21');
+    await page.fill('[data-testid="symbol"]', 'AAPL');
+
+    // 戦略保存
+    await page.click('[data-testid="save-strategy"]');
+    await expect(page.locator('[data-testid="success-message"]')).toBeVisible();
+
+    // 戦略実行
+    await page.click('[data-testid="execute-strategy"]');
+    await expect(page.locator('[data-testid="execution-status"]')).toContainText('Running');
+  });
+
+  test('should display trading results', async ({ page }) => {
+    // ログイン
+    await page.fill('[data-testid="username"]', 'testuser');
+    await page.fill('[data-testid="password"]', 'password123');
+    await page.click('[data-testid="login-button"]');
+
+    // 結果ページへ移動
+    await page.click('[data-testid="trading-results"]');
+    await expect(page).toHaveURL(/.*results/);
+
+    // 結果の表示確認
+    await expect(page.locator('[data-testid="pnl-chart"]')).toBeVisible();
+    await expect(page.locator('[data-testid="trade-list"]')).toBeVisible();
+  });
+});
+```
+
+### 3.2 Cypress E2Eテスト
+```javascript
+// E2Eテスト（Cypress）
+describe('Trading System E2E', () => {
+  beforeEach(() => {
+    cy.visit('http://localhost:3000');
+    cy.intercept('POST', '/api/auth/login').as('login');
+  });
+
+  it('should login successfully', () => {
+    cy.get('[data-testid="username"]').type('testuser');
+    cy.get('[data-testid="password"]').type('password123');
+    cy.get('[data-testid="login-button"]').click();
+
+    cy.wait('@login');
+    cy.url().should('include', '/dashboard');
+    cy.get('[data-testid="dashboard-title"]').should('be.visible');
+  });
+
+  it('should create a new strategy', () => {
+    // ログイン
+    cy.login('testuser', 'password123');
+
+    // 戦略作成
+    cy.get('[data-testid="create-strategy"]').click();
+    cy.url().should('include', '/strategy/create');
+
+    cy.get('[data-testid="strategy-template"]').select('ema_cross');
+    cy.get('[data-testid="fast-ema"]').type('9');
+    cy.get('[data-testid="slow-ema"]').type('21');
+    cy.get('[data-testid="symbol"]').type('AAPL');
+
+    cy.get('[data-testid="save-strategy"]').click();
+    cy.get('[data-testid="success-message"]').should('be.visible');
+  });
+
+  it('should execute strategy and show results', () => {
+    cy.login('testuser', 'password123');
+
+    // 戦略実行
+    cy.get('[data-testid="strategy-list"]').first().click();
+    cy.get('[data-testid="execute-strategy"]').click();
+    cy.get('[data-testid="execution-status"]').should('contain', 'Running');
+
+    // 結果確認
+    cy.get('[data-testid="results-tab"]').click();
+    cy.get('[data-testid="pnl-chart"]').should('be.visible');
+    cy.get('[data-testid="trade-list"]').should('be.visible');
+  });
+});
+```
+
+## 4. テストデータ管理規約
+
+### 4.1 テストデータファクトリ
+```go
+// テストデータファクトリ
+package testdata
+
+import (
+    "time"
+    "github.com/google/uuid"
+)
+
+type UserFactory struct{}
+
+func (f *UserFactory) CreateUser(overrides ...map[string]interface{}) *User {
+    user := &User{
+        ID:           uuid.New().String(),
+        Username:     "testuser",
+        Email:        "test@example.com",
+        PasswordHash: "hashed_password",
+        CreatedAt:    time.Now(),
+        UpdatedAt:    time.Now(),
+    }
+    
+    // オーバーライドの適用
+    for _, override := range overrides {
+        for key, value := range override {
+            switch key {
+            case "username":
+                user.Username = value.(string)
+            case "email":
+                user.Email = value.(string)
+            case "password_hash":
+                user.PasswordHash = value.(string)
+            }
+        }
+    }
+    
+    return user
+}
+
+type StrategyFactory struct{}
+
+func (f *StrategyFactory) CreateStrategy(overrides ...map[string]interface{}) *Strategy {
+    strategy := &Strategy{
+        ID:          uuid.New().String(),
+        Name:        "Test Strategy",
+        Template:    "ema_cross",
+        Parameters:  map[string]interface{}{"fast_ema": 9, "slow_ema": 21},
+        Symbol:      "AAPL",
+        Status:      "active",
+        CreatedAt:   time.Now(),
+        UpdatedAt:   time.Now(),
+    }
+    
+    // オーバーライドの適用
+    for _, override := range overrides {
+        for key, value := range override {
+            switch key {
+            case "name":
+                strategy.Name = value.(string)
+            case "template":
+                strategy.Template = value.(string)
+            case "symbol":
+                strategy.Symbol = value.(string)
+            case "status":
+                strategy.Status = value.(string)
+            }
+        }
+    }
+    
+    return strategy
+}
+
+type TradeFactory struct{}
+
+func (f *TradeFactory) CreateTrade(overrides ...map[string]interface{}) *Trade {
+    trade := &Trade{
+        ID:           uuid.New().String(),
+        StrategyID:   uuid.New().String(),
+        Symbol:       "AAPL",
+        Side:         "BUY",
+        Quantity:     100,
+        Price:        150.0,
+        Status:       "filled",
+        ExecutedAt:   time.Now(),
+        CreatedAt:    time.Now(),
+    }
+    
+    // オーバーライドの適用
+    for _, override := range overrides {
+        for key, value := range override {
+            switch key {
+            case "symbol":
+                trade.Symbol = value.(string)
+            case "side":
+                trade.Side = value.(string)
+            case "quantity":
+                trade.Quantity = value.(int)
+            case "price":
+                trade.Price = value.(float64)
+            case "status":
+                trade.Status = value.(string)
+            }
+        }
+    }
+    
+    return trade
+}
+```
+
+### 4.2 テストデータベース管理
+```go
+// テストデータベース管理
+package testdb
+
+import (
+    "database/sql"
+    "fmt"
+    "os"
+    "testing"
+)
+
+type TestDatabase struct {
+    db *sql.DB
+}
+
+func NewTestDatabase(t *testing.T) *TestDatabase {
+    // テスト用データベース接続
+    dsn := os.Getenv("TEST_DATABASE_DSN")
+    if dsn == "" {
+        dsn = "test_user:test_pass@tcp(localhost:3306)/test_db"
+    }
+    
+    db, err := sql.Open("mysql", dsn)
+    if err != nil {
+        t.Fatalf("Failed to connect to test database: %v", err)
+    }
+    
+    return &TestDatabase{db: db}
+}
+
+func (tdb *TestDatabase) Setup() error {
+    // テスト用テーブルの作成
+    queries := []string{
+        `CREATE TABLE IF NOT EXISTS users (
+            id VARCHAR(36) PRIMARY KEY,
+            username VARCHAR(255) UNIQUE NOT NULL,
+            email VARCHAR(255) UNIQUE NOT NULL,
+            password_hash VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )`,
+        `CREATE TABLE IF NOT EXISTS strategies (
+            id VARCHAR(36) PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            template VARCHAR(100) NOT NULL,
+            parameters JSON,
+            symbol VARCHAR(20) NOT NULL,
+            status VARCHAR(20) DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )`,
+        `CREATE TABLE IF NOT EXISTS trades (
+            id VARCHAR(36) PRIMARY KEY,
+            strategy_id VARCHAR(36) NOT NULL,
+            symbol VARCHAR(20) NOT NULL,
+            side VARCHAR(10) NOT NULL,
+            quantity INT NOT NULL,
+            price DECIMAL(10,2) NOT NULL,
+            status VARCHAR(20) DEFAULT 'pending',
+            executed_at TIMESTAMP NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (strategy_id) REFERENCES strategies(id)
+        )`,
+    }
+    
+    for _, query := range queries {
+        if _, err := tdb.db.Exec(query); err != nil {
+            return fmt.Errorf("failed to create table: %w", err)
+        }
+    }
+    
+    return nil
+}
+
+func (tdb *TestDatabase) Cleanup() error {
+    // テストデータのクリア
+    queries := []string{
+        "DELETE FROM trades",
+        "DELETE FROM strategies",
+        "DELETE FROM users",
+    }
+    
+    for _, query := range queries {
+        if _, err := tdb.db.Exec(query); err != nil {
+            return fmt.Errorf("failed to cleanup: %w", err)
+        }
+    }
+    
+    return nil
+}
+
+func (tdb *TestDatabase) Close() error {
+    return tdb.db.Close()
+}
+
+func (tdb *TestDatabase) GetDB() *sql.DB {
+    return tdb.db
+}
+```
+
+## 5. テスト実行規約
+
+### 5.1 テスト実行設定
+```yaml
+# .github/workflows/test.yml
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: '1.21'
+    
+    - name: Run unit tests
+      run: go test -v -race -coverprofile=coverage.out ./...
+    
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.out
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: test_db
+          MYSQL_USER: test_user
+          MYSQL_PASSWORD: test_pass
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: '1.21'
+    
+    - name: Run integration tests
+      run: go test -v -tags=integration ./...
+      env:
+        TEST_DATABASE_DSN: test_user:test_pass@tcp(localhost:3306)/test_db
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Run E2E tests
+      run: npm run test:e2e
+```
+
+### 5.2 テストカバレッジ規約
+```go
+// テストカバレッジの目標
+// - 単体テスト: 80%以上
+// - 統合テスト: 60%以上
+// - E2Eテスト: 主要機能の100%
+
+// カバレッジレポート生成
+func TestMain(m *testing.M) {
+    // テスト実行前のセットアップ
+    setup()
+    
+    // テスト実行
+    code := m.Run()
+    
+    // テスト実行後のクリーンアップ
+    teardown()
+    
+    os.Exit(code)
+}
+
+func setup() {
+    // テスト環境のセットアップ
+    os.Setenv("ENV", "test")
+    os.Setenv("LOG_LEVEL", "error")
+}
+
+func teardown() {
+    // テスト環境のクリーンアップ
+}
+```
+
+## 6. テスト品質規約
+
+### 6.1 テスト命名規約
+```go
+// テスト関数の命名規約
+// 形式: Test[対象]_[シナリオ]_[期待結果]
+
+func TestUserService_CreateUser_WithValidData_ReturnsSuccess() {
+    // テスト実装
+}
+
+func TestUserService_CreateUser_WithInvalidEmail_ReturnsError() {
+    // テスト実装
+}
+
+func TestUserRepository_GetByID_WhenUserExists_ReturnsUser() {
+    // テスト実装
+}
+
+func TestUserRepository_GetByID_WhenUserNotExists_ReturnsError() {
+    // テスト実装
+}
+```
+
+### 6.2 テスト構造規約
+```go
+// AAA（Arrange-Act-Assert）パターン
+func TestExample(t *testing.T) {
+    // Arrange（準備）
+    user := &User{Username: "testuser", Email: "test@example.com"}
+    mockRepo := NewMockUserRepository()
+    service := NewUserService(mockRepo)
+    
+    // Act（実行）
+    result, err := service.CreateUser(user)
+    
+    // Assert（検証）
+    assert.NoError(t, err)
+    assert.NotNil(t, result)
+    assert.Equal(t, user.Username, result.Username)
+}
+```
+
+## 7. テストベストプラクティス
+
+### 7.1 テスト設計原則
+- **独立性**: 各テストは他のテストに依存しない
+- **再現性**: 同じ条件下で常に同じ結果になる
+- **高速性**: テストは高速に実行される
+- **保守性**: テストコードは保守しやすい
+- **可読性**: テストの意図が明確に分かる
+
+### 7.2 テスト実装ガイドライン
+- テストデータはファクトリパターンを使用
+- モックは必要最小限に留める
+- 統合テストでは実際のデータベースを使用
+- E2Eテストでは実際のブラウザを使用
+- テストカバレッジを定期的に監視
+- テスト実行時間を最適化

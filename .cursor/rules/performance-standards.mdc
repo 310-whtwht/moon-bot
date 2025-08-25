@@ -1,0 +1,810 @@
+# Performance Standards & Optimization Guidelines
+
+## 1. パフォーマンス最適化規約
+
+### 1.1 HTTP API最適化
+```go
+// internal/handler/performance.go
+package handler
+
+import (
+	"context"
+	"time"
+	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+)
+
+// レスポンスキャッシュ
+type ResponseCache struct {
+	redis *redis.Client
+	logger *zap.Logger
+}
+
+func NewResponseCache(redis *redis.Client, logger *zap.Logger) *ResponseCache {
+	return &ResponseCache{
+		redis: redis,
+		logger: logger,
+	}
+}
+
+// キャッシュ付きハンドラー
+func (rc *ResponseCache) CachedHandler(cacheKey string, ttl time.Duration, handler gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		
+		// キャッシュから取得を試行
+		if cached, err := rc.redis.Get(ctx, cacheKey).Result(); err == nil {
+			c.Header("X-Cache", "HIT")
+			c.Data(200, "application/json", []byte(cached))
+			return
+		}
+		
+		// レスポンスをキャプチャ
+		writer := &responseWriter{ResponseWriter: c.Writer}
+		c.Writer = writer
+		
+		// 元のハンドラーを実行
+		handler(c)
+		
+		// 成功時のみキャッシュに保存
+		if c.Writer.Status() == 200 && len(writer.body) > 0 {
+			rc.redis.Set(ctx, cacheKey, string(writer.body), ttl)
+			c.Header("X-Cache", "MISS")
+		}
+	}
+}
+
+// レスポンスライター
+type responseWriter struct {
+	gin.ResponseWriter
+	body []byte
+}
+
+func (w *responseWriter) Write(b []byte) (int, error) {
+	w.body = append(w.body, b...)
+	return w.ResponseWriter.Write(b)
+}
+
+// パフォーマンスミドルウェア
+func PerformanceMiddleware() gin.HandlerFunc {
+	return gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+		// レスポンス時間の監視
+		if param.Latency > 1*time.Second {
+			zap.L().Warn("Slow request detected",
+				zap.String("method", param.Method),
+				zap.String("path", param.Path),
+				zap.Duration("latency", param.Latency),
+				zap.Int("status", param.StatusCode),
+			)
+		}
+		
+		return gin.DefaultLogFormatter(param)
+	})
+}
+
+// コネクションプール設定
+type ConnectionPool struct {
+	MaxOpen     int           `yaml:"max_open"`
+	MaxIdle     int           `yaml:"max_idle"`
+	MaxLifetime time.Duration `yaml:"max_lifetime"`
+	MaxIdleTime time.Duration `yaml:"max_idle_time"`
+}
+
+func (cp *ConnectionPool) ConfigureDB(db *sql.DB) {
+	db.SetMaxOpenConns(cp.MaxOpen)
+	db.SetMaxIdleConns(cp.MaxIdle)
+	db.SetConnMaxLifetime(cp.MaxLifetime)
+	db.SetConnMaxIdleTime(cp.MaxIdleTime)
+}
+```
+
+### 1.2 データベース最適化
+```go
+// internal/repository/optimized.go
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"time"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+)
+
+// クエリ最適化
+type OptimizedRepository struct {
+	db     *sql.DB
+	redis  *redis.Client
+	logger *zap.Logger
+}
+
+// バッチ処理
+func (r *OptimizedRepository) BatchInsertOrders(ctx context.Context, orders []Order) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO orders (symbol, side, type, quantity, price, status, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	
+	for _, order := range orders {
+		_, err := stmt.ExecContext(ctx,
+			order.Symbol,
+			order.Side,
+			order.Type,
+			order.Quantity,
+			order.Price,
+			order.Status,
+			order.CreatedAt,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	
+	return tx.Commit()
+}
+
+// インデックス最適化クエリ
+func (r *OptimizedRepository) GetOrdersBySymbolOptimized(ctx context.Context, symbol string, limit int) ([]Order, error) {
+	// インデックスを活用したクエリ
+	query := `
+		SELECT id, symbol, side, type, quantity, price, status, created_at
+		FROM orders 
+		WHERE symbol = ? 
+		ORDER BY created_at DESC 
+		LIMIT ?
+	`
+	
+	rows, err := r.db.QueryContext(ctx, query, symbol, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	
+	var orders []Order
+	for rows.Next() {
+		var order Order
+		err := rows.Scan(
+			&order.ID,
+			&order.Symbol,
+			&order.Side,
+			&order.Type,
+			&order.Quantity,
+			&order.Price,
+			&order.Status,
+			&order.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		orders = append(orders, order)
+	}
+	
+	return orders, nil
+}
+
+// ページネーション最適化
+func (r *OptimizedRepository) GetOrdersPaginated(ctx context.Context, cursor string, limit int) ([]Order, string, error) {
+	query := `
+		SELECT id, symbol, side, type, quantity, price, status, created_at
+		FROM orders 
+		WHERE id > ? 
+		ORDER BY id ASC 
+		LIMIT ?
+	`
+	
+	rows, err := r.db.QueryContext(ctx, query, cursor, limit+1)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	
+	var orders []Order
+	var nextCursor string
+	
+	for rows.Next() {
+		var order Order
+		err := rows.Scan(
+			&order.ID,
+			&order.Symbol,
+			&order.Side,
+			&order.Type,
+			&order.Quantity,
+			&order.Price,
+			&order.Status,
+			&order.CreatedAt,
+		)
+		if err != nil {
+			return nil, "", err
+		}
+		
+		if len(orders) < limit {
+			orders = append(orders, order)
+		} else {
+			nextCursor = order.ID
+			break
+		}
+	}
+	
+	return orders, nextCursor, nil
+}
+```
+
+## 2. キャッシュ戦略
+
+### 2.1 Redisキャッシュ実装
+```go
+// internal/cache/redis.go
+package cache
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+)
+
+// キャッシュマネージャー
+type CacheManager struct {
+	client *redis.Client
+	logger *zap.Logger
+}
+
+func NewCacheManager(client *redis.Client, logger *zap.Logger) *CacheManager {
+	return &CacheManager{
+		client: client,
+		logger: logger,
+	}
+}
+
+// 汎用キャッシュ操作
+func (cm *CacheManager) Get(ctx context.Context, key string, dest interface{}) error {
+	data, err := cm.client.Get(ctx, key).Result()
+	if err != nil {
+		return err
+	}
+	
+	return json.Unmarshal([]byte(data), dest)
+}
+
+func (cm *CacheManager) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	
+	return cm.client.Set(ctx, key, data, ttl).Err()
+}
+
+func (cm *CacheManager) Delete(ctx context.Context, keys ...string) error {
+	return cm.client.Del(ctx, keys...).Err()
+}
+
+// パターンマッチ削除
+func (cm *CacheManager) DeletePattern(ctx context.Context, pattern string) error {
+	keys, err := cm.client.Keys(ctx, pattern).Result()
+	if err != nil {
+		return err
+	}
+	
+	if len(keys) > 0 {
+		return cm.client.Del(ctx, keys...).Err()
+	}
+	
+	return nil
+}
+
+// キャッシュヒット率監視
+func (cm *CacheManager) GetHitRate(ctx context.Context) (float64, error) {
+	info, err := cm.client.Info(ctx, "stats").Result()
+	if err != nil {
+		return 0, err
+	}
+	
+	// INFO statsからヒット率を計算
+	// keyspace_hits / (keyspace_hits + keyspace_misses)
+	// 実装は省略...
+	
+	return 0.95, nil // 仮の値
+}
+
+// キャッシュ戦略
+type CacheStrategy struct {
+	TTL           time.Duration
+	MaxSize       int
+	EvictionPolicy string
+}
+
+// 戦略別キャッシュ設定
+var CacheStrategies = map[string]CacheStrategy{
+	"market_data": {
+		TTL:           1 * time.Minute,
+		MaxSize:       1000,
+		EvictionPolicy: "lru",
+	},
+	"user_data": {
+		TTL:           5 * time.Minute,
+		MaxSize:       100,
+		EvictionPolicy: "lru",
+	},
+	"strategy_data": {
+		TTL:           10 * time.Minute,
+		MaxSize:       500,
+		EvictionPolicy: "lru",
+	},
+}
+```
+
+### 2.2 メモリキャッシュ
+```go
+// internal/cache/memory.go
+package cache
+
+import (
+	"context"
+	"sync"
+	"time"
+)
+
+// LRUキャッシュ
+type LRUCache struct {
+	capacity int
+	cache    map[string]*cacheEntry
+	head     *cacheEntry
+	tail     *cacheEntry
+	mutex    sync.RWMutex
+}
+
+type cacheEntry struct {
+	key   string
+	value interface{}
+	prev  *cacheEntry
+	next  *cacheEntry
+	expiresAt time.Time
+}
+
+func NewLRUCache(capacity int) *LRUCache {
+	cache := &LRUCache{
+		capacity: capacity,
+		cache:    make(map[string]*cacheEntry),
+	}
+	
+	// ダミーヘッド・テイル
+	cache.head = &cacheEntry{}
+	cache.tail = &cacheEntry{}
+	cache.head.next = cache.tail
+	cache.tail.prev = cache.head
+	
+	return cache
+}
+
+func (lru *LRUCache) Get(key string) (interface{}, bool) {
+	lru.mutex.Lock()
+	defer lru.mutex.Unlock()
+	
+	if entry, exists := lru.cache[key]; exists {
+		// 期限切れチェック
+		if time.Now().After(entry.expiresAt) {
+			lru.removeEntry(entry)
+			delete(lru.cache, key)
+			return nil, false
+		}
+		
+		// LRU更新
+		lru.moveToFront(entry)
+		return entry.value, true
+	}
+	
+	return nil, false
+}
+
+func (lru *LRUCache) Set(key string, value interface{}, ttl time.Duration) {
+	lru.mutex.Lock()
+	defer lru.mutex.Unlock()
+	
+	if entry, exists := lru.cache[key]; exists {
+		entry.value = value
+		entry.expiresAt = time.Now().Add(ttl)
+		lru.moveToFront(entry)
+		return
+	}
+	
+	// 容量チェック
+	if len(lru.cache) >= lru.capacity {
+		lru.evict()
+	}
+	
+	entry := &cacheEntry{
+		key:       key,
+		value:     value,
+		expiresAt: time.Now().Add(ttl),
+	}
+	
+	lru.cache[key] = entry
+	lru.addToFront(entry)
+}
+
+func (lru *LRUCache) moveToFront(entry *cacheEntry) {
+	lru.removeEntry(entry)
+	lru.addToFront(entry)
+}
+
+func (lru *LRUCache) addToFront(entry *cacheEntry) {
+	entry.next = lru.head.next
+	entry.prev = lru.head
+	lru.head.next.prev = entry
+	lru.head.next = entry
+}
+
+func (lru *LRUCache) removeEntry(entry *cacheEntry) {
+	entry.prev.next = entry.next
+	entry.next.prev = entry.prev
+}
+
+func (lru *LRUCache) evict() {
+	entry := lru.tail.prev
+	lru.removeEntry(entry)
+	delete(lru.cache, entry.key)
+}
+```
+
+## 3. データベース最適化
+
+### 3.1 クエリ最適化
+```sql
+-- インデックス最適化
+-- orders テーブル
+CREATE INDEX idx_orders_symbol_status ON orders(symbol, status);
+CREATE INDEX idx_orders_created_at ON orders(created_at DESC);
+CREATE INDEX idx_orders_user_id ON orders(user_id);
+
+-- trades テーブル
+CREATE INDEX idx_trades_symbol_date ON trades(symbol, DATE(closed_at));
+CREATE INDEX idx_trades_strategy_id ON trades(strategy_id);
+CREATE INDEX idx_trades_pnl ON trades(realized_pnl);
+
+-- パーティショニング
+-- 月次パーティション
+ALTER TABLE trades PARTITION BY RANGE (YEAR(closed_at) * 100 + MONTH(closed_at)) (
+    PARTITION p202401 VALUES LESS THAN (202402),
+    PARTITION p202402 VALUES LESS THAN (202403),
+    PARTITION p202403 VALUES LESS THAN (202404),
+    -- 継続的に追加
+);
+
+-- 最適化クエリ例
+-- 1. 複合インデックスを活用
+EXPLAIN SELECT * FROM orders 
+WHERE symbol = 'AAPL' AND status = 'FILLED' 
+ORDER BY created_at DESC 
+LIMIT 100;
+
+-- 2. カバリングインデックス
+CREATE INDEX idx_orders_covering ON orders(symbol, status, created_at, quantity, price);
+
+-- 3. 集計クエリ最適化
+SELECT 
+    symbol,
+    COUNT(*) as trade_count,
+    SUM(realized_pnl) as total_pnl,
+    AVG(realized_pnl) as avg_pnl
+FROM trades 
+WHERE closed_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+GROUP BY symbol
+HAVING total_pnl > 0
+ORDER BY total_pnl DESC;
+```
+
+### 3.2 コネクションプール最適化
+```go
+// internal/database/pool.go
+package database
+
+import (
+	"context"
+	"database/sql"
+	"time"
+	"go.uber.org/zap"
+)
+
+// コネクションプール設定
+type PoolConfig struct {
+	MaxOpen     int           `yaml:"max_open"`
+	MaxIdle     int           `yaml:"max_idle"`
+	MaxLifetime time.Duration `yaml:"max_lifetime"`
+	MaxIdleTime time.Duration `yaml:"max_idle_time"`
+}
+
+// プール監視
+type PoolMonitor struct {
+	db     *sql.DB
+	logger *zap.Logger
+}
+
+func NewPoolMonitor(db *sql.DB, logger *zap.Logger) *PoolMonitor {
+	return &PoolMonitor{
+		db:     db,
+		logger: logger,
+	}
+}
+
+func (pm *PoolMonitor) StartMonitoring(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pm.logPoolStats()
+		}
+	}
+}
+
+func (pm *PoolMonitor) logPoolStats() {
+	stats := pm.db.Stats()
+	
+	pm.logger.Info("Database pool stats",
+		zap.Int("max_open_connections", stats.MaxOpenConnections),
+		zap.Int("open_connections", stats.OpenConnections),
+		zap.Int("in_use", stats.InUse),
+		zap.Int("idle", stats.Idle),
+		zap.Int64("wait_count", stats.WaitCount),
+		zap.Duration("wait_duration", stats.WaitDuration),
+		zap.Int64("max_idle_closed", stats.MaxIdleClosed),
+		zap.Int64("max_lifetime_closed", stats.MaxLifetimeClosed),
+	)
+	
+	// 警告条件
+	if stats.WaitCount > 100 {
+		pm.logger.Warn("High database wait count detected",
+			zap.Int64("wait_count", stats.WaitCount),
+			zap.Duration("wait_duration", stats.WaitDuration),
+		)
+	}
+	
+	if float64(stats.InUse)/float64(stats.MaxOpenConnections) > 0.8 {
+		pm.logger.Warn("High database connection usage",
+			zap.Int("in_use", stats.InUse),
+			zap.Int("max_open", stats.MaxOpenConnections),
+		)
+	}
+}
+```
+
+## 4. メモリ管理規約
+
+### 4.1 メモリ最適化
+```go
+// internal/memory/optimizer.go
+package memory
+
+import (
+	"runtime"
+	"time"
+	"go.uber.org/zap"
+)
+
+// メモリ監視
+type MemoryMonitor struct {
+	logger *zap.Logger
+}
+
+func NewMemoryMonitor(logger *zap.Logger) *MemoryMonitor {
+	return &MemoryMonitor{
+		logger: logger,
+	}
+}
+
+func (mm *MemoryMonitor) StartMonitoring(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			mm.logMemoryStats()
+		}
+	}
+}
+
+func (mm *MemoryMonitor) logMemoryStats() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	
+	mm.logger.Info("Memory stats",
+		zap.Uint64("alloc", m.Alloc),
+		zap.Uint64("total_alloc", m.TotalAlloc),
+		zap.Uint64("sys", m.Sys),
+		zap.Uint32("num_gc", m.NumGC),
+		zap.Uint64("heap_alloc", m.HeapAlloc),
+		zap.Uint64("heap_sys", m.HeapSys),
+		zap.Uint64("heap_idle", m.HeapIdle),
+		zap.Uint64("heap_inuse", m.HeapInuse),
+		zap.Uint64("heap_released", m.HeapReleased),
+		zap.Uint64("heap_objects", m.HeapObjects),
+	)
+	
+	// メモリ使用率警告
+	usagePercent := float64(m.HeapInuse) / float64(m.HeapSys) * 100
+	if usagePercent > 80 {
+		mm.logger.Warn("High memory usage detected",
+			zap.Float64("usage_percent", usagePercent),
+			zap.Uint64("heap_inuse", m.HeapInuse),
+			zap.Uint64("heap_sys", m.HeapSys),
+		)
+		
+		// GC強制実行
+		runtime.GC()
+	}
+}
+
+// オブジェクトプール
+type ObjectPool struct {
+	pool chan interface{}
+	new  func() interface{}
+	reset func(interface{})
+}
+
+func NewObjectPool(size int, new func() interface{}, reset func(interface{})) *ObjectPool {
+	return &ObjectPool{
+		pool:  make(chan interface{}, size),
+		new:   new,
+		reset: reset,
+	}
+}
+
+func (op *ObjectPool) Get() interface{} {
+	select {
+	case obj := <-op.pool:
+		return obj
+	default:
+		return op.new()
+	}
+}
+
+func (op *ObjectPool) Put(obj interface{}) {
+	op.reset(obj)
+	
+	select {
+	case op.pool <- obj:
+	default:
+		// プールが満杯の場合は破棄
+	}
+}
+```
+
+### 4.2 ガベージコレクション最適化
+```go
+// internal/memory/gc.go
+package memory
+
+import (
+	"runtime"
+	"time"
+	"go.uber.org/zap"
+)
+
+// GC監視・最適化
+type GCMonitor struct {
+	logger *zap.Logger
+}
+
+func NewGCMonitor(logger *zap.Logger) *GCMonitor {
+	return &GCMonitor{
+		logger: logger,
+	}
+}
+
+func (gc *GCMonitor) StartMonitoring(ctx context.Context) {
+	// GC統計の監視
+	go gc.monitorGCStats(ctx)
+	
+	// 定期的なGC実行
+	go gc.periodicGC(ctx)
+}
+
+func (gc *GCMonitor) monitorGCStats(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			gc.logGCStats()
+		}
+	}
+}
+
+func (gc *GCMonitor) logGCStats() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	
+	gc.logger.Info("GC stats",
+		zap.Uint32("num_gc", m.NumGC),
+		zap.Uint64("pause_total_ns", m.PauseTotalNs),
+		zap.Float64("gc_cpu_fraction", m.GCCPUFraction),
+		zap.Uint64("next_gc", m.NextGC),
+		zap.Uint64("last_gc", m.LastGC),
+	)
+	
+	// GC頻度が高い場合の警告
+	if m.NumGC > 100 {
+		gc.logger.Warn("High GC frequency detected",
+			zap.Uint32("num_gc", m.NumGC),
+			zap.Float64("gc_cpu_fraction", m.GCCPUFraction),
+		)
+	}
+}
+
+func (gc *GCMonitor) periodicGC(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			gc.forceGC()
+		}
+	}
+}
+
+func (gc *GCMonitor) forceGC() {
+	before := runtime.NumGoroutine()
+	runtime.GC()
+	after := runtime.NumGoroutine()
+	
+	gc.logger.Info("Forced GC completed",
+		zap.Int("goroutines_before", before),
+		zap.Int("goroutines_after", after),
+	)
+}
+```
+
+## 5. 実装チェックリスト
+
+### 5.1 パフォーマンス最適化
+- [ ] HTTP API最適化の実装
+- [ ] レスポンスキャッシュの実装
+- [ ] コネクションプールの最適化
+- [ ] クエリ最適化の実装
+- [ ] インデックス最適化の実装
+
+### 5.2 キャッシュ戦略
+- [ ] Redisキャッシュの実装
+- [ ] メモリキャッシュの実装
+- [ ] キャッシュ戦略の定義
+- [ ] キャッシュヒット率監視の実装
+- [ ] キャッシュ無効化戦略の実装
+
+### 5.3 データベース最適化
+- [ ] インデックス最適化の実装
+- [ ] パーティショニングの実装
+- [ ] クエリ最適化の実装
+- [ ] コネクションプール監視の実装
+- [ ] スロークエリ監視の実装
+
+### 5.4 メモリ管理
+- [ ] メモリ監視の実装
+- [ ] オブジェクトプールの実装
+- [ ] GC最適化の実装
+- [ ] メモリリーク検出の実装
+- [ ] メモリ使用量制限の実装

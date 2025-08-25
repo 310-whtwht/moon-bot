@@ -1,0 +1,589 @@
+# Deployment Standards & Best Practices
+
+## 1. デプロイメント規約
+
+### 1.1 デプロイメント戦略
+```yaml
+# deployment/strategies.yml
+strategies:
+  # Blue-Green Deployment
+  blue_green:
+    description: "Zero-downtime deployment with traffic switching"
+    steps:
+      - name: "Deploy to Blue Environment"
+        action: "deploy"
+        target: "blue"
+        health_check: true
+        
+      - name: "Run Smoke Tests"
+        action: "test"
+        tests: ["health", "api", "integration"]
+        
+      - name: "Switch Traffic to Blue"
+        action: "switch_traffic"
+        from: "green"
+        to: "blue"
+        
+      - name: "Monitor Blue Environment"
+        action: "monitor"
+        duration: "5m"
+        metrics: ["error_rate", "response_time", "throughput"]
+        
+      - name: "Cleanup Green Environment"
+        action: "cleanup"
+        target: "green"
+
+  # Rolling Update
+  rolling:
+    description: "Gradual deployment with rolling updates"
+    steps:
+      - name: "Update Replica Set"
+        action: "rolling_update"
+        max_unavailable: 1
+        max_surge: 1
+        
+      - name: "Health Check Each Pod"
+        action: "health_check"
+        interval: "30s"
+        timeout: "10s"
+        
+      - name: "Rollback on Failure"
+        action: "rollback"
+        condition: "health_check_failed"
+
+  # Canary Deployment
+  canary:
+    description: "Gradual traffic shifting with monitoring"
+    steps:
+      - name: "Deploy Canary"
+        action: "deploy"
+        target: "canary"
+        replicas: 1
+        
+      - name: "Route 10% Traffic"
+        action: "route_traffic"
+        percentage: 10
+        target: "canary"
+        
+      - name: "Monitor Canary"
+        action: "monitor"
+        duration: "10m"
+        metrics: ["error_rate", "latency", "business_metrics"]
+        
+      - name: "Scale Up or Rollback"
+        action: "conditional"
+        if_success: "scale_to_100_percent"
+        if_failure: "rollback"
+```
+
+### 1.2 Kubernetes Deployment
+```yaml
+# deployment/k8s/trading-api.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trading-api
+  namespace: trading-system
+  labels:
+    app: trading-api
+    version: v1.0.0
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: trading-api
+  template:
+    metadata:
+      labels:
+        app: trading-api
+        version: v1.0.0
+    spec:
+      containers:
+      - name: api
+        image: trading-system/api:v1.0.0
+        ports:
+        - containerPort: 8080
+        env:
+        - name: ENV
+          value: "production"
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: host
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: password
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+      volumes:
+      - name: logs
+        persistentVolumeClaim:
+          claimName: logs-pvc
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+```
+
+### 1.3 Service Mesh設定
+```yaml
+# deployment/istio/virtual-service.yaml
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: trading-api
+  namespace: trading-system
+spec:
+  hosts:
+  - api.trading.example.com
+  gateways:
+  - trading-gateway
+  http:
+  - match:
+    - headers:
+        x-canary:
+          exact: "true"
+    route:
+    - destination:
+        host: trading-api-canary
+        port:
+          number: 8080
+      weight: 100
+  - route:
+    - destination:
+        host: trading-api
+        port:
+          number: 8080
+      weight: 90
+    - destination:
+        host: trading-api-canary
+        port:
+          number: 8080
+      weight: 10
+```
+
+## 2. 環境管理規約
+
+### 2.1 環境設定管理
+```yaml
+# config/environments/base.yml
+# 基本設定
+api:
+  port: 8080
+  timeout: 30s
+  cors:
+    allowed_origins: ["*"]
+    allowed_methods: ["GET", "POST", "PUT", "DELETE"]
+    allowed_headers: ["*"]
+
+database:
+  port: 3306
+  max_connections: 100
+  max_idle_connections: 10
+  connection_timeout: 10s
+
+redis:
+  port: 6379
+  pool_size: 20
+  timeout: 5s
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+
+monitoring:
+  prometheus:
+    port: 9090
+  grafana:
+    port: 3000
+```
+
+```yaml
+# config/environments/development.yml
+# 開発環境設定
+environment: development
+
+api:
+  host: "0.0.0.0"
+  cors:
+    allowed_origins: ["http://localhost:3000"]
+
+database:
+  host: "localhost"
+  name: "trading_dev"
+  user: "dev_user"
+  password: "dev_password"
+
+redis:
+  host: "localhost"
+  password: ""
+
+broker:
+  type: "moomoo"
+  environment: "SIMULATE"
+  host: "localhost"
+  port: 11111
+
+logging:
+  level: "debug"
+  output: "stdout"
+```
+
+```yaml
+# config/environments/production.yml
+# 本番環境設定
+environment: production
+
+api:
+  host: "0.0.0.0"
+  cors:
+    allowed_origins: ["https://trading.example.com"]
+
+database:
+  host: "${DB_HOST}"
+  name: "${DB_NAME}"
+  user: "${DB_USER}"
+  password: "${DB_PASSWORD}"
+  max_connections: 200
+  max_idle_connections: 50
+
+redis:
+  host: "${REDIS_HOST}"
+  password: "${REDIS_PASSWORD}"
+  pool_size: 100
+
+broker:
+  type: "moomoo"
+  environment: "REAL"
+  host: "${BROKER_HOST}"
+  port: 11111
+  api_key: "${BROKER_API_KEY}"
+  secret_key: "${BROKER_SECRET_KEY}"
+
+logging:
+  level: "warn"
+  output: "file"
+  file_path: "/var/log/trading-system/app.log"
+```
+
+### 2.2 シークレット管理
+```yaml
+# deployment/secrets/database-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+  namespace: trading-system
+type: Opaque
+data:
+  host: cHJvZC1kYi5leGFtcGxlLmNvbQ==  # prod-db.example.com
+  name: dHJhZGluZ19wcm9k
+  user: cHJvZF91c2Vy
+  password: cHJvZF9wYXNzd29yZA==
+
+---
+# deployment/secrets/broker-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: broker-secret
+  namespace: trading-system
+type: Opaque
+data:
+  api_key: cHJvZF9hcGlfa2V5
+  secret_key: cHJvZF9zZWNyZXRfa2V5
+```
+
+## 3. ロールバック規約
+
+### 3.1 自動ロールバック
+```yaml
+# deployment/rollback/auto-rollback.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: trading-api-rollout
+  namespace: trading-system
+spec:
+  replicas: 3
+  strategy:
+    blueGreen:
+      activeService: trading-api-active
+      previewService: trading-api-preview
+      autoPromotionEnabled: false
+      scaleDownDelaySeconds: 30
+      prePromotionAnalysis:
+        templates:
+        - templateName: success-rate
+        args:
+        - name: service-name
+          value: trading-api-preview
+      postPromotionAnalysis:
+        templates:
+        - templateName: success-rate
+        args:
+        - name: service-name
+          value: trading-api-active
+  selector:
+    matchLabels:
+      app: trading-api
+  template:
+    metadata:
+      labels:
+        app: trading-api
+    spec:
+      containers:
+      - name: api
+        image: trading-system/api:v1.0.0
+        ports:
+        - containerPort: 8080
+```
+
+### 3.2 ロールバック条件
+```yaml
+# deployment/rollback/conditions.yml
+rollback_conditions:
+  # エラー率が閾値を超えた場合
+  error_rate:
+    metric: "http_requests_total"
+    condition: "rate(http_requests_total{status=~\"5..\"}[5m]) / rate(http_requests_total[5m]) > 0.05"
+    duration: "2m"
+    action: "rollback"
+    
+  # レスポンス時間が閾値を超えた場合
+  response_time:
+    metric: "http_request_duration_seconds"
+    condition: "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1.0"
+    duration: "3m"
+    action: "rollback"
+    
+  # ビジネスメトリクスが悪化した場合
+  business_metrics:
+    metric: "trading_pnl_total"
+    condition: "rate(trading_pnl_total[5m]) < 0"
+    duration: "5m"
+    action: "rollback"
+    
+  # ヘルスチェックが失敗した場合
+  health_check:
+    metric: "up"
+    condition: "up{job=\"trading-api\"} == 0"
+    duration: "1m"
+    action: "rollback"
+```
+
+### 3.3 手動ロールバック
+```bash
+#!/bin/bash
+# scripts/rollback.sh
+
+set -e
+
+ENVIRONMENT=$1
+VERSION=$2
+
+if [ -z "$ENVIRONMENT" ] || [ -z "$VERSION" ]; then
+    echo "Usage: $0 <environment> <version>"
+    exit 1
+fi
+
+echo "Rolling back to version $VERSION in $ENVIRONMENT environment..."
+
+# 1. ロールバック前の確認
+echo "Current deployment status:"
+kubectl get pods -n trading-system -l app=trading-api
+
+# 2. ロールバック実行
+kubectl rollout undo deployment/trading-api -n trading-system --to-revision=$VERSION
+
+# 3. ロールバック状況の監視
+echo "Monitoring rollback progress..."
+kubectl rollout status deployment/trading-api -n trading-system
+
+# 4. ヘルスチェック
+echo "Performing health checks..."
+for i in {1..10}; do
+    if curl -f http://localhost:8080/healthz; then
+        echo "Health check passed"
+        break
+    else
+        echo "Health check failed, retrying..."
+        sleep 10
+    fi
+done
+
+# 5. メトリクス確認
+echo "Checking metrics..."
+curl -s http://localhost:9090/metrics | grep -E "(http_requests_total|http_request_duration_seconds)"
+
+echo "Rollback completed successfully"
+```
+
+## 4. 監視規約
+
+### 4.1 デプロイメント監視
+```yaml
+# monitoring/deployment-monitoring.yml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: trading-api-monitor
+  namespace: trading-system
+spec:
+  selector:
+    matchLabels:
+      app: trading-api
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+  - port: http
+    path: /healthz
+    interval: 15s
+    scrapeTimeout: 5s
+```
+
+### 4.2 アラート設定
+```yaml
+# monitoring/alerts/deployment-alerts.yml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: deployment-alerts
+  namespace: trading-system
+spec:
+  groups:
+  - name: deployment
+    rules:
+    - alert: DeploymentFailed
+      expr: kube_deployment_status_replicas_unavailable > 0
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Deployment {{ $labels.deployment }} has failed"
+        description: "Deployment {{ $labels.deployment }} has {{ $value }} unavailable replicas"
+        
+    - alert: HighErrorRate
+      expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High error rate detected"
+        description: "Error rate is {{ $value | humanizePercentage }}"
+        
+    - alert: SlowResponseTime
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1.0
+      for: 3m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Slow response time detected"
+        description: "95th percentile response time is {{ $value }}s"
+```
+
+### 4.3 ダッシュボード
+```json
+{
+  "dashboard": {
+    "title": "Deployment Monitoring",
+    "panels": [
+      {
+        "title": "Deployment Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "kube_deployment_status_replicas_available",
+            "legendFormat": "{{deployment}}"
+          }
+        ]
+      },
+      {
+        "title": "Error Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{status=~\"5..\"}[5m]) / rate(http_requests_total[5m])",
+            "legendFormat": "Error Rate"
+          }
+        ]
+      },
+      {
+        "title": "Response Time",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "95th Percentile"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+## 5. 実装チェックリスト
+
+### 5.1 デプロイメント
+- [ ] デプロイメント戦略の実装
+- [ ] Kubernetes設定の実装
+- [ ] Service Mesh設定の実装
+- [ ] ヘルスチェックの実装
+- [ ] リソース制限の設定
+
+### 5.2 環境管理
+- [ ] 環境設定の分離
+- [ ] シークレット管理の実装
+- [ ] 設定のバージョン管理
+- [ ] 環境間の差分管理
+- [ ] 設定の検証機能
+
+### 5.3 ロールバック
+- [ ] 自動ロールバックの実装
+- [ ] ロールバック条件の定義
+- [ ] 手動ロールバックの実装
+- [ ] ロールバック検証の実装
+- [ ] ロールバック履歴の管理
+
+### 5.4 監視
+- [ ] デプロイメント監視の実装
+- [ ] アラート設定の実装
+- [ ] ダッシュボードの実装
+- [ ] メトリクス収集の実装
+- [ ] ログ監視の実装

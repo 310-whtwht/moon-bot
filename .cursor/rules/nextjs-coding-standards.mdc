@@ -25,8 +25,9 @@ apps/web/
 │   └── layout/           # レイアウトコンポーネント
 ├── lib/                  # ユーティリティ・設定
 │   ├── utils.ts
-│   ├── validations.ts
+│   ├── validations.ts    # zod スキーマ
 │   ├── api.ts
+│   ├── store.ts          # zustand ストア
 │   └── constants.ts
 ├── hooks/                # カスタムフック
 ├── types/                # TypeScript型定義
@@ -227,7 +228,61 @@ export function useOrderForm() {
 }
 ```
 
-### 3.2 Zustand使用（複雑な状態管理）
+### 3.2 Zod使用（バリデーション）
+```typescript
+// lib/validations.ts
+import { z } from 'zod';
+
+// 注文フォームのバリデーションスキーマ
+export const orderFormSchema = z.object({
+  symbol: z.string()
+    .min(1, '銘柄コードは必須です')
+    .max(10, '銘柄コードは10文字以内で入力してください')
+    .regex(/^[A-Z]+$/, '銘柄コードは大文字のアルファベットで入力してください'),
+  side: z.enum(['buy', 'sell'], {
+    errorMap: () => ({ message: '取引方向を選択してください' })
+  }),
+  size: z.number()
+    .positive('数量は正の数で入力してください')
+    .int('数量は整数で入力してください'),
+  price: z.number()
+    .positive('価格は正の数で入力してください')
+    .min(0.01, '価格は0.01以上で入力してください'),
+  orderType: z.enum(['market', 'limit', 'stop', 'stop_limit'], {
+    errorMap: () => ({ message: '注文種別を選択してください' })
+  }),
+  timeInForce: z.enum(['day', 'gtc', 'ioc'], {
+    errorMap: () => ({ message: '有効期限を選択してください' })
+  }).default('day')
+});
+
+export type OrderFormData = z.infer<typeof orderFormSchema>;
+
+// 戦略パラメータのバリデーションスキーマ
+export const strategyParamsSchema = z.object({
+  name: z.string().min(1, '戦略名は必須です').max(100, '戦略名は100文字以内で入力してください'),
+  description: z.string().max(500, '説明は500文字以内で入力してください').optional(),
+  parameters: z.record(z.union([z.string(), z.number(), z.boolean()])),
+  riskSettings: z.object({
+    maxRiskPerTrade: z.number().min(0.001).max(0.1),
+    maxDailyDrawdown: z.number().min(0.001).max(0.1),
+    maxWeeklyDrawdown: z.number().min(0.001).max(0.2)
+  })
+});
+
+export type StrategyParams = z.infer<typeof strategyParamsSchema>;
+
+// バリデーション関数
+export function validateOrderForm(data: unknown): OrderFormData {
+  return orderFormSchema.parse(data);
+}
+
+export function validateStrategyParams(data: unknown): StrategyParams {
+  return strategyParamsSchema.parse(data);
+}
+```
+
+### 3.3 Zustand使用（複雑な状態管理）
 ```typescript
 // stores/orderStore.ts
 import { create } from 'zustand';
