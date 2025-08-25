@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button"
+import Link from "next/link"
 
 export default function Home() {
   return (
@@ -16,24 +17,28 @@ export default function Home() {
           <h2 className="text-2xl font-semibold mb-4">Welcome to Moomoo Trading</h2>
           <p className="text-lg mb-8">Advanced algorithmic trading platform</p>
           <div className="space-x-4">
-            <Button>Get Started</Button>
+            <Link href="/strategies">
+              <Button>Get Started</Button>
+            </Link>
             <Button variant="outline">Learn More</Button>
           </div>
         </div>
       </div>
 
       <div className="mb-32 grid text-center lg:max-w-5xl lg:w-full lg:mb-0 lg:grid-cols-4 lg:text-left">
-        <div className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30">
-          <h3 className="mb-3 text-2xl font-semibold">
-            Strategies{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              →
-            </span>
-          </h3>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Create and manage trading strategies with Starlark scripting.
-          </p>
-        </div>
+        <Link href="/strategies">
+          <div className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30">
+            <h3 className="mb-3 text-2xl font-semibold">
+              Strategies{" "}
+              <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
+                →
+              </span>
+            </h3>
+            <p className="m-0 max-w-[30ch] text-sm opacity-50">
+              Create and manage trading strategies with Starlark scripting.
+            </p>
+          </div>
+        </Link>
 
         <div className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30">
           <h3 className="mb-3 text-2xl font-semibold">
