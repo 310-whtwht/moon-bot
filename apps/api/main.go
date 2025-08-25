@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/moomoo-trading/api/internal/audit"
 	"github.com/moomoo-trading/api/internal/config"
 	"github.com/moomoo-trading/api/internal/database"
 	"github.com/moomoo-trading/api/internal/handlers"
@@ -25,14 +26,18 @@ func main() {
 	defer db.Close()
 
 	// Initialize Redis connection
-	redis, err := database.NewRedisConnection(cfg.Redis)
+	redisClient, err := database.NewRedisConnection(cfg.Redis)
 	if err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
-	defer redis.Close()
+	defer redisClient.Close()
+
+	// Initialize audit trace manager
+	traceManager := audit.NewTraceManager(db, redisClient)
+	auditHandler := handlers.NewAuditHandler(traceManager)
 
 	// Initialize Redis Streams
-	streamManager := redis.NewStreamManager(redis)
+	streamManager := redis.NewStreamManager(redisClient)
 	if err := streamManager.InitializeStreams(context.Background()); err != nil {
 		log.Fatalf("Failed to initialize Redis streams: %v", err)
 	}
@@ -91,6 +96,19 @@ func main() {
 			universe.GET("/", handlers.GetUniverse)
 			universe.POST("/", handlers.AddSymbol)
 			universe.DELETE("/:symbol", handlers.RemoveSymbol)
+		}
+
+		// Audit traces
+		audit := api.Group("/audit/traces")
+		{
+			audit.POST("/", auditHandler.CreateTrace)
+			audit.GET("/:id", auditHandler.GetTraceByID)
+			audit.GET("/:id/chain", auditHandler.GetTraceChain)
+			audit.GET("/strategy/:strategy_id", auditHandler.GetTracesByStrategy)
+			audit.GET("/symbol/:symbol", auditHandler.GetTracesBySymbol)
+			audit.GET("/strategy/:strategy_id/statistics", auditHandler.GetTraceStatistics)
+			audit.POST("/search", auditHandler.SearchTraces)
+			audit.POST("/export", auditHandler.ExportTraces)
 		}
 	}
 
