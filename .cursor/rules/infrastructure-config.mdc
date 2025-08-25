@@ -1,3 +1,7 @@
+---
+alwaysApply: true
+---
+
 # インフラ・デプロイ設定仕様
 
 ## 1. Kubernetes設定

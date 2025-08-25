@@ -1,3 +1,7 @@
+---
+alwaysApply: true
+---
+
 # 戦略エンジン仕様（Starlark VM）
 
 ## 1. Starlark VM設定

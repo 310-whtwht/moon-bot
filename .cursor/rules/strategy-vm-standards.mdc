@@ -1,3 +1,7 @@
+---
+alwaysApply: true
+---
+
 # Starlark VM & Strategy Script Standards
 
 ## 1. Starlark VM実装規約

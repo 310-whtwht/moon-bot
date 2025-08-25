@@ -1,3 +1,7 @@
+---
+alwaysApply: true
+---
+
 # CI/CD Standards & Best Practices
 
 ## 1. GitHub Actions規約
