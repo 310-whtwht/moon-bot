@@ -1,3 +1,7 @@
+---
+alwaysApply: true
+---
+
 # Docker Standards & Best Practices
 
 ## 1. Dockerfile作成規約

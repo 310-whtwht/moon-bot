@@ -1,3 +1,7 @@
+---
+alwaysApply: true
+---
+
 # API 設計規約（v1.0）— moon-bot プロジェクト
 更新日: 2025-08-24（JST）
 
@@ -860,3 +864,4 @@ description:
 globs:
 alwaysApply: false
 ---
+
