@@ -54,29 +54,33 @@ export default function Home() {
           </div>
         </Link>
 
-        <div className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30">
-          <h3 className="mb-3 text-2xl font-semibold">
-            Monitoring{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              →
-            </span>
-          </h3>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Real-time monitoring of your trading strategies and performance.
-          </p>
-        </div>
+        <Link href="/orders">
+          <div className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30">
+            <h3 className="mb-3 text-2xl font-semibold">
+              Orders & Trades{" "}
+              <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
+                →
+              </span>
+            </h3>
+            <p className="m-0 max-w-[30ch] text-sm opacity-50">
+              Monitor orders and trades with real-time execution tracking.
+            </p>
+          </div>
+        </Link>
 
-        <div className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30">
-          <h3 className="mb-3 text-2xl font-semibold">
-            Risk Management{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              →
-            </span>
-          </h3>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Advanced risk management with position sizing and circuit breakers.
-          </p>
-        </div>
+        <Link href="/universe">
+          <div className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30">
+            <h3 className="mb-3 text-2xl font-semibold">
+              Universe Management{" "}
+              <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
+                →
+              </span>
+            </h3>
+            <p className="m-0 max-w-[30ch] text-sm opacity-50">
+              Manage tradable symbols and asset universe configuration.
+            </p>
+          </div>
+        </Link>
       </div>
     </main>
   )
