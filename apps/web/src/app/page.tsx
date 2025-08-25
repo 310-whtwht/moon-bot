@@ -17,10 +17,12 @@ export default function Home() {
           <h2 className="text-2xl font-semibold mb-4">Welcome to Moomoo Trading</h2>
           <p className="text-lg mb-8">Advanced algorithmic trading platform</p>
           <div className="space-x-4">
-            <Link href="/strategies">
-              <Button>Get Started</Button>
+            <Link href="/dashboard">
+              <Button>Dashboard</Button>
             </Link>
-            <Button variant="outline">Learn More</Button>
+            <Link href="/strategies">
+              <Button variant="outline">Get Started</Button>
+            </Link>
           </div>
         </div>
       </div>
