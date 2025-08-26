@@ -14,7 +14,7 @@ import {
 
 interface DatePickerProps {
   value?: string
-  onChange?: (date: Date | null) => void
+  onChange?: (date: Date | undefined) => void
   placeholder?: string
 }
 
@@ -41,6 +41,7 @@ export function DatePicker({ value, onChange, placeholder = "日付を選択" }:
           selected={date}
           onSelect={onChange}
           initialFocus
+          required={false}
         />
       </PopoverContent>
     </Popover>

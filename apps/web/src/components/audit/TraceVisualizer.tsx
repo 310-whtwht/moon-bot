@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
-import { Calendar, Search, Download, Eye, BarChart3 } from 'lucide-react'
+import { Search, Download, Eye, BarChart3 } from 'lucide-react'
 import { DatePicker } from '@/components/ui/date-picker'
 
 interface TradeTrace {
@@ -23,7 +23,7 @@ interface TradeTrace {
   trade_id: string
   parent_id?: string
   trace_id: string
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
 }
 
 interface TraceChain {
@@ -55,11 +55,11 @@ export default function TraceVisualizer() {
     start_time: '',
     end_time: '',
   })
-  const [selectedTraceId, setSelectedTraceId] = useState('')
+
   const [viewMode, setViewMode] = useState<'list' | 'chain' | 'stats'>('list')
 
   // トレース検索
-  const searchTraces = async () => {
+  const searchTraces = useCallback(async () => {
     setLoading(true)
     try {
       const response = await fetch('/api/audit/traces/search', {
@@ -79,7 +79,7 @@ export default function TraceVisualizer() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [searchFilters])
 
   // トレース鎖取得
   const getTraceChain = async (traceId: string) => {
@@ -151,7 +151,7 @@ export default function TraceVisualizer() {
 
   useEffect(() => {
     searchTraces()
-  }, [])
+  }, [searchTraces])
 
   const renderTraceList = () => (
     <div className="space-y-4">
