@@ -1,97 +1,109 @@
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ArrowLeft, Edit, Play, Plus, Trash2, Code, Settings } from 'lucide-react'
-import Link from 'next/link'
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ArrowLeft, Edit, Play, Plus, Trash2, Code } from 'lucide-react';
+import Link from 'next/link';
 
 interface Strategy {
-  id: string
-  name: string
-  description?: string
-  author: string
-  is_public: boolean
-  created_at: string
-  updated_at: string
+  id: string;
+  name: string;
+  description?: string;
+  author: string;
+  is_public: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 interface StrategyVersion {
-  id: string
-  package_id: string
-  version: string
-  code: string
-  description?: string
-  is_active: boolean
-  created_at: string
-  updated_at: string
+  id: string;
+  package_id: string;
+  version: string;
+  code: string;
+  description?: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export default function StrategyDetailPage() {
-  const params = useParams()
-  const router = useRouter()
-  const [strategy, setStrategy] = useState<Strategy | null>(null)
-  const [versions, setVersions] = useState<StrategyVersion[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const params = useParams();
+  const router = useRouter();
+  const [strategy, setStrategy] = useState<Strategy | null>(null);
+  const [versions, setVersions] = useState<StrategyVersion[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const strategyId = params.id as string
+  const strategyId = params.id as string;
+
+  const fetchStrategy = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/v1/strategies/${strategyId}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch strategy');
+      }
+      const data = await response.json();
+      setStrategy(data.data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    }
+  }, [strategyId]);
+
+  const fetchVersions = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/v1/strategies/${strategyId}/versions`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch versions');
+      }
+      const data = await response.json();
+      setVersions(data.data || []);
+    } catch (err) {
+      console.error('Failed to fetch versions:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [strategyId]);
 
   useEffect(() => {
     if (strategyId) {
-      fetchStrategy()
-      fetchVersions()
+      fetchStrategy();
+      fetchVersions();
     }
-  }, [strategyId])
-
-  const fetchStrategy = async () => {
-    try {
-      const response = await fetch(`/api/v1/strategies/${strategyId}`)
-      if (!response.ok) {
-        throw new Error('Failed to fetch strategy')
-      }
-      const data = await response.json()
-      setStrategy(data.data)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
-    }
-  }
-
-  const fetchVersions = async () => {
-    try {
-      const response = await fetch(`/api/v1/strategies/${strategyId}/versions`)
-      if (!response.ok) {
-        throw new Error('Failed to fetch versions')
-      }
-      const data = await response.json()
-      setVersions(data.data || [])
-    } catch (err) {
-      console.error('Failed to fetch versions:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
+  }, [strategyId, fetchStrategy, fetchVersions]);
 
   const handleDeleteStrategy = async () => {
-    if (!confirm('Are you sure you want to delete this strategy? This action cannot be undone.')) {
-      return
+    if (
+      !window.confirm(
+        'Are you sure you want to delete this strategy? This action cannot be undone.'
+      )
+    ) {
+      return;
     }
 
     try {
       const response = await fetch(`/api/v1/strategies/${strategyId}`, {
         method: 'DELETE',
-      })
+      });
       if (!response.ok) {
-        throw new Error('Failed to delete strategy')
+        throw new Error('Failed to delete strategy');
       }
-      router.push('/strategies')
+      router.push('/strategies');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete strategy')
+      setError(
+        err instanceof Error ? err.message : 'Failed to delete strategy'
+      );
     }
-  }
+  };
 
   if (loading) {
     return (
@@ -100,25 +112,30 @@ export default function StrategyDetailPage() {
           <div className="text-lg">Loading strategy...</div>
         </div>
       </div>
-    )
+    );
   }
 
   if (error || !strategy) {
     return (
       <div className="container mx-auto p-6">
         <div className="flex items-center justify-center h-64">
-          <div className="text-red-500">Error: {error || 'Strategy not found'}</div>
+          <div className="text-red-500">
+            Error: {error || 'Strategy not found'}
+          </div>
         </div>
       </div>
-    )
+    );
   }
 
-  const activeVersion = versions.find(v => v.is_active)
+  const activeVersion = versions.find(v => v.is_active);
 
   return (
     <div className="container mx-auto p-6">
       <div className="mb-6">
-        <Link href="/strategies" className="inline-flex items-center text-muted-foreground hover:text-foreground">
+        <Link
+          href="/strategies"
+          className="inline-flex items-center text-muted-foreground hover:text-foreground"
+        >
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back to Strategies
         </Link>
@@ -144,7 +161,11 @@ export default function StrategyDetailPage() {
               Backtest
             </Button>
           </Link>
-          <Button variant="outline" onClick={handleDeleteStrategy} className="text-red-600 hover:text-red-700">
+          <Button
+            variant="outline"
+            onClick={handleDeleteStrategy}
+            className="text-red-600 hover:text-red-700"
+          >
             <Trash2 className="w-4 h-4 mr-2" />
             Delete
           </Button>
@@ -160,7 +181,9 @@ export default function StrategyDetailPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Status</label>
+                <label className="text-sm font-medium text-muted-foreground">
+                  Status
+                </label>
                 <div className="mt-1">
                   <Badge variant={strategy.is_public ? 'default' : 'secondary'}>
                     {strategy.is_public ? 'Public' : 'Private'}
@@ -168,20 +191,32 @@ export default function StrategyDetailPage() {
                 </div>
               </div>
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Author</label>
+                <label className="text-sm font-medium text-muted-foreground">
+                  Author
+                </label>
                 <p className="mt-1">{strategy.author}</p>
               </div>
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Created</label>
-                <p className="mt-1">{new Date(strategy.created_at).toLocaleDateString()}</p>
+                <label className="text-sm font-medium text-muted-foreground">
+                  Created
+                </label>
+                <p className="mt-1">
+                  {new Date(strategy.created_at).toLocaleDateString()}
+                </p>
               </div>
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Last Updated</label>
-                <p className="mt-1">{new Date(strategy.updated_at).toLocaleDateString()}</p>
+                <label className="text-sm font-medium text-muted-foreground">
+                  Last Updated
+                </label>
+                <p className="mt-1">
+                  {new Date(strategy.updated_at).toLocaleDateString()}
+                </p>
               </div>
               {activeVersion && (
                 <div>
-                  <label className="text-sm font-medium text-muted-foreground">Active Version</label>
+                  <label className="text-sm font-medium text-muted-foreground">
+                    Active Version
+                  </label>
                   <p className="mt-1">{activeVersion.version}</p>
                 </div>
               )}
@@ -215,7 +250,9 @@ export default function StrategyDetailPage() {
                   {versions.length === 0 ? (
                     <div className="text-center py-8">
                       <Code className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                      <h3 className="text-lg font-semibold mb-2">No versions yet</h3>
+                      <h3 className="text-lg font-semibold mb-2">
+                        No versions yet
+                      </h3>
                       <p className="text-muted-foreground mb-4">
                         Create your first version to start coding your strategy
                       </p>
@@ -228,8 +265,11 @@ export default function StrategyDetailPage() {
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      {versions.map((version) => (
-                        <div key={version.id} className="flex items-center justify-between p-4 border rounded-lg">
+                      {versions.map(version => (
+                        <div
+                          key={version.id}
+                          className="flex items-center justify-between p-4 border rounded-lg"
+                        >
                           <div>
                             <div className="flex items-center gap-2">
                               <h4 className="font-medium">{version.version}</h4>
@@ -241,11 +281,16 @@ export default function StrategyDetailPage() {
                               {version.description || 'No description'}
                             </p>
                             <p className="text-xs text-muted-foreground mt-1">
-                              Created {new Date(version.created_at).toLocaleDateString()}
+                              Created{' '}
+                              {new Date(
+                                version.created_at
+                              ).toLocaleDateString()}
                             </p>
                           </div>
                           <div className="flex gap-2">
-                            <Link href={`/strategies/${strategyId}/versions/${version.id}`}>
+                            <Link
+                              href={`/strategies/${strategyId}/versions/${version.id}`}
+                            >
                               <Button variant="outline" size="sm">
                                 <Edit className="w-4 h-4 mr-1" />
                                 Edit
@@ -265,7 +310,9 @@ export default function StrategyDetailPage() {
                 <CardHeader>
                   <CardTitle>Strategy Code</CardTitle>
                   <CardDescription>
-                    {activeVersion ? `Active version: ${activeVersion.version}` : 'No active version'}
+                    {activeVersion
+                      ? `Active version: ${activeVersion.version}`
+                      : 'No active version'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -276,7 +323,9 @@ export default function StrategyDetailPage() {
                   ) : (
                     <div className="text-center py-8">
                       <Code className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                      <p className="text-muted-foreground">No active version to display</p>
+                      <p className="text-muted-foreground">
+                        No active version to display
+                      </p>
                     </div>
                   )}
                 </CardContent>
@@ -299,7 +348,9 @@ export default function StrategyDetailPage() {
                 <CardContent>
                   <div className="text-center py-8">
                     <Play className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold mb-2">No backtests yet</h3>
+                    <h3 className="text-lg font-semibold mb-2">
+                      No backtests yet
+                    </h3>
                     <p className="text-muted-foreground mb-4">
                       Run your first backtest to see how your strategy performs
                     </p>
@@ -317,5 +368,5 @@ export default function StrategyDetailPage() {
         </div>
       </div>
     </div>
-  )
+  );
 }

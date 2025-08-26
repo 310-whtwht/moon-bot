@@ -1,64 +1,72 @@
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Plus, Code, Settings, Play, Trash2 } from 'lucide-react'
-import Link from 'next/link'
+import { useState, useEffect } from 'react';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Plus, Code, Settings, Play, Trash2 } from 'lucide-react';
+import Link from 'next/link';
 
 interface Strategy {
-  id: string
-  name: string
-  description?: string
-  author: string
-  is_public: boolean
-  created_at: string
-  updated_at: string
+  id: string;
+  name: string;
+  description?: string;
+  author: string;
+  is_public: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export default function StrategiesPage() {
-  const [strategies, setStrategies] = useState<Strategy[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchStrategies()
-  }, [])
+    fetchStrategies();
+  }, []);
 
   const fetchStrategies = async () => {
     try {
-      setLoading(true)
-      const response = await fetch('/api/v1/strategies')
+      setLoading(true);
+      const response = await fetch('/api/v1/strategies');
       if (!response.ok) {
-        throw new Error('Failed to fetch strategies')
+        throw new Error('Failed to fetch strategies');
       }
-      const data = await response.json()
-      setStrategies(data.data || [])
+      const data = await response.json();
+      setStrategies(data.data || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
+      setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const handleDeleteStrategy = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this strategy?')) {
-      return
+    if (!window.confirm('Are you sure you want to delete this strategy?')) {
+      return;
     }
 
     try {
       const response = await fetch(`/api/v1/strategies/${id}`, {
         method: 'DELETE',
-      })
+      });
       if (!response.ok) {
-        throw new Error('Failed to delete strategy')
+        throw new Error('Failed to delete strategy');
       }
-      await fetchStrategies()
+      await fetchStrategies();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete strategy')
+      setError(
+        err instanceof Error ? err.message : 'Failed to delete strategy'
+      );
     }
-  }
+  };
 
   if (loading) {
     return (
@@ -67,7 +75,7 @@ export default function StrategiesPage() {
           <div className="text-lg">Loading strategies...</div>
         </div>
       </div>
-    )
+    );
   }
 
   if (error) {
@@ -77,7 +85,7 @@ export default function StrategiesPage() {
           <div className="text-red-500">Error: {error}</div>
         </div>
       </div>
-    )
+    );
   }
 
   return (
@@ -85,7 +93,9 @@ export default function StrategiesPage() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold">Strategies</h1>
-          <p className="text-muted-foreground">Manage your trading strategies</p>
+          <p className="text-muted-foreground">
+            Manage your trading strategies
+          </p>
         </div>
         <Link href="/strategies/new">
           <Button>
@@ -113,8 +123,11 @@ export default function StrategiesPage() {
         </Card>
       ) : (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {strategies.map((strategy) => (
-            <Card key={strategy.id} className="hover:shadow-lg transition-shadow">
+          {strategies.map(strategy => (
+            <Card
+              key={strategy.id}
+              className="hover:shadow-lg transition-shadow"
+            >
               <CardHeader>
                 <div className="flex justify-between items-start">
                   <div>
@@ -131,7 +144,8 @@ export default function StrategiesPage() {
               <CardContent>
                 <div className="space-y-3">
                   <div className="text-sm text-muted-foreground">
-                    <span className="font-medium">Author:</span> {strategy.author}
+                    <span className="font-medium">Author:</span>{' '}
+                    {strategy.author}
                   </div>
                   <div className="text-sm text-muted-foreground">
                     <span className="font-medium">Created:</span>{' '}
@@ -167,5 +181,5 @@ export default function StrategiesPage() {
         </div>
       )}
     </div>
-  )
+  );
 }

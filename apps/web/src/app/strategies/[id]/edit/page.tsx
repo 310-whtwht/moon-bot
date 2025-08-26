@@ -1,73 +1,79 @@
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Switch } from '@/components/ui/switch'
-import { ArrowLeft, Save } from 'lucide-react'
-import Link from 'next/link'
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
+import { ArrowLeft, Save } from 'lucide-react';
+import Link from 'next/link';
 
 interface Strategy {
-  id: string
-  name: string
-  description?: string
-  author: string
-  is_public: boolean
-  created_at: string
-  updated_at: string
+  id: string;
+  name: string;
+  description?: string;
+  author: string;
+  is_public: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export default function EditStrategyPage() {
-  const params = useParams()
-  const router = useRouter()
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [strategy, setStrategy] = useState<Strategy | null>(null)
+  const params = useParams();
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [strategy, setStrategy] = useState<Strategy | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     author: '',
     is_public: false,
-  })
+  });
 
-  const strategyId = params.id as string
+  const strategyId = params.id as string;
 
-  useEffect(() => {
-    if (strategyId) {
-      fetchStrategy()
-    }
-  }, [strategyId])
-
-  const fetchStrategy = async () => {
+  const fetchStrategy = useCallback(async () => {
     try {
-      const response = await fetch(`/api/v1/strategies/${strategyId}`)
+      const response = await fetch(`/api/v1/strategies/${strategyId}`);
       if (!response.ok) {
-        throw new Error('Failed to fetch strategy')
+        throw new Error('Failed to fetch strategy');
       }
-      const data = await response.json()
-      setStrategy(data.data)
+      const data = await response.json();
+      setStrategy(data.data);
       setFormData({
         name: data.data.name,
         description: data.data.description || '',
         author: data.data.author,
         is_public: data.data.is_public,
-      })
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
+      setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  }, [strategyId]);
+
+  useEffect(() => {
+    if (strategyId) {
+      fetchStrategy();
+    }
+  }, [strategyId, fetchStrategy]);
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setSaving(true)
-    setError(null)
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
 
     try {
       const response = await fetch(`/api/v1/strategies/${strategyId}`, {
@@ -76,27 +82,27 @@ export default function EditStrategyPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(formData),
-      })
+      });
 
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Failed to update strategy')
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to update strategy');
       }
 
-      router.push(`/strategies/${strategyId}`)
+      router.push(`/strategies/${strategyId}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
+      setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
-  }
+  };
 
   const handleInputChange = (field: string, value: string | boolean) => {
     setFormData(prev => ({
       ...prev,
       [field]: value,
-    }))
-  }
+    }));
+  };
 
   if (loading) {
     return (
@@ -105,23 +111,28 @@ export default function EditStrategyPage() {
           <div className="text-lg">Loading strategy...</div>
         </div>
       </div>
-    )
+    );
   }
 
   if (error || !strategy) {
     return (
       <div className="container mx-auto p-6 max-w-2xl">
         <div className="flex items-center justify-center h-64">
-          <div className="text-red-500">Error: {error || 'Strategy not found'}</div>
+          <div className="text-red-500">
+            Error: {error || 'Strategy not found'}
+          </div>
         </div>
       </div>
-    )
+    );
   }
 
   return (
     <div className="container mx-auto p-6 max-w-2xl">
       <div className="mb-6">
-        <Link href={`/strategies/${strategyId}`} className="inline-flex items-center text-muted-foreground hover:text-foreground">
+        <Link
+          href={`/strategies/${strategyId}`}
+          className="inline-flex items-center text-muted-foreground hover:text-foreground"
+        >
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back to Strategy
         </Link>
@@ -141,7 +152,7 @@ export default function EditStrategyPage() {
               <Input
                 id="name"
                 value={formData.name}
-                onChange={(e) => handleInputChange('name', e.target.value)}
+                onChange={e => handleInputChange('name', e.target.value)}
                 placeholder="e.g., EMA Cross Strategy"
                 required
               />
@@ -152,7 +163,7 @@ export default function EditStrategyPage() {
               <Textarea
                 id="description"
                 value={formData.description}
-                onChange={(e) => handleInputChange('description', e.target.value)}
+                onChange={e => handleInputChange('description', e.target.value)}
                 placeholder="Describe your strategy..."
                 rows={3}
               />
@@ -163,7 +174,7 @@ export default function EditStrategyPage() {
               <Input
                 id="author"
                 value={formData.author}
-                onChange={(e) => handleInputChange('author', e.target.value)}
+                onChange={e => handleInputChange('author', e.target.value)}
                 placeholder="Your name"
                 required
               />
@@ -173,7 +184,9 @@ export default function EditStrategyPage() {
               <Switch
                 id="is_public"
                 checked={formData.is_public}
-                onCheckedChange={(checked) => handleInputChange('is_public', checked)}
+                onCheckedChange={(checked: boolean) =>
+                  handleInputChange('is_public', checked)
+                }
               />
               <Label htmlFor="is_public">Make this strategy public</Label>
             </div>
@@ -205,5 +218,5 @@ export default function EditStrategyPage() {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

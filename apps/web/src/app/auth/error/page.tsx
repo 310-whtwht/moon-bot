@@ -1,15 +1,22 @@
-'use client'
+'use client';
 
-import { useSearchParams } from 'next/navigation'
-import Link from 'next/link'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { AlertTriangle, ArrowLeft } from 'lucide-react'
+import { Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { AlertTriangle, ArrowLeft } from 'lucide-react';
 
-export default function AuthErrorPage() {
-  const searchParams = useSearchParams()
-  const error = searchParams.get('error')
+function AuthErrorContent() {
+  const searchParams = useSearchParams();
+  const error = searchParams.get('error');
 
   const getErrorDetails = (errorCode: string | null) => {
     switch (errorCode) {
@@ -17,36 +24,38 @@ export default function AuthErrorPage() {
         return {
           title: 'Invalid Credentials',
           description: 'The email or password you entered is incorrect.',
-          suggestion: 'Please check your credentials and try again.'
-        }
+          suggestion: 'Please check your credentials and try again.',
+        };
       case 'AccessDenied':
         return {
           title: 'Access Denied',
           description: 'You do not have permission to access this resource.',
-          suggestion: 'Please contact your administrator for access.'
-        }
+          suggestion: 'Please contact your administrator for access.',
+        };
       case 'Configuration':
         return {
           title: 'Configuration Error',
-          description: 'There is a problem with the authentication configuration.',
-          suggestion: 'Please contact support for assistance.'
-        }
+          description:
+            'There is a problem with the authentication configuration.',
+          suggestion: 'Please contact support for assistance.',
+        };
       case 'Verification':
         return {
           title: 'Verification Failed',
           description: 'The verification process could not be completed.',
-          suggestion: 'Please try again or contact support.'
-        }
+          suggestion: 'Please try again or contact support.',
+        };
       default:
         return {
           title: 'Authentication Error',
           description: 'An unexpected error occurred during authentication.',
-          suggestion: 'Please try again or contact support if the problem persists.'
-        }
+          suggestion:
+            'Please try again or contact support if the problem persists.',
+        };
     }
-  }
+  };
 
-  const errorDetails = getErrorDetails(error)
+  const errorDetails = getErrorDetails(error);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
@@ -64,16 +73,12 @@ export default function AuthErrorPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-red-600">{errorDetails.title}</CardTitle>
-            <CardDescription>
-              {errorDetails.description}
-            </CardDescription>
+            <CardDescription>{errorDetails.description}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <Alert>
               <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>
-                {errorDetails.suggestion}
-              </AlertDescription>
+              <AlertDescription>{errorDetails.suggestion}</AlertDescription>
             </Alert>
 
             <div className="space-y-2">
@@ -83,7 +88,7 @@ export default function AuthErrorPage() {
                   Try Again
                 </Button>
               </Link>
-              
+
               <Link href="/">
                 <Button variant="outline" className="w-full">
                   Return to Home
@@ -102,5 +107,13 @@ export default function AuthErrorPage() {
         </Card>
       </div>
     </div>
-  )
+  );
+}
+
+export default function AuthErrorPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <AuthErrorContent />
+    </Suspense>
+  );
 }

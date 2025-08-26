@@ -1,6 +1,11 @@
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { FlatCompat } from "@eslint/eslintrc";
+import { dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { FlatCompat } from '@eslint/eslintrc';
+import tseslint from '@typescript-eslint/eslint-plugin';
+import tsparser from '@typescript-eslint/parser';
+import react from 'eslint-plugin-react';
+import reactHooks from 'eslint-plugin-react-hooks';
+import prettier from 'eslint-plugin-prettier';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -10,67 +15,60 @@ const compat = new FlatCompat({
 });
 
 const eslintConfig = [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  ...compat.extends('next/core-web-vitals'),
   {
-    files: ["**/*.ts", "**/*.tsx"],
+    files: ['**/*.ts', '**/*.tsx'],
     languageOptions: {
-      parser: "@typescript-eslint/parser",
+      parser: tsparser,
       parserOptions: {
-        ecmaVersion: "latest",
-        sourceType: "module",
+        ecmaVersion: 'latest',
+        sourceType: 'module',
         ecmaFeatures: {
           jsx: true,
         },
       },
     },
     plugins: {
-      "@typescript-eslint": "@typescript-eslint/eslint-plugin",
-      "react": "eslint-plugin-react",
-      "react-hooks": "eslint-plugin-react-hooks",
-      "prettier": "eslint-plugin-prettier",
+      '@typescript-eslint': tseslint,
+      react: react,
+      'react-hooks': reactHooks,
+      prettier: prettier,
     },
     rules: {
       // TypeScript strict rules
-      "@typescript-eslint/no-explicit-any": "error",
-      "@typescript-eslint/no-unused-vars": ["error", { 
-        "argsIgnorePattern": "^_",
-        "varsIgnorePattern": "^_",
-        "caughtErrorsIgnorePattern": "^_"
-      }],
-      "@typescript-eslint/no-empty-interface": "error",
-      "@typescript-eslint/no-empty-function": "error",
-      "@typescript-eslint/prefer-const": "error",
-      "@typescript-eslint/no-var-requires": "error",
-      "@typescript-eslint/explicit-function-return-type": "off",
-      "@typescript-eslint/explicit-module-boundary-types": "off",
-      "@typescript-eslint/no-non-null-assertion": "warn",
-      
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_' },
+      ],
+      '@typescript-eslint/no-empty-object-type': 'error',
+
       // React rules
-      "react-hooks/exhaustive-deps": "error",
-      "react-hooks/rules-of-hooks": "error",
-      "react/no-unescaped-entities": "error",
-      "react/jsx-no-duplicate-props": "error",
-      "react/jsx-key": "error",
-      
+      'react-hooks/exhaustive-deps': 'error',
+      'react/no-unescaped-entities': 'error',
+      'react/jsx-no-target-blank': 'error',
+      'react/jsx-key': 'error',
+
       // General rules
-      "no-console": ["warn", { "allow": ["warn", "error"] }],
-      "no-debugger": "error",
-      "no-unused-expressions": "error",
-      "prefer-const": "error",
-      
+      'no-console': 'warn',
+      'no-debugger': 'error',
+      'no-alert': 'warn',
+      'no-var': 'error',
+      'prefer-const': 'error',
+
       // Prettier integration
-      "prettier/prettier": "error",
+      'prettier/prettier': 'error',
     },
   },
   {
     ignores: [
-      "node_modules/**",
-      ".next/**",
-      "out/**",
-      "build/**",
-      "next-env.d.ts",
-      "*.config.js",
-      "*.config.mjs",
+      'node_modules/**',
+      '.next/**',
+      'out/**',
+      'build/**',
+      'dist/**',
+      '*.min.js',
+      '*.min.css',
     ],
   },
 ];

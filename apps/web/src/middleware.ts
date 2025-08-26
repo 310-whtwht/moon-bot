@@ -1,31 +1,23 @@
-import { withAuth } from 'next-auth/middleware'
-import { NextResponse } from 'next/server'
+import { auth } from '@/auth';
 
-export default withAuth(
-  function middleware(req) {
-    // Add custom middleware logic here if needed
-    return NextResponse.next()
-  },
-  {
-    callbacks: {
-      authorized: ({ token }) => {
-        // Require authentication for protected routes
-        return !!token
-      },
-    },
+export default auth(req => {
+  const isLoggedIn = !!req.auth;
+  const { nextUrl } = req;
+
+  // Protect all routes except auth pages
+  if (!isLoggedIn && !nextUrl.pathname.startsWith('/auth')) {
+    return Response.redirect(new URL('/auth/signin', nextUrl));
   }
-)
+
+  // Allow access to auth pages
+  if (nextUrl.pathname.startsWith('/auth')) {
+    return null;
+  }
+
+  // Allow access to all other pages for authenticated users
+  return null;
+});
 
 export const config = {
-  matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - api/auth (auth API routes)
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - public folder
-     */
-    '/((?!api/auth|_next/static|_next/image|favicon.ico|public).*)',
-  ],
-}
+  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
+};
