@@ -1,6 +1,14 @@
 {
   "name": "local",
   "data": {
-    "baseUrl": "http://localhost:8080"
+    "baseUrl": "http://localhost:8080",
+    "authToken": "test-token",
+    "orderId": "1",
+    "tradeId": "1",
+    "strategyId": "1",
+    "strategyVersionId": "1",
+    "backtestId": "1",
+    "symbol": "AAPL",
+    "traceId": "1"
   }
 }

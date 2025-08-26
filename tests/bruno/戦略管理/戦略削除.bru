@@ -1,0 +1,25 @@
+meta {
+  name: 戦略削除
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/strategies/{{strategyId}}
+  body: none
+  auth: {
+    type: bearer
+    token: {{authToken}}
+  }
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+tests {
+  test("ステータスコードが200または204であること", function() {
+    expect([200,204]).to.include(response.status);
+  });
+}

@@ -1,0 +1,25 @@
+meta {
+  name: バックテストキャンセル
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/backtests/{{backtestId}}/cancel
+  body: none
+  auth: {
+    type: bearer
+    token: {{authToken}}
+  }
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+tests {
+  test("ステータスコードが200であること", function() {
+    expect(response.status).to.equal(200);
+  });
+}

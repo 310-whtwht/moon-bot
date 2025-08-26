@@ -1,0 +1,28 @@
+meta {
+  name: 戦略バージョン作成
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/v1/strategies/{{strategyId}}/versions
+  body: json
+    {
+      "code": "package main\nfunc main(){}"
+    }
+  auth: {
+    type: bearer
+    token: {{authToken}}
+  }
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+tests {
+  test("ステータスコードが200または201であること", function() {
+    expect([200,201]).to.include(response.status);
+  });
+}

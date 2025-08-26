@@ -1,0 +1,31 @@
+meta {
+  name: シンボル追加
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/universe
+  body: json
+    {
+      "symbol": "{{symbol}}",
+      "exchange": "NASDAQ",
+      "asset_type": "stock",
+      "is_active": true
+    }
+  auth: {
+    type: bearer
+    token: {{authToken}}
+  }
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+tests {
+  test("ステータスコードが201であること", function() {
+    expect(response.status).to.equal(201);
+  });
+}

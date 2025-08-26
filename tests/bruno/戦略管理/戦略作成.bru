@@ -1,0 +1,29 @@
+meta {
+  name: 戦略作成
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/strategies
+  body: json
+    {
+      "name": "テスト戦略",
+      "description": "サンプル"
+    }
+  auth: {
+    type: bearer
+    token: {{authToken}}
+  }
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+tests {
+  test("ステータスコードが200または201であること", function() {
+    expect([200,201]).to.include(response.status);
+  });
+}

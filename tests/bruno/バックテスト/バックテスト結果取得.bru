@@ -1,0 +1,25 @@
+meta {
+  name: バックテスト結果取得
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/backtests/{{backtestId}}
+  body: none
+  auth: {
+    type: bearer
+    token: {{authToken}}
+  }
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+tests {
+  test("ステータスコードが200であること", function() {
+    expect(response.status).to.equal(200);
+  });
+}
