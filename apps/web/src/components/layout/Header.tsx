@@ -25,7 +25,7 @@ export default function Header() {
           <Link href="/" className="mr-6 flex items-center space-x-2">
             <BarChart3 className="h-6 w-6" />
             <span className="hidden font-bold sm:inline-block">
-              Moomoo Trading
+              Moomoo トレーディング
             </span>
           </Link>
         </div>
