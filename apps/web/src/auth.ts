@@ -39,7 +39,7 @@ const authConfig: NextAuthConfig = {
           const mockUser = {
             id: '1',
             email: 'admin@example.com',
-            password: '$2a$10$example.hash', // This should be the actual hashed password
+            password: '$2a$10$2D6W3fDaSnNLeOeIpaPKUOuQrQy7GxMu7WBMeYdoAo73yjDEA9Hjm', // Hashed password123
             name: 'Admin User',
             role: 'admin',
           };
