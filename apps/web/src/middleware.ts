@@ -1,6 +1,11 @@
 import { auth } from '@/auth';
 
 export default auth(req => {
+  // Skip authentication in development mode
+  if (process.env.NODE_ENV === 'development') {
+    return null;
+  }
+
   const isLoggedIn = !!req.auth;
   const { nextUrl } = req;
 

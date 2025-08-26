@@ -20,6 +20,16 @@ const authConfig: NextAuthConfig = {
         totp: { label: 'TOTP Code', type: 'text' },
       },
       async authorize(credentials) {
+        // In development mode, always authenticate successfully
+        if (process.env.NODE_ENV === 'development') {
+          return {
+            id: 'dev-user',
+            email: (credentials?.email as string) || 'dev@example.com',
+            name: 'Development User',
+            role: 'admin',
+          };
+        }
+
         if (!credentials?.email || !credentials?.password) {
           return null;
         }
