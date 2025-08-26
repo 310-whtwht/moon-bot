@@ -8,10 +8,10 @@ help: ## Show this help message
 
 dev: ## Start development environment
 	@echo "Starting development environment..."
-	docker-compose up -d
+	docker compose up -d mysql redis web
 	@echo "Development environment started!"
-	@echo "API: http://localhost:8080"
-	@echo "Web: http://localhost:3000"
+	@echo "API: http://localhost:8081"
+	@echo "Web: http://localhost:3001"
 
 build: ## Build all applications
 	@echo "Building API..."

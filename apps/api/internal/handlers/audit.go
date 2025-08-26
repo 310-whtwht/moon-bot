@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"moomoo/internal/audit"
+	"github.com/moomoo-trading/api/internal/audit"
 )
 
 // AuditHandler 監査ログハンドラー
