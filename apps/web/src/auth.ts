@@ -27,7 +27,7 @@ const authConfig: NextAuthConfig = {
             email: (credentials?.email as string) || 'dev@example.com',
             name: 'Development User',
             role: 'admin',
-          };
+          } as User;
         }
 
         if (!credentials?.email || !credentials?.password) {
@@ -55,7 +55,7 @@ const authConfig: NextAuthConfig = {
                 email: mockUser.email,
                 name: mockUser.name,
                 role: mockUser.role,
-              };
+              } as User;
             }
           }
 
