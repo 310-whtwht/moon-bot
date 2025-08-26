@@ -23,6 +23,37 @@ Next.js、Go、MySQLを使用した高度なアルゴリズム取引プラット
 
 ### 開発環境セットアップ
 
+#### 方法1: Makefile を使用（推奨）
+
+1. **依存関係のインストール**
+   ```bash
+   make install-deps
+   ```
+
+2. **開発環境の起動**
+   ```bash
+   make dev
+   ```
+   これにより以下が自動的に起動します：
+   - MySQL データベース
+   - Redis
+   - Web アプリケーション（http://localhost:3001）
+   - API サーバー（http://localhost:8081）
+
+3. **個別サービスの起動（必要に応じて）**
+   ```bash
+   # API サーバーのみ起動
+   make api-dev
+
+   # Web アプリケーションのみ起動
+   make web-dev
+
+   # Bot ワーカーのみ起動
+   make bot-dev
+   ```
+
+#### 方法2: 手動起動
+
 1. **インフラストラクチャの起動**
    ```bash
    docker compose up -d
@@ -45,6 +76,34 @@ Next.js、Go、MySQLを使用した高度なアルゴリズム取引プラット
    cd apps/bot
    go run main.go
    ```
+
+### その他の便利なコマンド
+
+```bash
+# ヘルプ表示
+make help
+
+# 全アプリケーションのビルド
+make build
+
+# テスト実行
+make test
+
+# コードフォーマット
+make format
+
+# Docker サービスの停止
+make docker-down
+
+# Docker ログの表示
+make docker-logs
+
+# データベースリセット
+make db-reset
+
+# ビルド成果物のクリーンアップ
+make clean
+```
 
 ## 機能
 
