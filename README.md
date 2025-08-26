@@ -25,7 +25,7 @@ This is a monorepo containing:
 
 1. **Start Infrastructure**
    ```bash
-   docker-compose up -d
+   docker compose up -d
    ```
 
 2. **Start API Server**

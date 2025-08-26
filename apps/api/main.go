@@ -25,6 +25,12 @@ func main() {
 	}
 	defer db.Close()
 
+	// Initialize GORM connection for audit
+	gormDB, err := database.NewGormConnection(cfg.Database)
+	if err != nil {
+		log.Fatalf("Failed to connect to database with GORM: %v", err)
+	}
+
 	// Initialize Redis connection
 	redisClient, err := database.NewRedisConnection(cfg.Redis)
 	if err != nil {
@@ -43,7 +49,7 @@ func main() {
 	orderHandler := handlers.NewOrderHandler(orderRepo)
 	universeHandler := handlers.NewUniverseHandler(universeRepo)
 	backtestHandler := handlers.NewBacktestHandler(backtestRepo)
-	auditHandler := handlers.NewAuditHandler(audit.NewTraceManager(db, redisClient))
+	auditHandler := handlers.NewAuditHandler(audit.NewTraceManager(gormDB, redisClient))
 
 	// Initialize Redis Streams
 	streamManager := redis.NewStreamManager(redisClient)
