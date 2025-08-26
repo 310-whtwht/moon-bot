@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { AlertTriangle, ArrowLeft, Shield } from 'lucide-react'
+import { AlertTriangle, ArrowLeft } from 'lucide-react'
 
 export default function AuthErrorPage() {
   const searchParams = useSearchParams()

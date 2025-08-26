@@ -1,13 +1,33 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ArrowLeft, Play, Download, Trash2, BarChart3, TrendingUp, TrendingDown } from 'lucide-react'
+import { ArrowLeft, Play, Trash2, BarChart3, TrendingUp, TrendingDown } from 'lucide-react'
 import Link from 'next/link'
+
+interface BacktestParameters {
+  [key: string]: string | number | boolean
+}
+
+interface BacktestResults {
+  total_return: number
+  sharpe_ratio: number
+  max_drawdown: number
+  win_rate: number
+  total_trades: number
+  trades: Array<{
+    date: string
+    symbol: string
+    side: 'BUY' | 'SELL'
+    quantity: number
+    price: number
+    pnl: number
+  }>
+}
 
 interface Backtest {
   id: string
@@ -16,10 +36,10 @@ interface Backtest {
   symbols: string[]
   start_date: string
   end_date: string
-  parameters: any
+  parameters: BacktestParameters
   status: string
   progress: number
-  results: any
+  results: BacktestResults | null
   error?: string
   created_at: string
   updated_at: string
@@ -46,13 +66,19 @@ export default function BacktestDetailPage() {
 
   const backtestId = params.id as string
 
-  useEffect(() => {
-    if (backtestId) {
-      fetchBacktest()
+  const fetchStrategy = useCallback(async (strategyId: string) => {
+    try {
+      const response = await fetch(`/api/v1/strategies/${strategyId}`)
+      if (response.ok) {
+        const data = await response.json()
+        setStrategy(data.data)
+      }
+    } catch (err) {
+      console.error('Failed to fetch strategy:', err)
     }
-  }, [backtestId])
+  }, [])
 
-  const fetchBacktest = async () => {
+  const fetchBacktest = useCallback(async () => {
     try {
       const response = await fetch(`/api/v1/backtests/${backtestId}`)
       if (!response.ok) {
@@ -70,19 +96,13 @@ export default function BacktestDetailPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [backtestId, fetchStrategy])
 
-  const fetchStrategy = async (strategyId: string) => {
-    try {
-      const response = await fetch(`/api/v1/strategies/${strategyId}`)
-      if (response.ok) {
-        const data = await response.json()
-        setStrategy(data.data)
-      }
-    } catch (err) {
-      console.error('Failed to fetch strategy:', err)
+  useEffect(() => {
+    if (backtestId) {
+      fetchBacktest()
     }
-  }
+  }, [backtestId, fetchBacktest])
 
   const handleDeleteBacktest = async () => {
     if (!confirm('Are you sure you want to delete this backtest? This action cannot be undone.')) {
@@ -353,7 +373,7 @@ export default function BacktestDetailPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {results.trades.map((trade: any, index: number) => (
+                          {results.trades.map((trade, index: number) => (
                             <tr key={index} className="border-b">
                               <td className="py-2">{new Date(trade.date).toLocaleDateString()}</td>
                               <td className="py-2">{trade.symbol}</td>

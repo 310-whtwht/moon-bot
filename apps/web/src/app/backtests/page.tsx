@@ -1,12 +1,24 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Play, BarChart3, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react'
 import Link from 'next/link'
+
+interface BacktestParameters {
+  [key: string]: string | number | boolean
+}
+
+interface BacktestResults {
+  total_return: number
+  sharpe_ratio: number
+  max_drawdown: number
+  win_rate: number
+  total_trades: number
+}
 
 interface Backtest {
   id: string
@@ -15,10 +27,10 @@ interface Backtest {
   symbols: string[]
   start_date: string
   end_date: string
-  parameters: any
+  parameters: BacktestParameters
   status: string
   progress: number
-  results: any
+  results: BacktestResults | null
   error?: string
   created_at: string
   updated_at: string
@@ -43,28 +55,7 @@ export default function BacktestsPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
 
-  useEffect(() => {
-    fetchBacktests()
-    fetchStrategies()
-  }, [])
-
-  const fetchBacktests = async () => {
-    try {
-      setLoading(true)
-      const response = await fetch('/api/v1/backtests')
-      if (!response.ok) {
-        throw new Error('Failed to fetch backtests')
-      }
-      const data = await response.json()
-      setBacktests(data.data || [])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const fetchStrategies = async () => {
+  const fetchStrategies = useCallback(async () => {
     try {
       const response = await fetch('/api/v1/strategies?limit=100')
       if (response.ok) {
@@ -78,7 +69,28 @@ export default function BacktestsPage() {
     } catch (err) {
       console.error('Failed to fetch strategies:', err)
     }
-  }
+  }, [])
+
+  const fetchBacktests = useCallback(async () => {
+    try {
+      setLoading(true)
+      const response = await fetch('/api/v1/backtests')
+      if (!response.ok) {
+        throw new Error('Failed to fetch backtests')
+      }
+      const data = await response.json()
+      setBacktests(data.data || [])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchBacktests()
+    fetchStrategies()
+  }, [fetchBacktests, fetchStrategies])
 
   const getStatusIcon = (status: string) => {
     switch (status) {

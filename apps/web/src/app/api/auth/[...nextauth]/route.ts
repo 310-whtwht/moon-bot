@@ -2,11 +2,31 @@ import NextAuth from 'next-auth'
 import { NextAuthOptions } from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import { compare } from 'bcryptjs'
+import { JWT } from 'next-auth/jwt'
+import { Session } from 'next-auth'
 
 interface Credentials {
   email: string
   password: string
   totp?: string
+}
+
+interface User {
+  id: string
+  email: string
+  name: string
+  role: string
+}
+
+interface ExtendedToken extends JWT {
+  role?: string
+}
+
+interface ExtendedSession extends Session {
+  user: {
+    id?: string
+    role?: string
+  } & Session['user']
 }
 
 export const authOptions: NextAuthOptions = {
@@ -68,13 +88,13 @@ export const authOptions: NextAuthOptions = {
     maxAge: 24 * 60 * 60, // 24 hours
   },
   callbacks: {
-    async jwt({ token, user }: any) {
+    async jwt({ token, user }: { token: ExtendedToken; user?: User }) {
       if (user) {
         token.role = user.role
       }
       return token
     },
-    async session({ session, token }: any) {
+    async session({ session, token }: { session: ExtendedSession; token: ExtendedToken }) {
       if (token && session.user) {
         session.user.id = token.sub
         session.user.role = token.role
