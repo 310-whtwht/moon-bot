@@ -1,109 +1,118 @@
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { ArrowLeft, Play, Calendar } from 'lucide-react'
-import Link from 'next/link'
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { ArrowLeft, Play } from 'lucide-react';
+import Link from 'next/link';
 
 interface Strategy {
-  id: string
-  name: string
-  description?: string
-  author: string
-  is_public: boolean
-  created_at: string
-  updated_at: string
+  id: string;
+  name: string;
+  description?: string;
+  author: string;
+  is_public: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 interface StrategyVersion {
-  id: string
-  package_id: string
-  version: string
-  code: string
-  description?: string
-  is_active: boolean
-  created_at: string
-  updated_at: string
+  id: string;
+  package_id: string;
+  version: string;
+  code: string;
+  description?: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export default function BacktestPage() {
-  const params = useParams()
-  const router = useRouter()
-  const [loading, setLoading] = useState(true)
-  const [running, setRunning] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [strategy, setStrategy] = useState<Strategy | null>(null)
-  const [versions, setVersions] = useState<StrategyVersion[]>([])
+  const params = useParams();
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [strategy, setStrategy] = useState<Strategy | null>(null);
+  const [versions, setVersions] = useState<StrategyVersion[]>([]);
   const [formData, setFormData] = useState({
     name: '',
     symbols: '',
     start_date: '',
     end_date: '',
     parameters: '',
-  })
+  });
 
-  const strategyId = params.id as string
+  const strategyId = params.id as string;
 
-  useEffect(() => {
-    if (strategyId) {
-      fetchStrategy()
-      fetchVersions()
-    }
-  }, [strategyId])
-
-  const fetchStrategy = async () => {
+  const fetchStrategy = useCallback(async () => {
     try {
-      const response = await fetch(`/api/v1/strategies/${strategyId}`)
+      const response = await fetch(`/api/v1/strategies/${strategyId}`);
       if (!response.ok) {
-        throw new Error('Failed to fetch strategy')
+        throw new Error('Failed to fetch strategy');
       }
-      const data = await response.json()
-      setStrategy(data.data)
+      const data = await response.json();
+      setStrategy(data.data);
       setFormData(prev => ({
         ...prev,
         name: `${data.data.name} Backtest`,
-      }))
+      }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
+      setError(err instanceof Error ? err.message : 'An error occurred');
     }
-  }
+  }, [strategyId]);
 
-  const fetchVersions = async () => {
+  const fetchVersions = useCallback(async () => {
     try {
-      const response = await fetch(`/api/v1/strategies/${strategyId}/versions`)
+      const response = await fetch(`/api/v1/strategies/${strategyId}/versions`);
       if (!response.ok) {
-        throw new Error('Failed to fetch versions')
+        throw new Error('Failed to fetch versions');
       }
-      const data = await response.json()
-      setVersions(data.data || [])
+      const data = await response.json();
+      setVersions(data.data || []);
     } catch (err) {
-      console.error('Failed to fetch versions:', err)
+      console.error('Failed to fetch versions:', err);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  }, [strategyId]);
+
+  useEffect(() => {
+    if (strategyId) {
+      fetchStrategy();
+      fetchVersions();
+    }
+  }, [strategyId, fetchStrategy, fetchVersions]);
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setRunning(true)
-    setError(null)
+    e.preventDefault();
+    setRunning(true);
+    setError(null);
 
     try {
       // Parse symbols
-      const symbols = formData.symbols.split(',').map(s => s.trim()).filter(s => s)
+      const symbols = formData.symbols
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s);
 
       // Parse parameters
-      let parameters = null
+      let parameters = null;
       if (formData.parameters.trim()) {
         try {
-          parameters = JSON.parse(formData.parameters)
+          parameters = JSON.parse(formData.parameters);
         } catch (err) {
-          throw new Error('Invalid JSON in parameters')
+          throw new Error('Invalid JSON in parameters');
         }
       }
 
@@ -114,7 +123,7 @@ export default function BacktestPage() {
         start_date: formData.start_date,
         end_date: formData.end_date,
         parameters,
-      }
+      };
 
       const response = await fetch('/api/v1/backtests', {
         method: 'POST',
@@ -122,28 +131,28 @@ export default function BacktestPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(backtestData),
-      })
+      });
 
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Failed to create backtest')
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create backtest');
       }
 
-      const data = await response.json()
-      router.push(`/backtests/${data.data.id}`)
+      const data = await response.json();
+      router.push(`/backtests/${data.data.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
+      setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
-      setRunning(false)
+      setRunning(false);
     }
-  }
+  };
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({
       ...prev,
       [field]: value,
-    }))
-  }
+    }));
+  };
 
   if (loading) {
     return (
@@ -152,26 +161,31 @@ export default function BacktestPage() {
           <div className="text-lg">Loading strategy...</div>
         </div>
       </div>
-    )
+    );
   }
 
   if (error || !strategy) {
     return (
       <div className="container mx-auto p-6 max-w-2xl">
         <div className="flex items-center justify-center h-64">
-          <div className="text-red-500">Error: {error || 'Strategy not found'}</div>
+          <div className="text-red-500">
+            Error: {error || 'Strategy not found'}
+          </div>
         </div>
       </div>
-    )
+    );
   }
 
-  const activeVersion = versions.find(v => v.is_active)
+  const activeVersion = versions.find(v => v.is_active);
 
   if (!activeVersion) {
     return (
       <div className="container mx-auto p-6 max-w-2xl">
         <div className="mb-6">
-          <Link href={`/strategies/${strategyId}`} className="inline-flex items-center text-muted-foreground hover:text-foreground">
+          <Link
+            href={`/strategies/${strategyId}`}
+            className="inline-flex items-center text-muted-foreground hover:text-foreground"
+          >
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Strategy
           </Link>
@@ -184,21 +198,22 @@ export default function BacktestPage() {
                 You need an active version to run a backtest.
               </p>
               <Link href={`/strategies/${strategyId}/versions/new`}>
-                <Button>
-                  Create Version
-                </Button>
+                <Button>Create Version</Button>
               </Link>
             </div>
           </CardContent>
         </Card>
       </div>
-    )
+    );
   }
 
   return (
     <div className="container mx-auto p-6 max-w-2xl">
       <div className="mb-6">
-        <Link href={`/strategies/${strategyId}`} className="inline-flex items-center text-muted-foreground hover:text-foreground">
+        <Link
+          href={`/strategies/${strategyId}`}
+          className="inline-flex items-center text-muted-foreground hover:text-foreground"
+        >
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back to Strategy
         </Link>
@@ -208,7 +223,7 @@ export default function BacktestPage() {
         <CardHeader>
           <CardTitle>Run Backtest</CardTitle>
           <CardDescription>
-            Test your strategy "{strategy.name}" with historical data.
+            Test your strategy &quot;{strategy.name}&quot; with historical data.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -218,7 +233,7 @@ export default function BacktestPage() {
               <Input
                 id="name"
                 value={formData.name}
-                onChange={(e) => handleInputChange('name', e.target.value)}
+                onChange={e => handleInputChange('name', e.target.value)}
                 placeholder="e.g., EMA Cross Strategy Backtest"
                 required
               />
@@ -229,7 +244,7 @@ export default function BacktestPage() {
               <Input
                 id="symbols"
                 value={formData.symbols}
-                onChange={(e) => handleInputChange('symbols', e.target.value)}
+                onChange={e => handleInputChange('symbols', e.target.value)}
                 placeholder="e.g., AAPL, GOOGL, MSFT"
                 required
               />
@@ -245,7 +260,9 @@ export default function BacktestPage() {
                   id="start_date"
                   type="date"
                   value={formData.start_date}
-                  onChange={(e) => handleInputChange('start_date', e.target.value)}
+                  onChange={e =>
+                    handleInputChange('start_date', e.target.value)
+                  }
                   required
                 />
               </div>
@@ -255,7 +272,7 @@ export default function BacktestPage() {
                   id="end_date"
                   type="date"
                   value={formData.end_date}
-                  onChange={(e) => handleInputChange('end_date', e.target.value)}
+                  onChange={e => handleInputChange('end_date', e.target.value)}
                   required
                 />
               </div>
@@ -266,7 +283,7 @@ export default function BacktestPage() {
               <Textarea
                 id="parameters"
                 value={formData.parameters}
-                onChange={(e) => handleInputChange('parameters', e.target.value)}
+                onChange={e => handleInputChange('parameters', e.target.value)}
                 placeholder='{"fast_period": 12, "slow_period": 26}'
                 rows={4}
               />
@@ -278,9 +295,17 @@ export default function BacktestPage() {
             <div className="p-4 bg-muted rounded-lg">
               <h4 className="font-medium mb-2">Strategy Information</h4>
               <div className="space-y-1 text-sm">
-                <p><span className="font-medium">Strategy:</span> {strategy.name}</p>
-                <p><span className="font-medium">Version:</span> {activeVersion.version}</p>
-                <p><span className="font-medium">Active Version:</span> {activeVersion.is_active ? 'Yes' : 'No'}</p>
+                <p>
+                  <span className="font-medium">Strategy:</span> {strategy.name}
+                </p>
+                <p>
+                  <span className="font-medium">Version:</span>{' '}
+                  {activeVersion.version}
+                </p>
+                <p>
+                  <span className="font-medium">Active Version:</span>{' '}
+                  {activeVersion.is_active ? 'Yes' : 'No'}
+                </p>
               </div>
             </div>
 
@@ -311,5 +336,5 @@ export default function BacktestPage() {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

@@ -1,150 +1,191 @@
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ArrowLeft, Play, Download, Trash2, BarChart3, TrendingUp, TrendingDown } from 'lucide-react'
-import Link from 'next/link'
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  ArrowLeft,
+  Play,
+  Trash2,
+  BarChart3,
+  TrendingUp,
+  TrendingDown,
+} from 'lucide-react';
+import Link from 'next/link';
+
+interface BacktestParameters {
+  [key: string]: string | number | boolean;
+}
+
+interface BacktestResults {
+  total_return: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  win_rate: number;
+  total_trades: number;
+  trades: Array<{
+    date: string;
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    quantity: number;
+    price: number;
+    pnl: number;
+  }>;
+}
 
 interface Backtest {
-  id: string
-  name: string
-  strategy_id: string
-  symbols: string[]
-  start_date: string
-  end_date: string
-  parameters: any
-  status: string
-  progress: number
-  results: any
-  error?: string
-  created_at: string
-  updated_at: string
-  completed_at?: string
+  id: string;
+  name: string;
+  strategy_id: string;
+  symbols: string[];
+  start_date: string;
+  end_date: string;
+  parameters: BacktestParameters;
+  status: string;
+  progress: number;
+  results: BacktestResults | null;
+  error?: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
 }
 
 interface Strategy {
-  id: string
-  name: string
-  description?: string
-  author: string
-  is_public: boolean
-  created_at: string
-  updated_at: string
+  id: string;
+  name: string;
+  description?: string;
+  author: string;
+  is_public: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export default function BacktestDetailPage() {
-  const params = useParams()
-  const router = useRouter()
-  const [backtest, setBacktest] = useState<Backtest | null>(null)
-  const [strategy, setStrategy] = useState<Strategy | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const params = useParams();
+  const router = useRouter();
+  const [backtest, setBacktest] = useState<Backtest | null>(null);
+  const [strategy, setStrategy] = useState<Strategy | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const backtestId = params.id as string
+  const backtestId = params.id as string;
+
+  const fetchStrategy = useCallback(async (strategyId: string) => {
+    try {
+      const response = await fetch(`/api/v1/strategies/${strategyId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setStrategy(data.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch strategy:', err);
+    }
+  }, []);
+
+  const fetchBacktest = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/v1/backtests/${backtestId}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch backtest');
+      }
+      const data = await response.json();
+      setBacktest(data.data);
+
+      // Fetch strategy information
+      if (data.data.strategy_id) {
+        fetchStrategy(data.data.strategy_id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  }, [backtestId, fetchStrategy]);
 
   useEffect(() => {
     if (backtestId) {
-      fetchBacktest()
+      fetchBacktest();
     }
-  }, [backtestId])
-
-  const fetchBacktest = async () => {
-    try {
-      const response = await fetch(`/api/v1/backtests/${backtestId}`)
-      if (!response.ok) {
-        throw new Error('Failed to fetch backtest')
-      }
-      const data = await response.json()
-      setBacktest(data.data)
-      
-      // Fetch strategy information
-      if (data.data.strategy_id) {
-        fetchStrategy(data.data.strategy_id)
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const fetchStrategy = async (strategyId: string) => {
-    try {
-      const response = await fetch(`/api/v1/strategies/${strategyId}`)
-      if (response.ok) {
-        const data = await response.json()
-        setStrategy(data.data)
-      }
-    } catch (err) {
-      console.error('Failed to fetch strategy:', err)
-    }
-  }
+  }, [backtestId, fetchBacktest]);
 
   const handleDeleteBacktest = async () => {
-    if (!confirm('Are you sure you want to delete this backtest? This action cannot be undone.')) {
-      return
+    if (
+      !window.confirm(
+        'Are you sure you want to delete this backtest? This action cannot be undone.'
+      )
+    ) {
+      return;
     }
 
     try {
       const response = await fetch(`/api/v1/backtests/${backtestId}`, {
         method: 'DELETE',
-      })
+      });
       if (!response.ok) {
-        throw new Error('Failed to delete backtest')
+        throw new Error('Failed to delete backtest');
       }
-      router.push('/backtests')
+      router.push('/backtests');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete backtest')
+      setError(
+        err instanceof Error ? err.message : 'Failed to delete backtest'
+      );
     }
-  }
+  };
 
   const handleCancelBacktest = async () => {
-    if (!confirm('Are you sure you want to cancel this backtest?')) {
-      return
+    if (!window.confirm('Are you sure you want to cancel this backtest?')) {
+      return;
     }
 
     try {
       const response = await fetch(`/api/v1/backtests/${backtestId}/cancel`, {
         method: 'POST',
-      })
+      });
       if (!response.ok) {
-        throw new Error('Failed to cancel backtest')
+        throw new Error('Failed to cancel backtest');
       }
-      await fetchBacktest() // Refresh data
+      await fetchBacktest(); // Refresh data
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to cancel backtest')
+      setError(
+        err instanceof Error ? err.message : 'Failed to cancel backtest'
+      );
     }
-  }
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed':
-        return 'bg-green-100 text-green-800'
+        return 'bg-green-100 text-green-800';
       case 'running':
-        return 'bg-blue-100 text-blue-800'
+        return 'bg-blue-100 text-blue-800';
       case 'failed':
-        return 'bg-red-100 text-red-800'
+        return 'bg-red-100 text-red-800';
       case 'cancelled':
-        return 'bg-gray-100 text-gray-800'
+        return 'bg-gray-100 text-gray-800';
       default:
-        return 'bg-yellow-100 text-yellow-800'
+        return 'bg-yellow-100 text-yellow-800';
     }
-  }
+  };
 
   const formatNumber = (num: number) => {
     return new Intl.NumberFormat('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    }).format(num)
-  }
+    }).format(num);
+  };
 
   const formatPercentage = (num: number) => {
-    return `${num >= 0 ? '+' : ''}${formatNumber(num)}%`
-  }
+    return `${num >= 0 ? '+' : ''}${formatNumber(num)}%`;
+  };
 
   if (loading) {
     return (
@@ -153,25 +194,34 @@ export default function BacktestDetailPage() {
           <div className="text-lg">Loading backtest...</div>
         </div>
       </div>
-    )
+    );
   }
 
   if (error || !backtest) {
     return (
       <div className="container mx-auto p-6">
         <div className="flex items-center justify-center h-64">
-          <div className="text-red-500">Error: {error || 'Backtest not found'}</div>
+          <div className="text-red-500">
+            Error: {error || 'Backtest not found'}
+          </div>
         </div>
       </div>
-    )
+    );
   }
 
-  const results = backtest.results ? JSON.parse(backtest.results) : null
+  const results = backtest.results
+    ? typeof backtest.results === 'string'
+      ? JSON.parse(backtest.results)
+      : backtest.results
+    : null;
 
   return (
     <div className="container mx-auto p-6">
       <div className="mb-6">
-        <Link href="/backtests" className="inline-flex items-center text-muted-foreground hover:text-foreground">
+        <Link
+          href="/backtests"
+          className="inline-flex items-center text-muted-foreground hover:text-foreground"
+        >
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back to Backtests
         </Link>
@@ -190,7 +240,11 @@ export default function BacktestDetailPage() {
               Cancel
             </Button>
           )}
-          <Button variant="outline" onClick={handleDeleteBacktest} className="text-red-600 hover:text-red-700">
+          <Button
+            variant="outline"
+            onClick={handleDeleteBacktest}
+            className="text-red-600 hover:text-red-700"
+          >
             <Trash2 className="w-4 h-4 mr-2" />
             Delete
           </Button>
@@ -206,7 +260,9 @@ export default function BacktestDetailPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Status</label>
+                <label className="text-sm font-medium text-muted-foreground">
+                  Status
+                </label>
                 <div className="mt-1">
                   <Badge className={getStatusColor(backtest.status)}>
                     {backtest.status}
@@ -215,36 +271,53 @@ export default function BacktestDetailPage() {
               </div>
               {backtest.status === 'running' && (
                 <div>
-                  <label className="text-sm font-medium text-muted-foreground">Progress</label>
+                  <label className="text-sm font-medium text-muted-foreground">
+                    Progress
+                  </label>
                   <div className="mt-1">
                     <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div 
+                      <div
                         className="bg-blue-600 h-2 rounded-full transition-all duration-300"
                         style={{ width: `${backtest.progress}%` }}
                       ></div>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1">{backtest.progress}%</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {backtest.progress}%
+                    </p>
                   </div>
                 </div>
               )}
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Symbols</label>
+                <label className="text-sm font-medium text-muted-foreground">
+                  Symbols
+                </label>
                 <p className="mt-1">{backtest.symbols.join(', ')}</p>
               </div>
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Date Range</label>
+                <label className="text-sm font-medium text-muted-foreground">
+                  Date Range
+                </label>
                 <p className="mt-1">
-                  {new Date(backtest.start_date).toLocaleDateString()} - {new Date(backtest.end_date).toLocaleDateString()}
+                  {new Date(backtest.start_date).toLocaleDateString()} -{' '}
+                  {new Date(backtest.end_date).toLocaleDateString()}
                 </p>
               </div>
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Created</label>
-                <p className="mt-1">{new Date(backtest.created_at).toLocaleDateString()}</p>
+                <label className="text-sm font-medium text-muted-foreground">
+                  Created
+                </label>
+                <p className="mt-1">
+                  {new Date(backtest.created_at).toLocaleDateString()}
+                </p>
               </div>
               {backtest.completed_at && (
                 <div>
-                  <label className="text-sm font-medium text-muted-foreground">Completed</label>
-                  <p className="mt-1">{new Date(backtest.completed_at).toLocaleDateString()}</p>
+                  <label className="text-sm font-medium text-muted-foreground">
+                    Completed
+                  </label>
+                  <p className="mt-1">
+                    {new Date(backtest.completed_at).toLocaleDateString()}
+                  </p>
                 </div>
               )}
             </CardContent>
@@ -265,7 +338,9 @@ export default function BacktestDetailPage() {
                 <CardHeader>
                   <CardTitle>Performance Results</CardTitle>
                   <CardDescription>
-                    {backtest.status === 'completed' ? 'Backtest completed successfully' : 'Results will appear when backtest completes'}
+                    {backtest.status === 'completed'
+                      ? 'Backtest completed successfully'
+                      : 'Results will appear when backtest completes'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -276,7 +351,9 @@ export default function BacktestDetailPage() {
                           <TrendingUp className="w-4 h-4 text-green-600" />
                           <h4 className="font-medium">Total Return</h4>
                         </div>
-                        <p className={`text-2xl font-bold ${results.total_return >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        <p
+                          className={`text-2xl font-bold ${results.total_return >= 0 ? 'text-green-600' : 'text-red-600'}`}
+                        >
                           {formatPercentage(results.total_return)}
                         </p>
                       </div>
@@ -285,7 +362,9 @@ export default function BacktestDetailPage() {
                           <BarChart3 className="w-4 h-4 text-blue-600" />
                           <h4 className="font-medium">Sharpe Ratio</h4>
                         </div>
-                        <p className="text-2xl font-bold">{formatNumber(results.sharpe_ratio)}</p>
+                        <p className="text-2xl font-bold">
+                          {formatNumber(results.sharpe_ratio)}
+                        </p>
                       </div>
                       <div className="p-4 border rounded-lg">
                         <div className="flex items-center gap-2 mb-2">
@@ -298,15 +377,21 @@ export default function BacktestDetailPage() {
                       </div>
                       <div className="p-4 border rounded-lg">
                         <h4 className="font-medium mb-2">Win Rate</h4>
-                        <p className="text-2xl font-bold">{formatNumber(results.win_rate)}%</p>
+                        <p className="text-2xl font-bold">
+                          {formatNumber(results.win_rate)}%
+                        </p>
                       </div>
                       <div className="p-4 border rounded-lg">
                         <h4 className="font-medium mb-2">Total Trades</h4>
-                        <p className="text-2xl font-bold">{results.total_trades}</p>
+                        <p className="text-2xl font-bold">
+                          {results.total_trades}
+                        </p>
                       </div>
                       <div className="p-4 border rounded-lg">
                         <h4 className="font-medium mb-2">Profit Factor</h4>
-                        <p className="text-2xl font-bold">{formatNumber(results.profit_factor)}</p>
+                        <p className="text-2xl font-bold">
+                          {formatNumber(results.profit_factor)}
+                        </p>
                       </div>
                     </div>
                   ) : backtest.status === 'failed' ? (
@@ -314,16 +399,24 @@ export default function BacktestDetailPage() {
                       <div className="text-red-500 mb-4">
                         <TrendingDown className="w-12 h-12 mx-auto" />
                       </div>
-                      <h3 className="text-lg font-semibold mb-2">Backtest Failed</h3>
-                      <p className="text-muted-foreground mb-4">{backtest.error}</p>
+                      <h3 className="text-lg font-semibold mb-2">
+                        Backtest Failed
+                      </h3>
+                      <p className="text-muted-foreground mb-4">
+                        {backtest.error}
+                      </p>
                     </div>
                   ) : (
                     <div className="text-center py-8">
                       <div className="text-blue-500 mb-4">
                         <Play className="w-12 h-12 mx-auto animate-pulse" />
                       </div>
-                      <h3 className="text-lg font-semibold mb-2">Backtest in Progress</h3>
-                      <p className="text-muted-foreground">Results will be available when the backtest completes.</p>
+                      <h3 className="text-lg font-semibold mb-2">
+                        Backtest in Progress
+                      </h3>
+                      <p className="text-muted-foreground">
+                        Results will be available when the backtest completes.
+                      </p>
                     </div>
                   )}
                 </CardContent>
@@ -353,26 +446,47 @@ export default function BacktestDetailPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {results.trades.map((trade: any, index: number) => (
-                            <tr key={index} className="border-b">
-                              <td className="py-2">{new Date(trade.date).toLocaleDateString()}</td>
-                              <td className="py-2">{trade.symbol}</td>
-                              <td className={`py-2 ${trade.side === 'BUY' ? 'text-green-600' : 'text-red-600'}`}>
-                                {trade.side}
-                              </td>
-                              <td className="py-2">{trade.quantity}</td>
-                              <td className="py-2">${trade.price}</td>
-                              <td className={`py-2 ${trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                {formatNumber(trade.pnl)}
-                              </td>
-                            </tr>
-                          ))}
+                          {results.trades.map(
+                            (
+                              trade: {
+                                date: string;
+                                symbol: string;
+                                side: string;
+                                quantity: number;
+                                price: number;
+                                pnl: number;
+                              },
+                              index: number
+                            ) => (
+                              <tr key={index} className="border-b">
+                                <td className="py-2">
+                                  {new Date(trade.date).toLocaleDateString()}
+                                </td>
+                                <td className="py-2">{trade.symbol}</td>
+                                <td
+                                  className={`py-2 ${trade.side === 'BUY' ? 'text-green-600' : 'text-red-600'}`}
+                                >
+                                  {trade.side}
+                                </td>
+                                <td className="py-2">{trade.quantity}</td>
+                                <td className="py-2">${trade.price}</td>
+                                <td
+                                  className={`py-2 ${trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}
+                                >
+                                  {formatNumber(trade.pnl)}
+                                </td>
+                              </tr>
+                            )
+                          )}
                         </tbody>
                       </table>
                     </div>
                   ) : (
                     <div className="text-center py-8">
-                      <p className="text-muted-foreground">Trade history will be available when the backtest completes.</p>
+                      <p className="text-muted-foreground">
+                        Trade history will be available when the backtest
+                        completes.
+                      </p>
                     </div>
                   )}
                 </CardContent>
@@ -390,10 +504,14 @@ export default function BacktestDetailPage() {
                 <CardContent>
                   <div className="space-y-4">
                     <div>
-                      <label className="text-sm font-medium text-muted-foreground">Strategy Parameters</label>
+                      <label className="text-sm font-medium text-muted-foreground">
+                        Strategy Parameters
+                      </label>
                       <pre className="mt-1 p-3 bg-muted rounded-lg overflow-x-auto text-sm">
                         <code>
-                          {backtest.parameters ? JSON.stringify(backtest.parameters, null, 2) : 'No parameters'}
+                          {backtest.parameters
+                            ? JSON.stringify(backtest.parameters, null, 2)
+                            : 'No parameters'}
                         </code>
                       </pre>
                     </div>
@@ -405,5 +523,5 @@ export default function BacktestDetailPage() {
         </div>
       </div>
     </div>
-  )
+  );
 }

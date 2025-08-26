@@ -1,8 +1,8 @@
-'use client'
+'use client';
 
-import { useSession, signOut } from 'next-auth/react'
-import { Button } from '@/components/ui/button'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { useSession, signOut } from 'next-auth/react';
+import { Button } from '@/components/ui/button';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,13 +10,13 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { User, LogOut, Settings, BarChart3 } from 'lucide-react'
-import Link from 'next/link'
-import Navigation from './Navigation'
+} from '@/components/ui/dropdown-menu';
+import { User, LogOut, Settings, BarChart3 } from 'lucide-react';
+import Link from 'next/link';
+import Navigation from './Navigation';
 
 export default function Header() {
-  const { data: session } = useSession()
+  const { data: session } = useSession();
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -29,16 +29,22 @@ export default function Header() {
             </span>
           </Link>
         </div>
-        
+
         <Navigation />
-        
+
         <div className="ml-auto flex items-center space-x-4">
           {session ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+                <Button
+                  variant="ghost"
+                  className="relative h-8 w-8 rounded-full"
+                >
                   <Avatar className="h-8 w-8">
-                    <AvatarImage src={session.user?.image || ''} alt={session.user?.name || ''} />
+                    <AvatarImage
+                      src={session.user?.image || ''}
+                      alt={session.user?.name || ''}
+                    />
                     <AvatarFallback>
                       <User className="h-4 w-4" />
                     </AvatarFallback>
@@ -76,5 +82,5 @@ export default function Header() {
         </div>
       </div>
     </header>
-  )
+  );
 }

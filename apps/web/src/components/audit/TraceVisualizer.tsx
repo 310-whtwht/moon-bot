@@ -1,66 +1,79 @@
-'use client'
+'use client';
 
-import React, { useState, useEffect, useCallback } from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
-import { Search, Download, Eye, BarChart3 } from 'lucide-react'
-import { DatePicker } from '@/components/ui/date-picker'
+import React, { useState, useEffect, useCallback } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Search, Download, Eye, BarChart3 } from 'lucide-react';
+import { DatePicker } from '@/components/ui/date-picker';
 
 interface TradeTrace {
-  id: string
-  strategy_id: string
-  symbol: string
-  side: 'buy' | 'sell'
-  quantity: number
-  price: number
-  timestamp: string
-  order_id: string
-  trade_id: string
-  parent_id?: string
-  trace_id: string
-  metadata?: Record<string, unknown>
+  id: string;
+  strategy_id: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  quantity: number;
+  price: number;
+  timestamp: string;
+  order_id: string;
+  trade_id: string;
+  parent_id?: string;
+  trace_id: string;
+  metadata?: Record<string, unknown>;
 }
 
 interface TraceChain {
-  trace_id: string
-  chain: TradeTrace[]
-  length: number
+  trace_id: string;
+  chain: TradeTrace[];
+  length: number;
 }
 
 interface TraceStatistics {
-  total_trades: number
-  total_volume: number
-  total_value: number
-  buy_count: number
-  sell_count: number
-  avg_price: number
-  max_price: number
-  min_price: number
+  total_trades: number;
+  total_volume: number;
+  total_value: number;
+  buy_count: number;
+  sell_count: number;
+  avg_price: number;
+  max_price: number;
+  min_price: number;
 }
 
 export default function TraceVisualizer() {
-  const [traces, setTraces] = useState<TradeTrace[]>([])
-  const [traceChain, setTraceChain] = useState<TraceChain | null>(null)
-  const [statistics, setStatistics] = useState<TraceStatistics | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [traces, setTraces] = useState<TradeTrace[]>([]);
+  const [traceChain, setTraceChain] = useState<TraceChain | null>(null);
+  const [statistics, setStatistics] = useState<TraceStatistics | null>(null);
+  const [loading, setLoading] = useState(false);
   const [searchFilters, setSearchFilters] = useState({
     strategy_id: '',
     symbol: '',
     side: '',
     start_time: '',
     end_time: '',
-  })
+  });
 
-  const [viewMode, setViewMode] = useState<'list' | 'chain' | 'stats'>('list')
+  const [viewMode, setViewMode] = useState<'list' | 'chain' | 'stats'>('list');
 
   // トレース検索
   const searchTraces = useCallback(async () => {
-    setLoading(true)
+    setLoading(true);
     try {
       const response = await fetch('/api/audit/traces/search', {
         method: 'POST',
@@ -68,90 +81,95 @@ export default function TraceVisualizer() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(searchFilters),
-      })
-      
+      });
+
       if (response.ok) {
-        const data = await response.json()
-        setTraces(data.traces)
+        const data = await response.json();
+        setTraces(data.traces);
       }
     } catch (error) {
-      console.error('Failed to search traces:', error)
+      console.error('Failed to search traces:', error);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [searchFilters])
+  }, [searchFilters]);
 
   // トレース鎖取得
   const getTraceChain = async (traceId: string) => {
-    setLoading(true)
+    setLoading(true);
     try {
-      const response = await fetch(`/api/audit/traces/${traceId}/chain`)
-      
+      const response = await fetch(`/api/audit/traces/${traceId}/chain`);
+
       if (response.ok) {
-        const data = await response.json()
-        setTraceChain(data)
-        setViewMode('chain')
+        const data = await response.json();
+        setTraceChain(data);
+        setViewMode('chain');
       }
     } catch (error) {
-      console.error('Failed to get trace chain:', error)
+      console.error('Failed to get trace chain:', error);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   // 統計情報取得
   const getStatistics = async (strategyId: string) => {
-    setLoading(true)
+    setLoading(true);
     try {
       const params = new URLSearchParams({
         start_time: searchFilters.start_time,
         end_time: searchFilters.end_time,
-      })
-      
-      const response = await fetch(`/api/audit/traces/strategy/${strategyId}/statistics?${params}`)
-      
+      });
+
+      const response = await fetch(
+        `/api/audit/traces/strategy/${strategyId}/statistics?${params}`
+      );
+
       if (response.ok) {
-        const data = await response.json()
-        setStatistics(data.statistics)
-        setViewMode('stats')
+        const data = await response.json();
+        setStatistics(data.statistics);
+        setViewMode('stats');
       }
     } catch (error) {
-      console.error('Failed to get statistics:', error)
+      console.error('Failed to get statistics:', error);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   // エクスポート
   const exportTraces = async (format: 'json' | 'csv') => {
     try {
-      const response = await fetch(`/api/audit/traces/export?format=${format}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(searchFilters),
-      })
-      
+      const response = await fetch(
+        `/api/audit/traces/export?format=${format}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(searchFilters),
+        }
+      );
+
       if (response.ok) {
-        const blob = await response.blob()
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `traces.${format}`
-        document.body.appendChild(a)
-        a.click()
-        window.URL.revokeObjectURL(url)
-        document.body.removeChild(a)
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `traces.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
       }
     } catch (error) {
-      console.error('Failed to export traces:', error)
+      console.error('Failed to export traces:', error);
     }
-  }
+  };
 
   useEffect(() => {
-    searchTraces()
-  }, [searchTraces])
+    searchTraces();
+  }, [searchTraces]);
 
   const renderTraceList = () => (
     <div className="space-y-4">
@@ -176,7 +194,7 @@ export default function TraceVisualizer() {
           </Button>
         </div>
       </div>
-      
+
       <Table>
         <TableHeader>
           <TableRow>
@@ -191,7 +209,7 @@ export default function TraceVisualizer() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {traces.map((trace) => (
+          {traces.map(trace => (
             <TableRow key={trace.id}>
               <TableCell className="font-mono text-sm">
                 {trace.trace_id.slice(0, 8)}...
@@ -222,31 +240,26 @@ export default function TraceVisualizer() {
         </TableBody>
       </Table>
     </div>
-  )
+  );
 
   const renderTraceChain = () => (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h3 className="text-lg font-semibold">トレース鎖</h3>
-        <Button
-          variant="outline"
-          onClick={() => setViewMode('list')}
-        >
+        <Button variant="outline" onClick={() => setViewMode('list')}>
           一覧に戻る
         </Button>
       </div>
-      
+
       {traceChain && (
         <div className="space-y-4">
           <div className="flex items-center gap-4">
-            <Badge variant="outline">
-              鎖の長さ: {traceChain.length}
-            </Badge>
+            <Badge variant="outline">鎖の長さ: {traceChain.length}</Badge>
             <Badge variant="outline">
               トレースID: {traceChain.trace_id.slice(0, 8)}...
             </Badge>
           </div>
-          
+
           <div className="space-y-2">
             {traceChain.chain.map((trace, index) => (
               <Card key={trace.id} className="border-l-4 border-blue-500">
@@ -263,11 +276,16 @@ export default function TraceVisualizer() {
                     </div>
                     <div className="text-right">
                       <div className="flex items-center gap-2">
-                        <Badge variant={trace.side === 'buy' ? 'default' : 'secondary'}>
+                        <Badge
+                          variant={
+                            trace.side === 'buy' ? 'default' : 'secondary'
+                          }
+                        >
                           {trace.side}
                         </Badge>
                         <span className="font-semibold">
-                          {trace.quantity.toLocaleString()} @ ${trace.price.toFixed(2)}
+                          {trace.quantity.toLocaleString()} @ $
+                          {trace.price.toFixed(2)}
                         </span>
                       </div>
                       <div className="text-sm text-gray-500">
@@ -282,81 +300,94 @@ export default function TraceVisualizer() {
         </div>
       )}
     </div>
-  )
+  );
 
   const renderStatistics = () => (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h3 className="text-lg font-semibold">統計情報</h3>
-        <Button
-          variant="outline"
-          onClick={() => setViewMode('list')}
-        >
+        <Button variant="outline" onClick={() => setViewMode('list')}>
           一覧に戻る
         </Button>
       </div>
-      
+
       {statistics && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold">{statistics.total_trades}</div>
+              <div className="text-2xl font-bold">
+                {statistics.total_trades}
+              </div>
               <div className="text-sm text-gray-500">総取引数</div>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold">{statistics.total_volume.toLocaleString()}</div>
+              <div className="text-2xl font-bold">
+                {statistics.total_volume.toLocaleString()}
+              </div>
               <div className="text-sm text-gray-500">総数量</div>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold">${statistics.total_value.toLocaleString()}</div>
+              <div className="text-2xl font-bold">
+                ${statistics.total_value.toLocaleString()}
+              </div>
               <div className="text-sm text-gray-500">総取引額</div>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold">${statistics.avg_price.toFixed(2)}</div>
+              <div className="text-2xl font-bold">
+                ${statistics.avg_price.toFixed(2)}
+              </div>
               <div className="text-sm text-gray-500">平均価格</div>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold text-green-600">{statistics.buy_count}</div>
+              <div className="text-2xl font-bold text-green-600">
+                {statistics.buy_count}
+              </div>
               <div className="text-sm text-gray-500">買い注文数</div>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold text-red-600">{statistics.sell_count}</div>
+              <div className="text-2xl font-bold text-red-600">
+                {statistics.sell_count}
+              </div>
               <div className="text-sm text-gray-500">売り注文数</div>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold text-green-600">${statistics.max_price.toFixed(2)}</div>
+              <div className="text-2xl font-bold text-green-600">
+                ${statistics.max_price.toFixed(2)}
+              </div>
               <div className="text-sm text-gray-500">最高価格</div>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardContent className="p-4">
-              <div className="text-2xl font-bold text-red-600">${statistics.min_price.toFixed(2)}</div>
+              <div className="text-2xl font-bold text-red-600">
+                ${statistics.min_price.toFixed(2)}
+              </div>
               <div className="text-sm text-gray-500">最低価格</div>
             </CardContent>
           </Card>
         </div>
       )}
     </div>
-  )
+  );
 
   return (
     <div className="space-y-6">
@@ -375,26 +406,38 @@ export default function TraceVisualizer() {
               <Input
                 id="strategy_id"
                 value={searchFilters.strategy_id}
-                onChange={(e) => setSearchFilters(prev => ({ ...prev, strategy_id: e.target.value }))}
+                onChange={e =>
+                  setSearchFilters(prev => ({
+                    ...prev,
+                    strategy_id: e.target.value,
+                  }))
+                }
                 placeholder="戦略IDを入力"
               />
             </div>
-            
+
             <div>
               <Label htmlFor="symbol">銘柄</Label>
               <Input
                 id="symbol"
                 value={searchFilters.symbol}
-                onChange={(e) => setSearchFilters(prev => ({ ...prev, symbol: e.target.value }))}
+                onChange={e =>
+                  setSearchFilters(prev => ({
+                    ...prev,
+                    symbol: e.target.value,
+                  }))
+                }
                 placeholder="AAPL"
               />
             </div>
-            
+
             <div>
               <Label htmlFor="side">サイド</Label>
               <Select
                 value={searchFilters.side}
-                onValueChange={(value) => setSearchFilters(prev => ({ ...prev, side: value }))}
+                onValueChange={value =>
+                  setSearchFilters(prev => ({ ...prev, side: value }))
+                }
               >
                 <SelectTrigger>
                   <SelectValue placeholder="サイドを選択" />
@@ -406,31 +449,39 @@ export default function TraceVisualizer() {
                 </SelectContent>
               </Select>
             </div>
-            
+
             <div>
               <Label>開始日時</Label>
               <DatePicker
                 value={searchFilters.start_time}
-                onChange={(date) => setSearchFilters(prev => ({ 
-                  ...prev, 
-                  start_time: date ? date.toISOString() : '' 
-                }))}
+                onChange={date =>
+                  setSearchFilters(prev => ({
+                    ...prev,
+                    start_time: date ? date.toISOString() : '',
+                  }))
+                }
               />
             </div>
-            
+
             <div>
               <Label>終了日時</Label>
               <DatePicker
                 value={searchFilters.end_time}
-                onChange={(date) => setSearchFilters(prev => ({ 
-                  ...prev, 
-                  end_time: date ? date.toISOString() : '' 
-                }))}
+                onChange={date =>
+                  setSearchFilters(prev => ({
+                    ...prev,
+                    end_time: date ? date.toISOString() : '',
+                  }))
+                }
               />
             </div>
-            
+
             <div className="flex items-end">
-              <Button onClick={searchTraces} disabled={loading} className="w-full">
+              <Button
+                onClick={searchTraces}
+                disabled={loading}
+                className="w-full"
+              >
                 <Search className="w-4 h-4 mr-2" />
                 検索
               </Button>
@@ -449,7 +500,7 @@ export default function TraceVisualizer() {
               variant={viewMode === 'stats' ? 'default' : 'outline'}
               onClick={() => {
                 if (searchFilters.strategy_id) {
-                  getStatistics(searchFilters.strategy_id)
+                  getStatistics(searchFilters.strategy_id);
                 }
               }}
             >
@@ -472,5 +523,5 @@ export default function TraceVisualizer() {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

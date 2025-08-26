@@ -1,4 +1,4 @@
-import TraceVisualizer from '@/components/audit/TraceVisualizer'
+import TraceVisualizer from '@/components/audit/TraceVisualizer';
 
 export default function AuditPage() {
   return (
@@ -9,8 +9,8 @@ export default function AuditPage() {
           トレードの鎖状トレースと監査ログを確認できます
         </p>
       </div>
-      
+
       <TraceVisualizer />
     </div>
-  )
+  );
 }
