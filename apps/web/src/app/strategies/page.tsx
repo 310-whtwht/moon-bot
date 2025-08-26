@@ -37,19 +37,19 @@ export default function StrategiesPage() {
       setLoading(true);
       const response = await fetch('/api/v1/strategies');
       if (!response.ok) {
-        throw new Error('Failed to fetch strategies');
+        throw new Error('戦略の取得に失敗しました');
       }
       const data = await response.json();
       setStrategies(data.data || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : 'エラーが発生しました');
     } finally {
       setLoading(false);
     }
   };
 
   const handleDeleteStrategy = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this strategy?')) {
+    if (!window.confirm('この戦略を削除してもよろしいですか？')) {
       return;
     }
 
@@ -58,12 +58,12 @@ export default function StrategiesPage() {
         method: 'DELETE',
       });
       if (!response.ok) {
-        throw new Error('Failed to delete strategy');
+        throw new Error('戦略の削除に失敗しました');
       }
       await fetchStrategies();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : 'Failed to delete strategy'
+        err instanceof Error ? err.message : '戦略の削除に失敗しました'
       );
     }
   };
@@ -72,7 +72,7 @@ export default function StrategiesPage() {
     return (
       <div className="container mx-auto p-6">
         <div className="flex items-center justify-center h-64">
-          <div className="text-lg">Loading strategies...</div>
+          <div className="text-lg">戦略を読み込み中...</div>
         </div>
       </div>
     );
@@ -82,7 +82,7 @@ export default function StrategiesPage() {
     return (
       <div className="container mx-auto p-6">
         <div className="flex items-center justify-center h-64">
-          <div className="text-red-500">Error: {error}</div>
+          <div className="text-red-500">エラー: {error}</div>
         </div>
       </div>
     );
@@ -92,15 +92,15 @@ export default function StrategiesPage() {
     <div className="container mx-auto p-6">
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-3xl font-bold">Strategies</h1>
+          <h1 className="text-3xl font-bold">戦略管理</h1>
           <p className="text-muted-foreground">
-            Manage your trading strategies
+            トレーディング戦略の管理
           </p>
         </div>
         <Link href="/strategies/new">
           <Button>
             <Plus className="w-4 h-4 mr-2" />
-            New Strategy
+            新規戦略
           </Button>
         </Link>
       </div>
@@ -109,14 +109,14 @@ export default function StrategiesPage() {
         <Card>
           <CardContent className="flex flex-col items-center justify-center h-64">
             <Code className="w-12 h-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No strategies yet</h3>
+            <h3 className="text-lg font-semibold mb-2">戦略がまだありません</h3>
             <p className="text-muted-foreground mb-4">
-              Create your first trading strategy to get started
+              最初のトレーディング戦略を作成して開始してください
             </p>
             <Link href="/strategies/new">
               <Button>
                 <Plus className="w-4 h-4 mr-2" />
-                Create Strategy
+                戦略を作成
               </Button>
             </Link>
           </CardContent>
@@ -133,35 +133,35 @@ export default function StrategiesPage() {
                   <div>
                     <CardTitle className="text-lg">{strategy.name}</CardTitle>
                     <CardDescription className="mt-1">
-                      {strategy.description || 'No description'}
+                      {strategy.description || '説明なし'}
                     </CardDescription>
                   </div>
                   <Badge variant={strategy.is_public ? 'default' : 'secondary'}>
-                    {strategy.is_public ? 'Public' : 'Private'}
+                    {strategy.is_public ? '公開' : '非公開'}
                   </Badge>
                 </div>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
                   <div className="text-sm text-muted-foreground">
-                    <span className="font-medium">Author:</span>{' '}
+                    <span className="font-medium">作成者:</span>{' '}
                     {strategy.author}
                   </div>
                   <div className="text-sm text-muted-foreground">
-                    <span className="font-medium">Created:</span>{' '}
-                    {new Date(strategy.created_at).toLocaleDateString()}
+                    <span className="font-medium">作成日:</span>{' '}
+                    {new Date(strategy.created_at).toLocaleDateString('ja-JP')}
                   </div>
                   <div className="flex gap-2 pt-2">
                     <Link href={`/strategies/${strategy.id}`}>
                       <Button variant="outline" size="sm">
                         <Settings className="w-4 h-4 mr-1" />
-                        Edit
+                        編集
                       </Button>
                     </Link>
                     <Link href={`/strategies/${strategy.id}/backtest`}>
                       <Button variant="outline" size="sm">
                         <Play className="w-4 h-4 mr-1" />
-                        Backtest
+                        バックテスト
                       </Button>
                     </Link>
                     <Button
@@ -171,7 +171,7 @@ export default function StrategiesPage() {
                       className="text-red-600 hover:text-red-700"
                     >
                       <Trash2 className="w-4 h-4 mr-1" />
-                      Delete
+                      削除
                     </Button>
                   </div>
                 </div>
