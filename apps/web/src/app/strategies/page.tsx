@@ -13,7 +13,7 @@ interface Strategy {
 }
 
 export default function StrategiesPage() {
-  const [strategies, setStrategies] = useState<Strategy[]>([
+  const [strategies] = useState<Strategy[]>([
     {
       id: "1",
       name: "EMA Cross Strategy",
