@@ -1,0 +1,28 @@
+meta {
+  name: トレースエクスポート
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/api/v1/audit/traces/export
+  body: json
+    {
+      "symbol": "{{symbol}}"
+    }
+  auth: {
+    type: bearer
+    token: {{authToken}}
+  }
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+tests {
+  test("ステータスコードが200であること", function() {
+    expect(response.status).to.equal(200);
+  });
+}

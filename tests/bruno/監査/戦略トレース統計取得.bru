@@ -1,0 +1,25 @@
+meta {
+  name: 戦略トレース統計取得
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/v1/audit/traces/strategy/{{strategyId}}/statistics
+  body: none
+  auth: {
+    type: bearer
+    token: {{authToken}}
+  }
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+tests {
+  test("ステータスコードが200であること", function() {
+    expect(response.status).to.equal(200);
+  });
+}

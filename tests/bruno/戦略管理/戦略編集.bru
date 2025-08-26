@@ -1,0 +1,28 @@
+meta {
+  name: 戦略編集
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/api/v1/strategies/{{strategyId}}
+  body: json
+    {
+      "name": "更新戦略"
+    }
+  auth: {
+    type: bearer
+    token: {{authToken}}
+  }
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+tests {
+  test("ステータスコードが200であること", function() {
+    expect(response.status).to.equal(200);
+  });
+}

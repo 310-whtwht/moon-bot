@@ -1,0 +1,28 @@
+meta {
+  name: トレース検索
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/v1/audit/traces/search
+  body: json
+    {
+      "symbol": "{{symbol}}"
+    }
+  auth: {
+    type: bearer
+    token: {{authToken}}
+  }
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+tests {
+  test("ステータスコードが200であること", function() {
+    expect(response.status).to.equal(200);
+  });
+}

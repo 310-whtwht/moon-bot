@@ -1,0 +1,30 @@
+meta {
+  name: 注文作成
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/orders
+  body: json
+    {
+      "symbol": "{{symbol}}",
+      "side": "buy",
+      "quantity": 1
+    }
+  auth: {
+    type: bearer
+    token: {{authToken}}
+  }
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+tests {
+  test("ステータスコードが200または201であること", function() {
+    expect([200,201]).to.include(response.status);
+  });
+}
