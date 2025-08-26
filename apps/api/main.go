@@ -32,9 +32,18 @@ func main() {
 	}
 	defer redisClient.Close()
 
-	// Initialize audit trace manager
-	traceManager := audit.NewTraceManager(db, redisClient)
-	auditHandler := handlers.NewAuditHandler(traceManager)
+	// Initialize repositories
+	strategyRepo := database.NewStrategyRepository(db)
+	orderRepo := database.NewOrderRepository(db)
+	universeRepo := database.NewUniverseRepository(db)
+	backtestRepo := database.NewBacktestRepository(db)
+
+	// Initialize handlers
+	strategyHandler := handlers.NewStrategyHandler(strategyRepo)
+	orderHandler := handlers.NewOrderHandler(orderRepo)
+	universeHandler := handlers.NewUniverseHandler(universeRepo)
+	backtestHandler := handlers.NewBacktestHandler(backtestRepo)
+	auditHandler := handlers.NewAuditHandler(audit.NewTraceManager(db, redisClient))
 
 	// Initialize Redis Streams
 	streamManager := redis.NewStreamManager(redisClient)
@@ -64,38 +73,48 @@ func main() {
 		// Orders
 		orders := api.Group("/orders")
 		{
-			orders.GET("/", handlers.GetOrders)
-			orders.POST("/", handlers.CreateOrder)
-			orders.GET("/:id", handlers.GetOrder)
-			orders.PUT("/:id", handlers.UpdateOrder)
-			orders.DELETE("/:id", handlers.CancelOrder)
+			orders.GET("/", orderHandler.GetOrders)
+			orders.POST("/", orderHandler.CreateOrder)
+			orders.GET("/:id", orderHandler.GetOrder)
+			orders.PUT("/:id", orderHandler.UpdateOrder)
+			orders.DELETE("/:id", orderHandler.CancelOrder)
+		}
+
+		// Trades
+		trades := api.Group("/trades")
+		{
+			trades.GET("/", orderHandler.GetTrades)
 		}
 
 		// Strategies
 		strategies := api.Group("/strategies")
 		{
-			strategies.GET("/", handlers.GetStrategies)
-			strategies.POST("/", handlers.CreateStrategy)
-			strategies.GET("/:id", handlers.GetStrategy)
-			strategies.PUT("/:id", handlers.UpdateStrategy)
-			strategies.DELETE("/:id", handlers.DeleteStrategy)
+			strategies.GET("/", strategyHandler.GetStrategies)
+			strategies.POST("/", strategyHandler.CreateStrategy)
+			strategies.GET("/:id", strategyHandler.GetStrategy)
+			strategies.PUT("/:id", strategyHandler.UpdateStrategy)
+			strategies.DELETE("/:id", strategyHandler.DeleteStrategy)
+			strategies.GET("/:id/versions", strategyHandler.GetStrategyVersions)
+			strategies.POST("/:id/versions", strategyHandler.CreateStrategyVersion)
 		}
 
 		// Backtests
 		backtests := api.Group("/backtests")
 		{
-			backtests.GET("/", handlers.GetBacktests)
-			backtests.POST("/", handlers.CreateBacktest)
-			backtests.GET("/:id", handlers.GetBacktest)
-			backtests.DELETE("/:id", handlers.DeleteBacktest)
+			backtests.GET("/", backtestHandler.GetBacktests)
+			backtests.POST("/", backtestHandler.CreateBacktest)
+			backtests.GET("/:id", backtestHandler.GetBacktest)
+			backtests.DELETE("/:id", backtestHandler.DeleteBacktest)
+			backtests.POST("/:id/cancel", backtestHandler.CancelBacktest)
 		}
 
 		// Universe
 		universe := api.Group("/universe")
 		{
-			universe.GET("/", handlers.GetUniverse)
-			universe.POST("/", handlers.AddSymbol)
-			universe.DELETE("/:symbol", handlers.RemoveSymbol)
+			universe.GET("/", universeHandler.GetUniverse)
+			universe.POST("/", universeHandler.AddSymbol)
+			universe.DELETE("/:symbol", universeHandler.RemoveSymbol)
+			universe.POST("/bulk", universeHandler.BulkAddSymbols)
 		}
 
 		// Audit traces

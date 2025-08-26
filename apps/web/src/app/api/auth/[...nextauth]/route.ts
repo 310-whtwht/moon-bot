@@ -1,53 +1,88 @@
-import NextAuth from "next-auth"
-import CredentialsProvider from "next-auth/providers/credentials"
+import NextAuth from 'next-auth'
+import { NextAuthOptions } from 'next-auth'
+import CredentialsProvider from 'next-auth/providers/credentials'
+import { compare } from 'bcryptjs'
 
-const handler = NextAuth({
+export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
-      name: "credentials",
+      name: 'credentials',
       credentials: {
-        email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" }
+        email: { label: 'Email', type: 'email' },
+        password: { label: 'Password', type: 'password' },
+        totp: { label: '2FA Code', type: 'text' }
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
           return null
         }
 
-        // TODO: Implement actual user authentication against database
-        // This is a placeholder for demo purposes
-        const user = {
-          id: "1",
-          email: credentials.email,
-          name: "Demo User",
-        }
+        try {
+          // TODO: Replace with actual database lookup
+          // For now, using mock user data
+          const mockUser = {
+            id: '1',
+            email: 'admin@example.com',
+            name: 'Admin User',
+            password: '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj4tbQJELpKi', // 'password123'
+            totpSecret: 'JBSWY3DPEHPK3PXP', // Mock TOTP secret
+            role: 'admin'
+          }
 
-        // TODO: Verify password against database
-        // For demo, accept any password
-        return user
+          if (credentials.email !== mockUser.email) {
+            return null
+          }
+
+          const isValidPassword = await compare(credentials.password, mockUser.password)
+          if (!isValidPassword) {
+            return null
+          }
+
+          // TODO: Implement TOTP verification
+          // For now, skip 2FA for development
+          if (credentials.totp && credentials.totp !== '123456') {
+            return null
+          }
+
+          return {
+            id: mockUser.id,
+            email: mockUser.email,
+            name: mockUser.name,
+            role: mockUser.role
+          }
+        } catch (error) {
+          console.error('Auth error:', error)
+          return null
+        }
       }
     })
   ],
   session: {
-    strategy: "jwt",
+    strategy: 'jwt',
+    maxAge: 24 * 60 * 60, // 24 hours
   },
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.id = user.id
+        token.role = user.role
       }
       return token
     },
     async session({ session, token }) {
       if (token && session.user) {
-        session.user.id = token.id as string
+        session.user.id = token.sub
+        session.user.role = token.role
       }
       return session
-    },
+    }
   },
   pages: {
-    signIn: "/auth/signin",
+    signIn: '/auth/signin',
+    error: '/auth/error',
   },
-})
+  secret: process.env.NEXTAUTH_SECRET || 'your-secret-key',
+}
+
+const handler = NextAuth(authOptions)
 
 export { handler as GET, handler as POST }
