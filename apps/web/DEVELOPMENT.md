@@ -1,0 +1,190 @@
+# 開発ガイド
+
+## 概要
+
+このプロジェクトは、TypeScript、ESLint、Prettierを使用して厳格なコード品質管理を行っています。
+
+## 設定内容
+
+### TypeScript設定 (`tsconfig.json`)
+
+- `strict: true` - 厳格な型チェックを有効化
+- `noImplicitAny: true` - 暗黙的なany型を禁止
+- `noUnusedLocals: true` - 未使用のローカル変数を禁止
+- `noUnusedParameters: true` - 未使用のパラメータを禁止
+- `exactOptionalPropertyTypes: true` - オプショナルプロパティの厳密な型チェック
+- `noUncheckedIndexedAccess: true` - インデックスアクセスの安全性チェック
+
+### ESLint設定 (`eslint.config.mjs`)
+
+#### TypeScript関連ルール
+- `@typescript-eslint/no-explicit-any` - any型の使用を禁止
+- `@typescript-eslint/no-unused-vars` - 未使用変数を禁止
+- `@typescript-eslint/no-empty-object-type` - 空のオブジェクト型を禁止
+- `@typescript-eslint/prefer-nullish-coalescing` - nullish coalescing演算子の使用を推奨
+- `@typescript-eslint/prefer-optional-chain` - オプショナルチェーンの使用を推奨
+
+#### React関連ルール
+- `react-hooks/exhaustive-deps` - useEffectの依存配列の完全性チェック
+- `react/no-unescaped-entities` - JSX内のエスケープされていない文字を禁止
+- `react/jsx-no-useless-fragment` - 不要なフラグメントを禁止
+
+#### その他のルール
+- `no-console` - console.logの使用を警告（開発時のみ）
+- `no-alert` - alert/confirmの使用を警告
+- `prefer-const` - constの使用を推奨
+- `no-var` - varの使用を禁止
+
+### Prettier設定 (`.prettierrc`)
+
+- `semi: true` - セミコロンを必須
+- `singleQuote: true` - シングルクォートを使用
+- `printWidth: 80` - 行の最大幅を80文字
+- `tabWidth: 2` - インデントを2スペース
+- `trailingComma: "es5"` - ES5互換のトレイリングカンマ
+
+## 使用可能なスクリプト
+
+```bash
+# 型チェック
+npm run type-check
+
+# ESLintチェック
+npm run lint
+
+# ESLint自動修正
+npm run lint:fix
+
+# Prettierフォーマットチェック
+npm run format:check
+
+# Prettier自動フォーマット
+npm run format
+
+# すべてのチェックを実行
+npm run check-all
+
+# すべての修正を実行
+npm run fix-all
+```
+
+## 開発ワークフロー
+
+### 1. 新機能開発時
+
+```bash
+# 開発サーバー起動
+npm run dev
+
+# 別ターミナルで型チェックとリントを監視
+npm run check-all
+```
+
+### 2. コミット前
+
+```bash
+# すべてのチェックを実行
+npm run check-all
+
+# エラーがある場合は自動修正を実行
+npm run fix-all
+```
+
+### 3. プルリクエスト作成前
+
+```bash
+# ビルドテスト
+npm run build
+```
+
+## よくあるエラーと対処法
+
+### 1. any型エラー
+
+```typescript
+// ❌ 悪い例
+const data: any = response.json();
+
+// ✅ 良い例
+interface ApiResponse {
+  id: number;
+  name: string;
+}
+const data: ApiResponse = response.json();
+```
+
+### 2. 未使用変数エラー
+
+```typescript
+// ❌ 悪い例
+import { Button, Card, Badge } from '@/components/ui';
+// Badgeが使用されていない
+
+// ✅ 良い例
+import { Button, Card } from '@/components/ui';
+```
+
+### 3. useEffect依存配列エラー
+
+```typescript
+// ❌ 悪い例
+useEffect(() => {
+  fetchData();
+}, []); // fetchDataが依存配列に含まれていない
+
+// ✅ 良い例
+const fetchData = useCallback(async () => {
+  // データ取得処理
+}, []);
+
+useEffect(() => {
+  fetchData();
+}, [fetchData]);
+```
+
+### 4. JSXエスケープエラー
+
+```tsx
+// ❌ 悪い例
+<p>Don't forget to save your work!</p>
+
+// ✅ 良い例
+<p>Don&apos;t forget to save your work!</p>
+```
+
+## CI/CD
+
+GitHub Actionsで以下のチェックが自動実行されます：
+
+1. TypeScript型チェック
+2. ESLintチェック
+3. Prettierフォーマットチェック
+4. ビルドテスト
+
+mainブランチへのマージ時は、Vercelへの自動デプロイも実行されます。
+
+## トラブルシューティング
+
+### TypeScriptバージョン警告
+
+現在使用しているTypeScript 5.9.2は@typescript-eslintで正式にサポートされていませんが、実際の動作には問題ありません。
+
+### Edge Runtime警告
+
+bcryptjsがEdge Runtimeで使用できないという警告が出ますが、これは認証機能でNode.js APIを使用しているためです。本番環境では問題ありません。
+
+## 追加の推奨事項
+
+1. **VSCode拡張機能**
+   - ESLint
+   - Prettier
+   - TypeScript Importer
+   - Error Lens
+
+2. **設定**
+   - 保存時の自動フォーマットを有効化
+   - 保存時の自動リントを有効化
+
+3. **コミットフック**
+   - husky + lint-stagedの導入を検討
+   - コミット前の自動チェック実行
