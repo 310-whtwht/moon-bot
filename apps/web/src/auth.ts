@@ -24,7 +24,7 @@ const authConfig: NextAuthConfig = {
         if (process.env.NODE_ENV === 'development') {
           return {
             id: 'dev-user',
-            email: credentials?.email || 'dev@example.com',
+            email: (credentials?.email as string) || 'dev@example.com',
             name: 'Development User',
             role: 'admin',
           };
