@@ -63,12 +63,15 @@ install-deps: ## Install all dependencies
 	cd apps/web && npm install
 
 db-migrate: ## Run database migrations
-	@echo "Database migrations are handled automatically by Docker init script"
-	@echo "See scripts/init.sql for current schema"
+        @echo "Database migrations and seed data are executed on container startup"
+        @echo "See apps/api/internal/database/migrations for SQL files"
+
+reload: ## Reload database with migrations and seed data
+        docker-compose down -v
+        docker-compose up -d
 
 db-reset: ## Reset database
-	docker-compose down -v
-	docker-compose up -d
+        $(MAKE) reload
 
 format: ## Format code
 	@echo "Formatting Go code..."
