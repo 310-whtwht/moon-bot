@@ -162,7 +162,7 @@ make clean
 
 ### データベースマイグレーション
 
-MySQLコンテナが起動すると、データベーススキーマが自動的に初期化されます。現在のスキーマは `scripts/init.sql` を参照してください。
+MySQLコンテナが起動すると、`apps/api/internal/database/migrations` にあるマイグレーションとシードが自動的に適用されます。
 
 ### 新しいAPIエンドポイントの追加
 

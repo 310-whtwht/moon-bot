@@ -225,7 +225,7 @@ FLUSH PRIVILEGES;
 EXIT;
 
 # スキーマの初期化
-mysql -h <MYSQL_HOST> -u moomoo -p moomoo_trading < scripts/init.sql
+cat apps/api/internal/database/migrations/*.sql | mysql -h <MYSQL_HOST> -u moomoo -p moomoo_trading
 ```
 
 ### 5.5 アプリケーションのビルドとデプロイ
