@@ -1,0 +1,33 @@
+name: Deploy to OCI
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.21'
+  NODE_VERSION: '18'
+  OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
+  OCI_USER: ${{ secrets.OCI_USER }}
+  OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+  OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+  OCI_REGION: ${{ secrets.OCI_REGION }}
+  OCI_DEPLOY_PIPELINE_ID: ${{ secrets.OCI_DEPLOY_PIPELINE_ID }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up OCI CLI
+        uses: oracle-actions/setup-oci-cli@v1
+        with:
+          tenancy: ${{ env.OCI_TENANCY }}
+          user: ${{ env.OCI_USER }}
+          fingerprint: ${{ env.OCI_FINGERPRINT }}
+          region: ${{ env.OCI_REGION }}
+          key: ${{ env.OCI_PRIVATE_KEY }}
+      - name: Deploy to OCI
+        run: |
+          oci devops deploy-pipeline run create --deploy-pipeline-id $OCI_DEPLOY_PIPELINE_ID --display-name github-actions
