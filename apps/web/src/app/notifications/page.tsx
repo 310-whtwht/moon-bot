@@ -242,53 +242,53 @@ export default function NotificationsPage() {
     <div className="container mx-auto p-6">
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-3xl font-bold">Notifications</h1>
+          <h1 className="text-3xl font-bold">通知</h1>
           <p className="text-muted-foreground">
-            Manage your notification preferences and view alerts
+            通知設定を管理し、アラートを確認します
           </p>
         </div>
         <div className="flex gap-2">
           {unreadCount > 0 && (
-            <Button variant="outline" onClick={markAllAsRead}>
-              Mark All as Read
-            </Button>
+              <Button variant="outline" onClick={markAllAsRead}>
+                すべて既読にする
+              </Button>
           )}
         </div>
       </div>
 
       <Tabs defaultValue="notifications" className="w-full">
         <TabsList>
-          <TabsTrigger value="notifications">
-            Notifications
+            <TabsTrigger value="notifications">
+              通知
             {unreadCount > 0 && (
               <Badge variant="destructive" className="ml-2">
                 {unreadCount}
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
+            <TabsTrigger value="settings">設定</TabsTrigger>
         </TabsList>
 
         <TabsContent value="notifications" className="mt-6">
           <Card>
             <CardHeader>
-              <CardTitle>Recent Notifications</CardTitle>
+              <CardTitle>最近の通知</CardTitle>
               <CardDescription>
                 {unreadCount > 0
-                  ? `${unreadCount} unread notifications`
-                  : 'All notifications read'}
+                  ? `${unreadCount} 件の未読通知`
+                  : 'すべての通知は既読です'}
               </CardDescription>
             </CardHeader>
             <CardContent>
               {notifications.length === 0 ? (
                 <div className="text-center py-8">
                   <Bell className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">
-                    No notifications
-                  </h3>
-                  <p className="text-muted-foreground">
-                    You&apos;re all caught up!
-                  </p>
+                    <h3 className="text-lg font-semibold mb-2">
+                      通知はありません
+                    </h3>
+                    <p className="text-muted-foreground">
+                      すべての通知を確認しました
+                    </p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -324,7 +324,7 @@ export default function NotificationsPage() {
                                   variant="default"
                                   className="bg-blue-600"
                                 >
-                                  New
+                                  新着
                                 </Badge>
                               )}
                             </div>
@@ -345,7 +345,7 @@ export default function NotificationsPage() {
                               size="sm"
                               onClick={() => markAsRead(notification.id)}
                             >
-                              Mark Read
+                                既読にする
                             </Button>
                           )}
                           <Button
@@ -368,19 +368,19 @@ export default function NotificationsPage() {
 
         <TabsContent value="settings" className="mt-6">
           <div className="grid gap-6 md:grid-cols-2">
-            {/* Notification Channels */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Notification Channels</CardTitle>
-                <CardDescription>
-                  Choose how you want to receive notifications
-                </CardDescription>
+              {/* Notification Channels */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>通知チャネル</CardTitle>
+                  <CardDescription>
+                    通知の受け取り方法を選択してください
+                  </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Mail className="w-4 h-4" />
-                    <Label htmlFor="email">Email Notifications</Label>
+                      <Label htmlFor="email">メール通知</Label>
                   </div>
                   <Switch
                     id="email"
@@ -393,7 +393,7 @@ export default function NotificationsPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <MessageSquare className="w-4 h-4" />
-                    <Label htmlFor="slack">Slack Notifications</Label>
+                      <Label htmlFor="slack">Slack通知</Label>
                   </div>
                   <Switch
                     id="slack"
@@ -406,7 +406,7 @@ export default function NotificationsPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Settings className="w-4 h-4" />
-                    <Label htmlFor="webhook">Webhook Notifications</Label>
+                      <Label htmlFor="webhook">Webhook通知</Label>
                   </div>
                   <Switch
                     id="webhook"
@@ -419,19 +419,19 @@ export default function NotificationsPage() {
               </CardContent>
             </Card>
 
-            {/* Notification Categories */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Notification Categories</CardTitle>
-                <CardDescription>
-                  Select which types of notifications to receive
-                </CardDescription>
+              {/* Notification Categories */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>通知カテゴリ</CardTitle>
+                  <CardDescription>
+                    受け取る通知の種類を選択してください
+                  </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Zap className="w-4 h-4" />
-                    <Label htmlFor="system">System Notifications</Label>
+                      <Label htmlFor="system">システム通知</Label>
                   </div>
                   <Switch
                     id="system"
@@ -447,7 +447,7 @@ export default function NotificationsPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <DollarSign className="w-4 h-4" />
-                    <Label htmlFor="trading">Trading Notifications</Label>
+                      <Label htmlFor="trading">取引通知</Label>
                   </div>
                   <Switch
                     id="trading"
@@ -463,7 +463,7 @@ export default function NotificationsPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Shield className="w-4 h-4" />
-                    <Label htmlFor="security">Security Notifications</Label>
+                      <Label htmlFor="security">セキュリティ通知</Label>
                   </div>
                   <Switch
                     id="security"
@@ -479,9 +479,9 @@ export default function NotificationsPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <BarChart3 className="w-4 h-4" />
-                    <Label htmlFor="performance">
-                      Performance Notifications
-                    </Label>
+                      <Label htmlFor="performance">
+                        パフォーマンス通知
+                      </Label>
                   </div>
                   <Switch
                     id="performance"
@@ -500,19 +500,19 @@ export default function NotificationsPage() {
               </CardContent>
             </Card>
 
-            {/* Priority Levels */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Priority Levels</CardTitle>
-                <CardDescription>
-                  Choose which priority levels to receive
-                </CardDescription>
+              {/* Priority Levels */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>優先度</CardTitle>
+                  <CardDescription>
+                    受け取る優先度を選択してください
+                  </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Badge className="bg-red-100 text-red-800">High</Badge>
-                    <Label htmlFor="high">High Priority</Label>
+                      <Badge className="bg-red-100 text-red-800">高</Badge>
+                      <Label htmlFor="high">高優先度</Label>
                   </div>
                   <Switch
                     id="high"
@@ -527,10 +527,10 @@ export default function NotificationsPage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Badge className="bg-yellow-100 text-yellow-800">
-                      Medium
-                    </Badge>
-                    <Label htmlFor="medium">Medium Priority</Label>
+                      <Badge className="bg-yellow-100 text-yellow-800">
+                        中
+                      </Badge>
+                      <Label htmlFor="medium">中優先度</Label>
                   </div>
                   <Switch
                     id="medium"
@@ -545,8 +545,8 @@ export default function NotificationsPage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Badge className="bg-green-100 text-green-800">Low</Badge>
-                    <Label htmlFor="low">Low Priority</Label>
+                      <Badge className="bg-green-100 text-green-800">低</Badge>
+                      <Label htmlFor="low">低優先度</Label>
                   </div>
                   <Switch
                     id="low"
@@ -562,14 +562,14 @@ export default function NotificationsPage() {
               </CardContent>
             </Card>
 
-            {/* Webhook Configuration */}
-            {settings.webhook && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Webhook Configuration</CardTitle>
-                  <CardDescription>
-                    Configure webhook endpoint for notifications
-                  </CardDescription>
+              {/* Webhook Configuration */}
+              {settings.webhook && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Webhook設定</CardTitle>
+                    <CardDescription>
+                      通知用のWebhookエンドポイントを設定します
+                    </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div>
@@ -580,13 +580,13 @@ export default function NotificationsPage() {
                     />
                   </div>
                   <div>
-                    <Label htmlFor="webhook-secret">
-                      Secret Key (Optional)
-                    </Label>
+                      <Label htmlFor="webhook-secret">
+                        シークレットキー（任意）
+                      </Label>
                     <Input
                       id="webhook-secret"
                       type="password"
-                      placeholder="Enter secret key for webhook authentication"
+                        placeholder="Webhook認証用のシークレットキーを入力してください"
                     />
                   </div>
                 </CardContent>
