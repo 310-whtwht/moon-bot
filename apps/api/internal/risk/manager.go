@@ -12,47 +12,57 @@ import (
 
 // RiskManager manages risk for trading strategies
 type RiskManager struct {
-	config     *RiskConfig
-	positions  map[string]*Position
-	circuits   map[string]*CircuitBreaker
-	mu         sync.RWMutex
+	config              *RiskConfig
+	positions           map[string]*Position
+	circuits            map[string]*CircuitBreaker
+	mu                  sync.RWMutex
+	dailyLoss           float64
+	weeklyLoss          float64
+	lastDailyReset      time.Time
+	lastWeeklyResetYear int
+	lastWeeklyResetWeek int
 }
 
 // RiskConfig contains risk management configuration
 type RiskConfig struct {
-	MaxPositionSize    float64 `json:"max_position_size"`    // Maximum position size as percentage of account
-	MaxDailyLoss       float64 `json:"max_daily_loss"`       // Maximum daily loss as percentage of account
-	MaxWeeklyLoss      float64 `json:"max_weekly_loss"`      // Maximum weekly loss as percentage of account
-	MaxDrawdown        float64 `json:"max_drawdown"`         // Maximum drawdown as percentage of account
-	MaxConcurrentPositions int `json:"max_concurrent_positions"` // Maximum number of concurrent positions
-	ATRRiskPerTrade    float64 `json:"atr_risk_per_trade"`   // Risk per trade as percentage (0.25%)
+	MaxPositionSize        float64 `json:"max_position_size"`        // Maximum position size as percentage of account
+	MaxDailyLoss           float64 `json:"max_daily_loss"`           // Maximum daily loss as percentage of account
+	MaxWeeklyLoss          float64 `json:"max_weekly_loss"`          // Maximum weekly loss as percentage of account
+	MaxDrawdown            float64 `json:"max_drawdown"`             // Maximum drawdown as percentage of account
+	MaxConcurrentPositions int     `json:"max_concurrent_positions"` // Maximum number of concurrent positions
+	ATRRiskPerTrade        float64 `json:"atr_risk_per_trade"`       // Risk per trade as percentage (0.25%)
 }
 
 // Position represents a trading position
 type Position struct {
-	Symbol     string    `json:"symbol"`
-	Quantity   float64   `json:"quantity"`
-	AvgPrice   float64   `json:"avg_price"`
-	Side       string    `json:"side"` // "LONG" or "SHORT"
-	OpenedAt   time.Time `json:"opened_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	Symbol    string    `json:"symbol"`
+	Quantity  float64   `json:"quantity"`
+	AvgPrice  float64   `json:"avg_price"`
+	Side      string    `json:"side"` // "LONG" or "SHORT"
+	OpenedAt  time.Time `json:"opened_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // CircuitBreaker represents a circuit breaker for risk management
 type CircuitBreaker struct {
-	Symbol     string    `json:"symbol"`
-	Type       string    `json:"type"` // "LOSS_LIMIT", "DRAWDOWN", "VOLATILITY"
-	Triggered  bool      `json:"triggered"`
+	Symbol      string    `json:"symbol"`
+	Type        string    `json:"type"` // "LOSS_LIMIT", "DRAWDOWN", "VOLATILITY"
+	Triggered   bool      `json:"triggered"`
 	TriggeredAt time.Time `json:"triggered_at"`
-	Reason     string    `json:"reason"`
+	Reason      string    `json:"reason"`
 }
 
 // NewRiskManager creates a new risk manager
 func NewRiskManager(config *RiskConfig) *RiskManager {
+	now := time.Now()
+	year, week := now.ISOWeek()
 	return &RiskManager{
-		config:    config,
-		positions: make(map[string]*Position),
-		circuits:  make(map[string]*CircuitBreaker),
+		config:              config,
+		positions:           make(map[string]*Position),
+		circuits:            make(map[string]*CircuitBreaker),
+		lastDailyReset:      now,
+		lastWeeklyResetYear: year,
+		lastWeeklyResetWeek: week,
 	}
 }
 
@@ -95,7 +105,7 @@ func (rm *RiskManager) checkPositionSizeLimit(order *broker.Order, accountBalanc
 	positionSizePercent := (orderValue / accountBalance) * 100
 
 	if positionSizePercent > rm.config.MaxPositionSize {
-		return fmt.Errorf("position size %.2f%% exceeds limit %.2f%%", 
+		return fmt.Errorf("position size %.2f%% exceeds limit %.2f%%",
 			positionSizePercent, rm.config.MaxPositionSize)
 	}
 
@@ -105,7 +115,7 @@ func (rm *RiskManager) checkPositionSizeLimit(order *broker.Order, accountBalanc
 // checkConcurrentPositionsLimit checks if adding this order would exceed concurrent position limits
 func (rm *RiskManager) checkConcurrentPositionsLimit(order *broker.Order) error {
 	currentPositions := len(rm.positions)
-	
+
 	// If this is a new position (not closing an existing one)
 	if _, exists := rm.positions[order.Symbol]; !exists {
 		if currentPositions >= rm.config.MaxConcurrentPositions {
@@ -125,15 +135,42 @@ func (rm *RiskManager) checkCircuitBreakers(symbol string) error {
 	return nil
 }
 
+// RecordPnL records realized profit and loss, updating loss counters only when
+// the PnL represents a loss. Profits are ignored for drawdown calculations.
+func (rm *RiskManager) RecordPnL(pnl float64) {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	rm.resetLossCountersIfNeeded(time.Now())
+	if pnl < 0 {
+		loss := -pnl
+		rm.dailyLoss += loss
+		rm.weeklyLoss += loss
+	}
+}
+
+// resetLossCountersIfNeeded resets daily and weekly loss counters when period changes
+func (rm *RiskManager) resetLossCountersIfNeeded(now time.Time) {
+	if now.YearDay() != rm.lastDailyReset.YearDay() || now.Year() != rm.lastDailyReset.Year() {
+		rm.dailyLoss = 0
+		rm.lastDailyReset = now
+	}
+
+	year, week := now.ISOWeek()
+	if year != rm.lastWeeklyResetYear || week != rm.lastWeeklyResetWeek {
+		rm.weeklyLoss = 0
+		rm.lastWeeklyResetYear = year
+		rm.lastWeeklyResetWeek = week
+	}
+}
+
 // checkDailyLossLimit checks if daily loss limit is exceeded
 func (rm *RiskManager) checkDailyLossLimit(accountBalance float64) error {
-	// TODO: Implement actual daily loss calculation
-	// This is a placeholder
-	dailyLoss := 0.0 // Calculate actual daily loss
-	dailyLossPercent := (dailyLoss / accountBalance) * 100
+	rm.resetLossCountersIfNeeded(time.Now())
+	dailyLossPercent := (rm.dailyLoss / accountBalance) * 100
 
 	if dailyLossPercent > rm.config.MaxDailyLoss {
-		return fmt.Errorf("daily loss %.2f%% exceeds limit %.2f%%", 
+		return fmt.Errorf("daily loss %.2f%% exceeds limit %.2f%%",
 			dailyLossPercent, rm.config.MaxDailyLoss)
 	}
 
@@ -142,13 +179,11 @@ func (rm *RiskManager) checkDailyLossLimit(accountBalance float64) error {
 
 // checkWeeklyLossLimit checks if weekly loss limit is exceeded
 func (rm *RiskManager) checkWeeklyLossLimit(accountBalance float64) error {
-	// TODO: Implement actual weekly loss calculation
-	// This is a placeholder
-	weeklyLoss := 0.0 // Calculate actual weekly loss
-	weeklyLossPercent := (weeklyLoss / accountBalance) * 100
+	rm.resetLossCountersIfNeeded(time.Now())
+	weeklyLossPercent := (rm.weeklyLoss / accountBalance) * 100
 
 	if weeklyLossPercent > rm.config.MaxWeeklyLoss {
-		return fmt.Errorf("weekly loss %.2f%% exceeds limit %.2f%%", 
+		return fmt.Errorf("weekly loss %.2f%% exceeds limit %.2f%%",
 			weeklyLossPercent, rm.config.MaxWeeklyLoss)
 	}
 
@@ -198,11 +233,11 @@ func (rm *RiskManager) TriggerCircuitBreaker(symbol, circuitType, reason string)
 	defer rm.mu.Unlock()
 
 	rm.circuits[symbol] = &CircuitBreaker{
-		Symbol:     symbol,
-		Type:       circuitType,
-		Triggered:  true,
+		Symbol:      symbol,
+		Type:        circuitType,
+		Triggered:   true,
 		TriggeredAt: time.Now(),
-		Reason:     reason,
+		Reason:      reason,
 	}
 
 	log.Printf("Circuit breaker triggered for %s: %s - %s", symbol, circuitType, reason)
@@ -247,10 +282,10 @@ func (rm *RiskManager) GetCircuitBreakers() map[string]*CircuitBreaker {
 func (rm *RiskManager) CalculatePositionSize(symbol string, atr float64, accountBalance float64) float64 {
 	// Calculate risk amount based on ATR
 	riskAmount := accountBalance * (rm.config.ATRRiskPerTrade / 100)
-	
+
 	// Calculate position size based on ATR
 	positionSize := riskAmount / atr
-	
+
 	return positionSize
 }
 
