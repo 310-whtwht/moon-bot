@@ -1,6 +1,6 @@
 # Moomoo トレーディングシステム
 
-Next.js、Go、MySQLを使用した高度なアルゴリズム取引プラットフォーム。
+Next.js、Go、MySQL を使用した高度なアルゴリズム取引プラットフォーム。
 
 ## アーキテクチャ
 
@@ -8,7 +8,7 @@ Next.js、Go、MySQLを使用した高度なアルゴリズム取引プラット
 
 - `apps/web` - Next.js フロントエンドアプリケーション
 - `apps/api` - Go REST API サーバー
-- `apps/bot` - 戦略実行用のGoワーカー
+- `apps/bot` - 戦略実行用の Go ワーカー
 - `packages/shared` - 共有ユーティリティとタイプ
 
 ## クイックスタート
@@ -23,24 +23,33 @@ Next.js、Go、MySQLを使用した高度なアルゴリズム取引プラット
 
 ### 開発環境セットアップ
 
-#### 方法1: Makefile を使用（推奨）
+#### 方法 1: Makefile を使用（推奨）
 
-1. **依存関係のインストール**
+1. **環境構築（推奨）**
+
    ```bash
-   make install-deps
+   # クイックセットアップ（依存関係インストール + Docker起動）
+   make setup
+
+   # 完全セットアップ（依存関係インストール + Docker起動 + アプリケーションビルド）
+   make setup BUILD=1
    ```
 
 2. **開発環境の起動**
+
    ```bash
    make dev
    ```
+
    これにより以下が自動的に起動します：
+
    - MySQL データベース
    - Redis
    - Web アプリケーション（http://localhost:3001）
    - API サーバー（http://localhost:8081）
 
 3. **個別サービスの起動（必要に応じて）**
+
    ```bash
    # API サーバーのみ起動
    make api-dev
@@ -52,20 +61,23 @@ Next.js、Go、MySQLを使用した高度なアルゴリズム取引プラット
    make bot-dev
    ```
 
-#### 方法2: 手動起動
+#### 方法 2: 手動起動
 
 1. **インフラストラクチャの起動**
+
    ```bash
    docker compose up -d
    ```
 
 2. **API サーバーの起動**
+
    ```bash
    cd apps/api
    go run main.go
    ```
 
 3. **Web アプリケーションの起動**
+
    ```bash
    cd apps/web
    npm run dev
@@ -82,6 +94,13 @@ Next.js、Go、MySQLを使用した高度なアルゴリズム取引プラット
 ```bash
 # ヘルプ表示
 make help
+
+# 環境構築
+make setup          # クイックセットアップ（依存関係インストール + Docker起動）
+make setup BUILD=1  # 完全セットアップ（依存関係インストール + Docker起動 + ビルド）
+
+# 依存関係のインストール
+make install-deps
 
 # 全アプリケーションのビルド
 make build
@@ -108,20 +127,23 @@ make clean
 ## 機能
 
 ### Phase 1: 基盤（完了）
+
 - [x] モノレポ構成
 - [x] Docker 開発環境
 - [x] MySQL データベーススキーマ
-- [x] 基本的なAPIエンドポイント
+- [x] 基本的な API エンドポイント
 - [x] Next.js フロントエンドセットアップ
 - [x] Go ワーカーフレームワーク
 
 ### Phase 2: コア機能（完了）
+
 - [x] Moomoo ブローカーアダプター
 - [x] Starlark を使用した戦略エンジン
 - [x] リスク管理システム
 - [x] バックテストエンジン
 
 ### Phase 3: 高度な機能（完了）
+
 - [x] リアルタイム監視
 - [x] ペーパートレーディングワークフロー
 - [x] パフォーマンス分析
@@ -140,6 +162,7 @@ make clean
 ## 環境変数
 
 ### データベース
+
 - `DB_HOST` - MySQL ホスト（デフォルト: localhost）
 - `DB_PORT` - MySQL ポート（デフォルト: 3306）
 - `DB_USER` - MySQL ユーザー（デフォルト: moomoo）
@@ -147,24 +170,26 @@ make clean
 - `DB_NAME` - MySQL データベース（デフォルト: moomoo_trading）
 
 ### Redis
+
 - `REDIS_HOST` - Redis ホスト（デフォルト: localhost）
 - `REDIS_PORT` - Redis ポート（デフォルト: 6379）
 - `REDIS_PASSWORD` - Redis パスワード（デフォルト: 空）
 
 ### Moomoo
+
 - `MOOMOO_HOST` - Moomoo OpenD ホスト
 - `MOOMOO_USERNAME` - Moomoo ユーザー名
 - `MOOMOO_PASSWORD` - Moomoo パスワード
-- `MOOMOO_APP_ID` - Moomoo アプリID
+- `MOOMOO_APP_ID` - Moomoo アプリ ID
 - `MOOMOO_APP_KEY` - Moomoo アプリキー
 
 ## 開発
 
 ### データベースマイグレーション
 
-MySQLコンテナが起動すると、`apps/api/internal/database/migrations` にあるマイグレーションとシードが自動的に適用されます。
+MySQL コンテナが起動すると、`apps/api/internal/database/migrations` にあるマイグレーションとシードが自動的に適用されます。
 
-### 新しいAPIエンドポイントの追加
+### 新しい API エンドポイントの追加
 
 1. `apps/api/internal/handlers/` にハンドラー関数を追加
 2. `apps/api/main.go` でルートを登録
@@ -172,7 +197,7 @@ MySQLコンテナが起動すると、`apps/api/internal/database/migrations` �
 
 ### 戦略開発
 
-戦略はStarlarkで記述され、データベースに保存されます。Botワーカーは市場イベントに基づいて戦略を実行します。
+戦略は Starlark で記述され、データベースに保存されます。Bot ワーカーは市場イベントに基づいて戦略を実行します。
 
 ## デプロイ
 
@@ -219,6 +244,7 @@ vercel
 📖 **[OCI デプロイメントガイド](./docs/oci-deployment-guide.md)**
 
 このガイドには以下が含まれています：
+
 - OCI プロジェクトの初期設定
 - ネットワーク・セキュリティ設定
 - データベース・Redis の設定
@@ -297,7 +323,7 @@ tail -f logs/app.log
 
 ### 監査
 
-- トレードID 鎖状トレース
+- トレード ID 鎖状トレース
 - 完全な監査ログ
 - 可視化ツール
 
@@ -321,6 +347,7 @@ tail -f logs/app.log
 ### よくある問題
 
 1. **データベース接続エラー**
+
    ```bash
    # MySQL の状態確認
    docker-compose ps mysql
@@ -328,6 +355,7 @@ tail -f logs/app.log
    ```
 
 2. **Redis 接続エラー**
+
    ```bash
    # Redis の状態確認
    docker-compose ps redis
@@ -375,6 +403,7 @@ MIT License
 ## 更新履歴
 
 ### v1.0.0 (2024-01-15)
+
 - 初期リリース
 - 基本的な取引機能
 - 戦略エンジン
