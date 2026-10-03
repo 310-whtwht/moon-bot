@@ -161,18 +161,27 @@ make clean
 
 ## 環境変数
 
+秘密情報はリポジトリに含めず、ルートの `.env` で管理します（git 管理外）。
+`make setup` または `make env` で `.env.example` から `.env` を作成し、`NEXTAUTH_SECRET` を自動生成します。
+DB パスワードなどは `.env` を編集して設定してください。
+
+> 既存の MySQL ボリューム（旧設定のパスワード `moomoo123` で初期化済み）を使い続ける場合は、
+> `.env` の `DB_PASSWORD` を旧パスワードに合わせるか、`make reload` でボリュームを作り直してください。
+
 ### データベース
 
 - `DB_HOST` - MySQL ホスト（デフォルト: localhost）
-- `DB_PORT` - MySQL ポート（デフォルト: 3306）
+- `DB_PORT` - MySQL ポート（デフォルト: 3306。ホストから compose の MySQL に繋ぐ場合は 3308）
 - `DB_USER` - MySQL ユーザー（デフォルト: moomoo）
-- `DB_PASSWORD` - MySQL パスワード（デフォルト: moomoo123）
+- `DB_PASSWORD` - MySQL パスワード（必須・デフォルトなし）
+- `MYSQL_ROOT_PASSWORD` - MySQL root パスワード（docker compose 用・必須）
+- `AUTO_MIGRATE` - `true` なら API 起動時に未適用のマイグレーションを適用（compose の api は true）
 - `DB_NAME` - MySQL データベース（デフォルト: moomoo_trading）
 
 ### Redis
 
 - `REDIS_HOST` - Redis ホスト（デフォルト: localhost）
-- `REDIS_PORT` - Redis ポート（デフォルト: 6379）
+- `REDIS_PORT` - Redis ポート（デフォルト: 6379。ホストから compose の Redis に繋ぐ場合は 6380）
 - `REDIS_PASSWORD` - Redis パスワード（デフォルト: 空）
 
 ### Moomoo
@@ -187,7 +196,12 @@ make clean
 
 ### データベースマイグレーション
 
-MySQL コンテナが起動すると、`apps/api/internal/database/migrations` にあるマイグレーションとシードが自動的に適用されます。
+`apps/api/internal/database/migrations` の SQL は API バイナリに埋め込まれ、適用済みのものは `schema_migrations` テーブルで管理されます。
+
+- docker compose の api は起動時に自動適用します（`AUTO_MIGRATE=true`）。
+- ホストから手動で適用する場合は `make migrate` を実行します。
+- 新しいマイグレーションは `007_xxx.sql` のように連番で追加します（適用済みファイルは編集しない）。
+- 旧方式（MySQL の初回起動時に適用）で作られた DB は、初回実行時に 001〜006 を適用済みとして記録します。
 
 ### 新しい API エンドポイントの追加
 

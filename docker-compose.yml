@@ -3,15 +3,14 @@ services:
     image: mysql:8.0
     container_name: moomoo_mysql
     environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: moomoo_trading
-      MYSQL_USER: moomoo
-      MYSQL_PASSWORD: moomoo123
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ${DB_NAME:-moomoo_trading}
+      MYSQL_USER: ${DB_USER:-moomoo}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
     ports:
       - "3308:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./apps/api/internal/database/migrations:/docker-entrypoint-initdb.d
     command: --default-authentication-plugin=mysql_native_password
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
@@ -41,13 +40,14 @@ services:
     environment:
       - DB_HOST=mysql
       - DB_PORT=3306
-      - DB_USER=moomoo
-      - DB_PASSWORD=moomoo123
-      - DB_DATABASE=moomoo_trading
+      - DB_USER=${DB_USER:-moomoo}
+      - DB_PASSWORD=${DB_PASSWORD:?set DB_PASSWORD in .env}
+      - DB_NAME=${DB_NAME:-moomoo_trading}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=
       - PORT=8081
+      - AUTO_MIGRATE=true
     depends_on:
       mysql:
         condition: service_healthy
@@ -68,7 +68,7 @@ services:
     environment:
       - NODE_ENV=development
       - NEXTAUTH_URL=http://localhost:3001
-      - NEXTAUTH_SECRET=your-super-secret-key-change-this-in-production
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:?set NEXTAUTH_SECRET in .env}
       - NEXT_PUBLIC_API_URL=http://localhost:8081
       - NEXTAUTH_URL_INTERNAL=http://moomoo_web:3001
     depends_on:

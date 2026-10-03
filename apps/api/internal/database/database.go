@@ -35,6 +35,20 @@ func NewConnection(cfg config.DatabaseConfig) (*sql.DB, error) {
 	return db, nil
 }
 
+// RunMigrations opens a dedicated multi-statement connection and applies pending migrations.
+func RunMigrations(ctx context.Context, cfg config.DatabaseConfig) error {
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&loc=Local&allowNativePasswords=true&multiStatements=true",
+		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Database)
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return fmt.Errorf("failed to open migration connection: %w", err)
+	}
+	defer db.Close()
+
+	return Migrate(ctx, db)
+}
+
 func NewGormConnection(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&loc=Local&allowNativePasswords=true",
 		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Database)
