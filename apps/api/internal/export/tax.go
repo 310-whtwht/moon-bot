@@ -5,7 +5,6 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/moomoo-trading/api/internal/broker"
 )
@@ -314,12 +313,12 @@ func (te *TaxExporter) ExportForm8949(ctx context.Context, trades []broker.Trade
 			row := []string{
 				"", // 1a - Description of property
 				"", // 1b - Date acquired
-				"", // 2 - Date sold
-				"", // 3 - Proceeds
-				"", // 4 - Cost or other basis
+				trade.TradeTime.Format("2006-01-02"), // 2 - Date sold
+				fmt.Sprintf("%.2f", proceeds), // 3 - Proceeds
+				fmt.Sprintf("%.2f", costBasis), // 4 - Cost or other basis
 				"", // 5 - Code from instructions
 				"", // 6 - Amount of adjustment
-				"", // 7 - Gain or loss
+				fmt.Sprintf("%.2f", gainLoss), // 7 - Gain or loss
 				"", // 8 - Unrealized gain or loss
 				"", // 9 - Basis adjustment
 				"", // 10 - Gain or loss

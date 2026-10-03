@@ -1,4 +1,8 @@
-.PHONY: help dev build test clean docker-up docker-down setup
+.PHONY: help dev build test clean docker-up docker-down setup env migrate
+
+# .env があれば読み込み、ホストで動かすコマンド（api-dev / bot-dev / migrate）に渡す
+-include .env
+export
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -8,7 +12,7 @@ help: ## Show this help message
 
 dev: ## Start development environment
 	@echo "Starting development environment..."
-	docker compose up -d mysql redis web
+	docker compose up -d mysql redis api web
 	@echo "Development environment started!"
 	@echo "API: http://localhost:8081"
 	@echo "Web: http://localhost:3001"
@@ -24,8 +28,10 @@ build: ## Build all applications
 test: ## Run tests
 	@echo "Running API tests..."
 	cd apps/api && go test ./...
-	@echo "Running Web tests..."
-	cd apps/web && npm test
+	@echo "Running Bot tests..."
+	cd apps/bot && go test ./...
+	@echo "Running Web checks..."
+	cd apps/web && npm run type-check
 
 clean: ## Clean build artifacts
 	@echo "Cleaning build artifacts..."
@@ -62,9 +68,17 @@ install-deps: ## Install all dependencies
 	@echo "Installing Node.js dependencies..."
 	cd apps/web && npm install
 
-db-migrate: ## Run database migrations
-	@echo "Database migrations and seed data are executed on container startup"
-	@echo "See apps/api/internal/database/migrations for SQL files"
+env: ## Create .env from .env.example (generates NEXTAUTH_SECRET)
+	@if [ ! -f .env ]; then \
+		cp .env.example .env; \
+		sed -i.bak "s|^NEXTAUTH_SECRET=$$|NEXTAUTH_SECRET=$$(openssl rand -base64 32)|" .env && rm -f .env.bak; \
+		echo "Created .env (edit DB passwords if needed)"; \
+	fi
+
+migrate: ## Apply pending database migrations (host-run, uses .env)
+	cd apps/api && go run . migrate
+
+db-migrate: migrate ## Alias of migrate
 
 reload: ## Reload database with migrations and seed data
 	docker compose down -v
@@ -82,6 +96,7 @@ format: ## Format code
 
 setup: ## Environment setup (install deps, start services, optionally build apps)
 	@echo "🚀 Starting environment setup..."
+	$(MAKE) env
 	@echo "📦 Installing dependencies..."
 	$(MAKE) install-deps
 	@echo "🐳 Starting Docker services..."

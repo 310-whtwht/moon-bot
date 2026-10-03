@@ -18,6 +18,21 @@ func main() {
 	// Load configuration
 	cfg := config.Load()
 
+	// Apply pending migrations: `go run . migrate` runs them and exits,
+	// AUTO_MIGRATE=true runs them before the server starts.
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		if err := database.RunMigrations(context.Background(), cfg.Database); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
+		log.Println("Migrations applied")
+		return
+	}
+	if cfg.AutoMigrate {
+		if err := database.RunMigrations(context.Background(), cfg.Database); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
+	}
+
 	// Initialize database connection
 	db, err := database.NewConnection(cfg.Database)
 	if err != nil {

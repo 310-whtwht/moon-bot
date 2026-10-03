@@ -171,7 +171,7 @@ func (dm *DataManager) DataQualityCheck(ctx context.Context, symbol string, star
 
 	// Check for gaps in data
 	expectedBars := int(endDate.Sub(startDate).Minutes())
-	if len(bars) < expectedBars*0.95 { // Allow 5% missing data
+	if float64(len(bars)) < float64(expectedBars)*0.95 { // Allow 5% missing data
 		report.Issues = append(report.Issues, DataIssue{
 			Type:        "MISSING_DATA",
 			Description: fmt.Sprintf("Expected %d bars, got %d", expectedBars, len(bars)),
