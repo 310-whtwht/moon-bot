@@ -1,4 +1,4 @@
-.PHONY: help dev build test clean docker-up docker-down setup env migrate
+.PHONY: help dev build test clean docker-up docker-down setup env migrate backfill
 
 # .env があれば読み込み、ホストで動かすコマンド（api-dev / bot-dev / migrate）に渡す
 -include .env
@@ -30,6 +30,8 @@ test: ## Run tests
 	cd apps/api && go test ./...
 	@echo "Running Bot tests..."
 	cd apps/bot && go test ./...
+	@echo "Running Core tests..."
+	cd packages/core && go test ./...
 	@echo "Running Web checks..."
 	cd apps/web && npm run type-check
 
@@ -53,6 +55,9 @@ api-dev: ## Start API in development mode
 	@echo "Starting API server..."
 	cd apps/api && go run main.go
 
+backfill: ## Download historical bars from GMO FX (ARGS="-from 2023-10-28 -interval 1h")
+	cd apps/bot && go run . backfill $(ARGS)
+
 web-dev: ## Start Web in development mode
 	@echo "Starting Web application..."
 	cd apps/web && npm run dev
@@ -65,6 +70,7 @@ install-deps: ## Install all dependencies
 	@echo "Installing Go dependencies..."
 	cd apps/api && go mod tidy
 	cd apps/bot && go mod tidy
+	cd packages/core && go mod tidy
 	@echo "Installing Node.js dependencies..."
 	cd apps/web && npm install
 
@@ -91,6 +97,7 @@ format: ## Format code
 	@echo "Formatting Go code..."
 	cd apps/api && go fmt ./...
 	cd apps/bot && go fmt ./...
+	cd packages/core && go fmt ./...
 	@echo "Formatting TypeScript code..."
 	cd apps/web && npm run lint:fix
 

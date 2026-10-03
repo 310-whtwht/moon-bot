@@ -6,9 +6,15 @@ import (
 	"log"
 	"sync"
 	"time"
-
-	"github.com/moomoo-trading/api/internal/broker"
 )
+
+// OrderRequest is the minimal order information the risk checks need.
+// It will be replaced by broker.OpenOrder when risk is reworked in Phase 3.
+type OrderRequest struct {
+	Symbol   string
+	Quantity float64
+	Price    *float64
+}
 
 // RiskManager manages risk for trading strategies
 type RiskManager struct {
@@ -67,7 +73,7 @@ func NewRiskManager(config *RiskConfig) *RiskManager {
 }
 
 // CheckOrderRisk checks if an order meets risk requirements
-func (rm *RiskManager) CheckOrderRisk(ctx context.Context, order *broker.Order, accountBalance float64) error {
+func (rm *RiskManager) CheckOrderRisk(ctx context.Context, order *OrderRequest, accountBalance float64) error {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
@@ -100,7 +106,7 @@ func (rm *RiskManager) CheckOrderRisk(ctx context.Context, order *broker.Order, 
 }
 
 // checkPositionSizeLimit checks if the order size is within limits
-func (rm *RiskManager) checkPositionSizeLimit(order *broker.Order, accountBalance float64) error {
+func (rm *RiskManager) checkPositionSizeLimit(order *OrderRequest, accountBalance float64) error {
 	orderValue := order.Quantity * getOrderPrice(order)
 	positionSizePercent := (orderValue / accountBalance) * 100
 
@@ -113,7 +119,7 @@ func (rm *RiskManager) checkPositionSizeLimit(order *broker.Order, accountBalanc
 }
 
 // checkConcurrentPositionsLimit checks if adding this order would exceed concurrent position limits
-func (rm *RiskManager) checkConcurrentPositionsLimit(order *broker.Order) error {
+func (rm *RiskManager) checkConcurrentPositionsLimit(order *OrderRequest) error {
 	currentPositions := len(rm.positions)
 
 	// If this is a new position (not closing an existing one)
@@ -290,7 +296,7 @@ func (rm *RiskManager) CalculatePositionSize(symbol string, atr float64, account
 }
 
 // getOrderPrice gets the effective price for an order
-func getOrderPrice(order *broker.Order) float64 {
+func getOrderPrice(order *OrderRequest) float64 {
 	if order.Price != nil {
 		return *order.Price
 	}

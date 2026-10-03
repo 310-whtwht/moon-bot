@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/moomoo-trading/bot/internal/backfill"
 	"github.com/moomoo-trading/bot/internal/config"
 	"github.com/moomoo-trading/bot/internal/worker"
 )
@@ -14,6 +15,16 @@ import (
 func main() {
 	// Load configuration
 	cfg := config.Load()
+
+	// Subcommands: `bot backfill [flags]` downloads historical bars and exits.
+	if len(os.Args) > 1 && os.Args[1] == "backfill" {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		if err := backfill.Run(ctx, cfg, os.Args[2:], os.Stdout); err != nil {
+			log.Fatalf("backfill failed: %v", err)
+		}
+		return
+	}
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())

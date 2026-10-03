@@ -63,11 +63,11 @@ apps/web (Next.js)  ──HTTP──▶  apps/api (gin)  ──MySQL/Redis──
                                          ├ paper  (ticker で擬似約定)
                                          └ gmofx  (REST + Private WS)
 
-packages/core (Go module, go.work で共有)
+packages/core (Go module, 各 go.mod の replace で共有)
    broker interface / strategy / risk / backtest / 型定義
 ```
 
-- **packages/core**: api と bot は別の Go モジュールで、`internal` パッケージは他モジュールから import できない。そこで `go.work` で共有モジュールを作り、戦略・リスク・バックテストのコードを両方から使う。README に書かれている `packages/shared` の役割をここで実体化する。
+- **packages/core**: api と bot は別の Go モジュールで、`internal` パッケージは他モジュールから import できない。そこで共有モジュールを作り、各 `go.mod` の `replace` で参照して（`.gitignore` が `go.work` を除外しているため。`cd apps/api && go build` もそのまま使える）、戦略・リスク・バックテストのコードを両方から使う。README に書かれている `packages/shared` の役割をここで実体化する。
 - **足の確定方式**: WebSocket の ticker から自前で足を組み立てない。**確定時刻の数秒後に klines REST で確定足を取得**する。こうすればバックテストと本番で同じデータを使え、組み立て処理のバグも入り込まない。ticker は Paper の約定判定と異常監視にだけ使う。
 - **コスト**: BID と ASK の足を両方保存する。買いは ASK、売りは BID で約定したとみなし、スプレッドを再現する。API 手数料 0.002% もコストに含める。
 
@@ -107,11 +107,11 @@ type Broker interface {
 
 | # | 作業 | 完了条件 |
 |---|---|---|
-| 1-1 | `packages/core` を作成し、`go.work` を設定。既存の `risk`、`backtest` の指標計算を移す。**api と bot の Dockerfile のビルドコンテキストをリポジトリのルートに変更**し、compose も合わせる | api と bot の両方から import でき、`docker compose build` も通る |
+| 1-1 | `packages/core` を作成し、`replace` で参照する。既存の `risk` を移し、moomoo のスタブと未使用の旧パッケージ（strategy / data / backtest）を削除する（0-6 をここで実施）。**api の Dockerfile のビルドコンテキストをルートに変更するのは、api が core を import する Phase 2 で行う** | bot から import でき、CI に core を追加する |
 | 1-2 | `Broker` interface と型（Tick / Bar / Position / Order / Execution）を定義。**複数ブローカーを前提にする**: 数量は decimal で持つ。通貨・取引時間・最小単位は `Instrument` としてブローカーから受け取る。銘柄は `gmo:USD_JPY` のように名前空間付きで表す | interface に FX 固有の型が出てこない |
 | 1-3 | `gmofx` の Public クライアント（`status` / `ticker` / `klines` / `symbols`）と Public WebSocket（ticker、自動再接続つき） | httptest のモックで正常系・異常系をテスト |
 | 1-4 | DB マイグレーション 007: `bars` テーブル（symbol, interval, price_type, ts(UTC), OHLC）、`positions` テーブル（broker_position_id, symbol, side, size, open_price, status）、`orders` に `settle_type` と `broker_position_id` を追加。**`orders` / `positions` / `trades` / `bars` に `broker` と `account_id` の列、`orders` に `strategy_version_id` の列を追加する**（どのロジックが出した注文か追えるようにする）。価格の桁を `DECIMAL(12,5)` に拡張（`orders` / `trades` / `trade_traces`）。seed の銘柄を USD_JPY（`asset_type=forex`, `data_source=gmo`）に差し替える | `make reload` と migrate の両方で通る。Bruno テストも更新する |
-| 1-5 | 過去データ取得コマンド `bot backfill --symbol USD_JPY --interval 1hour --from 2023-10-28`。1日ごとのリクエストを**1回/秒以下に間引き**、途中から再開できるようにする | USD_JPY の1時間足が BID と ASK の両方で揃う。週末以外の欠損がない |
+| 1-5 | 過去データ取得コマンド `bot backfill -symbol USD_JPY -interval 1h -from 2023-10-28`（`make backfill`）。取引日の区切りは 06:00 JST（実データで確認）。1日ごとのリクエストを**1回/秒以下に間引き**、途中から再開できるようにする | USD_JPY の1時間足が BID と ASK の両方で揃う。週末以外の欠損がない |
 | 1-6 | 乱数データ生成（`data/manager.go` の `rand`）を削除 | — |
 
 ### Phase 2 — 戦略とバックテスト（3〜4日）

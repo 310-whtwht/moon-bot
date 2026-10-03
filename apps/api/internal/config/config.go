@@ -9,7 +9,6 @@ type Config struct {
 	AutoMigrate bool
 	Database    DatabaseConfig
 	Redis       RedisConfig
-	Moomoo      MoomooConfig
 }
 
 type DatabaseConfig struct {
@@ -27,14 +26,6 @@ type RedisConfig struct {
 	DB       int
 }
 
-type MoomooConfig struct {
-	Host     string
-	Port     int
-	Username string
-	Password string
-	AppID    string
-	AppKey   string
-}
 
 func Load() *Config {
 	return &Config{
@@ -52,14 +43,6 @@ func Load() *Config {
 			Port:     getEnv("REDIS_PORT", "6379"),
 			Password: getEnv("REDIS_PASSWORD", ""),
 			DB:       0,
-		},
-		Moomoo: MoomooConfig{
-			Host:     getEnv("MOOMOO_HOST", "localhost"),
-			Port:     11111, // Default Futu OpenD port
-			Username: getEnv("MOOMOO_USERNAME", ""),
-			Password: getEnv("MOOMOO_PASSWORD", ""),
-			AppID:    getEnv("MOOMOO_APP_ID", ""),
-			AppKey:   getEnv("MOOMOO_APP_KEY", ""),
 		},
 	}
 }
