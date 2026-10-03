@@ -66,7 +66,14 @@ async function authorizeAdmin(
 }
 
 // Auth.js v5 reads AUTH_SECRET; NEXTAUTH_SECRET is accepted for existing deployments.
-const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
+// Local development (where sign-in is skipped) falls back to a fixed key so
+// `npm run dev` works without an env file; production must set one.
+const secret =
+  process.env.AUTH_SECRET ??
+  process.env.NEXTAUTH_SECRET ??
+  (process.env.NODE_ENV === 'development'
+    ? 'moon-bot-development-only-secret'
+    : undefined);
 
 const authConfig: NextAuthConfig = {
   ...(secret ? { secret } : {}),
