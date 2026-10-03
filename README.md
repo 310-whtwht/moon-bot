@@ -178,6 +178,18 @@ DB パスワードなどは `.env` を編集して設定してください。
 - `AUTO_MIGRATE` - `true` なら API 起動時に未適用のマイグレーションを適用（compose の api は true）
 - `DB_NAME` - MySQL データベース（デフォルト: moomoo_trading）
 
+### 認証（Web）
+
+開発環境（`NODE_ENV=development`）では認証を省略します。本番（Vercel など）では次を設定します。
+
+- `AUTH_SECRET` - セッションの暗号化キー（必須。`openssl rand -base64 32` で生成。旧名の `NEXTAUTH_SECRET` も可）
+- `ADMIN_EMAIL` - 管理者のメールアドレス
+- `ADMIN_PASSWORD_HASH` - パスワードの bcrypt ハッシュ
+- `ADMIN_TOTP_SECRET` - 2FA（TOTP）のシークレット。設定するとログイン時に 6 桁コードが必須になる
+
+`ADMIN_*` の 3 つは `cd apps/web && npm run auth:setup` で生成できます（メールアドレスとパスワードを入力すると、
+ハッシュ・TOTP シークレット・認証アプリ登録用の otpauth URI を表示します。値はどこにも保存されません）。
+
 ### Redis
 
 - `REDIS_HOST` - Redis ホスト（デフォルト: localhost）

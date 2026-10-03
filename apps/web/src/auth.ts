@@ -1,7 +1,8 @@
-import NextAuth from 'next-auth';
+import NextAuth, { CredentialsSignin } from 'next-auth';
 import type { NextAuthConfig } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { compare } from 'bcryptjs';
+import { verifyTotp } from '@/lib/totp';
 
 interface User {
   id: string;
@@ -10,7 +11,65 @@ interface User {
   role: string;
 }
 
+/** Password was correct but the 2FA code is still needed. */
+class TotpRequired extends CredentialsSignin {
+  code = 'totp_required';
+}
+
+/** The 2FA code was wrong or expired. */
+class InvalidTotp extends CredentialsSignin {
+  code = 'invalid_totp';
+}
+
+/**
+ * Single admin user configured through environment variables:
+ *   ADMIN_EMAIL          login email
+ *   ADMIN_PASSWORD_HASH  bcrypt hash of the password (npm run auth:setup)
+ *   ADMIN_TOTP_SECRET    base32 TOTP secret; when set, 2FA is required
+ */
+async function authorizeAdmin(
+  credentials: Partial<Record<'email' | 'password' | 'totp', unknown>>
+): Promise<User | null> {
+  const email = process.env.ADMIN_EMAIL;
+  const passwordHash = process.env.ADMIN_PASSWORD_HASH;
+  const totpSecret = process.env.ADMIN_TOTP_SECRET;
+
+  if (!email || !passwordHash) {
+    console.error(
+      '[auth] ADMIN_EMAIL / ADMIN_PASSWORD_HASH are not set; nobody can sign in'
+    );
+    return null;
+  }
+
+  const inputEmail = String(credentials.email ?? '')
+    .trim()
+    .toLowerCase();
+  const inputPassword = String(credentials.password ?? '');
+  if (inputEmail !== email.toLowerCase() || !inputPassword) {
+    return null;
+  }
+  if (!(await compare(inputPassword, passwordHash))) {
+    return null;
+  }
+
+  if (totpSecret) {
+    const code = String(credentials.totp ?? '').trim();
+    if (!code) {
+      throw new TotpRequired();
+    }
+    if (!(await verifyTotp(totpSecret, code))) {
+      throw new InvalidTotp();
+    }
+  }
+
+  return { id: 'admin', email, name: 'Admin', role: 'admin' };
+}
+
+// Auth.js v5 reads AUTH_SECRET; NEXTAUTH_SECRET is accepted for existing deployments.
+const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
+
 const authConfig: NextAuthConfig = {
+  ...(secret ? { secret } : {}),
   providers: [
     CredentialsProvider({
       name: 'credentials',
@@ -30,40 +89,7 @@ const authConfig: NextAuthConfig = {
           } as User;
         }
 
-        if (!credentials?.email || !credentials?.password) {
-          return null;
-        }
-
-        try {
-          // Mock user authentication - replace with actual database lookup
-          const mockUser = {
-            id: '1',
-            email: 'admin@example.com',
-            password: '$2a$10$example.hash', // This should be the actual hashed password
-            name: 'Admin User',
-            role: 'admin',
-          };
-
-          if (credentials.email === mockUser.email) {
-            const isValidPassword = await compare(
-              credentials.password as string,
-              mockUser.password as string
-            );
-            if (isValidPassword) {
-              return {
-                id: mockUser.id,
-                email: mockUser.email,
-                name: mockUser.name,
-                role: mockUser.role,
-              } as User;
-            }
-          }
-
-          return null;
-        } catch (error) {
-          console.error('Authentication error:', error);
-          return null;
-        }
+        return authorizeAdmin(credentials ?? {});
       },
     }),
   ],
