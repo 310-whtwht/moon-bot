@@ -5,9 +5,22 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
-
-	"github.com/moomoo-trading/api/internal/broker"
+	"time"
 )
+
+// Trade is a filled trade to be reported for tax purposes.
+type Trade struct {
+	ID         string
+	OrderID    string
+	Symbol     string
+	Side       string // "BUY" or "SELL"
+	Quantity   float64
+	Price      float64
+	Commission float64
+	TradeTime  time.Time
+}
+
+const sideSell = "SELL"
 
 // TaxExporter handles tax-related exports
 type TaxExporter struct {
@@ -20,7 +33,7 @@ func NewTaxExporter() *TaxExporter {
 }
 
 // ExportTWSFormat exports trades in TWS (Interactive Brokers) format
-func (te *TaxExporter) ExportTWSFormat(ctx context.Context, trades []broker.Trade, filename string) error {
+func (te *TaxExporter) ExportTWSFormat(ctx context.Context, trades []Trade, filename string) error {
 	file, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
@@ -53,7 +66,7 @@ func (te *TaxExporter) ExportTWSFormat(ctx context.Context, trades []broker.Trad
 	// Write trade data
 	for _, trade := range trades {
 		action := "BUY"
-		if trade.Side == broker.OrderSideSell {
+		if trade.Side == sideSell {
 			action = "SELL"
 		}
 
@@ -91,7 +104,7 @@ func (te *TaxExporter) ExportTWSFormat(ctx context.Context, trades []broker.Trad
 }
 
 // ExportJapaneseFormat exports trades in Japanese tax format
-func (te *TaxExporter) ExportJapaneseFormat(ctx context.Context, trades []broker.Trade, filename string) error {
+func (te *TaxExporter) ExportJapaneseFormat(ctx context.Context, trades []Trade, filename string) error {
 	file, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
@@ -124,7 +137,7 @@ func (te *TaxExporter) ExportJapaneseFormat(ctx context.Context, trades []broker
 	// Write trade data
 	for _, trade := range trades {
 		action := "買付"
-		if trade.Side == broker.OrderSideSell {
+		if trade.Side == sideSell {
 			action = "売却"
 		}
 
@@ -161,7 +174,7 @@ func (te *TaxExporter) ExportJapaneseFormat(ctx context.Context, trades []broker
 }
 
 // ExportAnnualReport exports annual trading report
-func (te *TaxExporter) ExportAnnualReport(ctx context.Context, trades []broker.Trade, year int, filename string) error {
+func (te *TaxExporter) ExportAnnualReport(ctx context.Context, trades []Trade, year int, filename string) error {
 	file, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
@@ -172,7 +185,7 @@ func (te *TaxExporter) ExportAnnualReport(ctx context.Context, trades []broker.T
 	defer writer.Flush()
 
 	// Filter trades for the specified year
-	var yearTrades []broker.Trade
+	var yearTrades []Trade
 	for _, trade := range trades {
 		if trade.TradeTime.Year() == year {
 			yearTrades = append(yearTrades, trade)
@@ -209,7 +222,7 @@ func (te *TaxExporter) ExportAnnualReport(ctx context.Context, trades []broker.T
 
 	for _, trade := range yearTrades {
 		action := "BUY"
-		if trade.Side == broker.OrderSideSell {
+		if trade.Side == sideSell {
 			action = "SELL"
 		}
 
@@ -248,7 +261,7 @@ type AnnualSummary struct {
 }
 
 // calculateAnnualSummary calculates annual trading summary
-func (te *TaxExporter) calculateAnnualSummary(trades []broker.Trade) *AnnualSummary {
+func (te *TaxExporter) calculateAnnualSummary(trades []Trade) *AnnualSummary {
 	summary := &AnnualSummary{
 		TotalTrades: len(trades),
 	}
@@ -263,7 +276,7 @@ func (te *TaxExporter) calculateAnnualSummary(trades []broker.Trade) *AnnualSumm
 		costBasis := proceeds
 		summary.TotalCostBasis += costBasis
 
-		if trade.Side == broker.OrderSideSell {
+		if trade.Side == sideSell {
 			realizedPnL := proceeds - costBasis - trade.Commission
 			summary.TotalRealizedPnL += realizedPnL
 		}
@@ -273,7 +286,7 @@ func (te *TaxExporter) calculateAnnualSummary(trades []broker.Trade) *AnnualSumm
 }
 
 // ExportForm8949 exports Form 8949 format (US tax form)
-func (te *TaxExporter) ExportForm8949(ctx context.Context, trades []broker.Trade, filename string) error {
+func (te *TaxExporter) ExportForm8949(ctx context.Context, trades []Trade, filename string) error {
 	file, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
@@ -304,7 +317,7 @@ func (te *TaxExporter) ExportForm8949(ctx context.Context, trades []broker.Trade
 
 	// Write trade data
 	for _, trade := range trades {
-		if trade.Side == broker.OrderSideSell {
+		if trade.Side == sideSell {
 			// Only include sell transactions
 			proceeds := trade.Quantity * trade.Price
 			costBasis := proceeds // Simplified

@@ -14,7 +14,7 @@ import (
 )
 
 func NewConnection(cfg config.DatabaseConfig) (*sql.DB, error) {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&loc=Local&allowNativePasswords=true",
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&loc=UTC&time_zone=%%27%%2B00%%3A00%%27&allowNativePasswords=true",
 		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Database)
 
 	db, err := sql.Open("mysql", dsn)
@@ -37,7 +37,7 @@ func NewConnection(cfg config.DatabaseConfig) (*sql.DB, error) {
 
 // RunMigrations opens a dedicated multi-statement connection and applies pending migrations.
 func RunMigrations(ctx context.Context, cfg config.DatabaseConfig) error {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&loc=Local&allowNativePasswords=true&multiStatements=true",
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&loc=UTC&time_zone=%%27%%2B00%%3A00%%27&allowNativePasswords=true&multiStatements=true",
 		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Database)
 
 	db, err := sql.Open("mysql", dsn)
@@ -50,7 +50,7 @@ func RunMigrations(ctx context.Context, cfg config.DatabaseConfig) error {
 }
 
 func NewGormConnection(cfg config.DatabaseConfig) (*gorm.DB, error) {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&loc=Local&allowNativePasswords=true",
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&loc=UTC&time_zone=%%27%%2B00%%3A00%%27&allowNativePasswords=true",
 		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Database)
 
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})

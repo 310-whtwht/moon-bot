@@ -1,13 +1,14 @@
 package config
 
 import (
+	"fmt"
 	"os"
 )
 
 type Config struct {
 	Database DatabaseConfig
 	Redis    RedisConfig
-	Moomoo   MoomooConfig
+	GMO      GMOConfig
 	Worker   WorkerConfig
 }
 
@@ -26,13 +27,9 @@ type RedisConfig struct {
 	DB       int
 }
 
-type MoomooConfig struct {
-	Host     string
-	Port     int
-	Username string
-	Password string
-	AppID    string
-	AppKey   string
+type GMOConfig struct {
+	PublicURL   string
+	PublicWSURL string
 }
 
 type WorkerConfig struct {
@@ -55,19 +52,21 @@ func Load() *Config {
 			Password: getEnv("REDIS_PASSWORD", ""),
 			DB:       0,
 		},
-		Moomoo: MoomooConfig{
-			Host:     getEnv("MOOMOO_HOST", "localhost"),
-			Port:     11111,
-			Username: getEnv("MOOMOO_USERNAME", ""),
-			Password: getEnv("MOOMOO_PASSWORD", ""),
-			AppID:    getEnv("MOOMOO_APP_ID", ""),
-			AppKey:   getEnv("MOOMOO_APP_KEY", ""),
+		GMO: GMOConfig{
+			PublicURL:   getEnv("GMO_PUBLIC_URL", ""),
+			PublicWSURL: getEnv("GMO_PUBLIC_WS_URL", ""),
 		},
 		Worker: WorkerConfig{
 			Concurrency:  5,
 			PollInterval: 30,
 		},
 	}
+}
+
+// DSN returns the MySQL DSN. Times are read and written in UTC.
+func (c DatabaseConfig) DSN() string {
+	return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&loc=UTC&time_zone=%%27%%2B00%%3A00%%27&allowNativePasswords=true",
+		c.User, c.Password, c.Host, c.Port, c.Database)
 }
 
 func getEnv(key, defaultValue string) string {

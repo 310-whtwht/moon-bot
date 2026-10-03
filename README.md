@@ -9,7 +9,7 @@ Next.js、Go、MySQL を使用した高度なアルゴリズム取引プラッ�
 - `apps/web` - Next.js フロントエンドアプリケーション
 - `apps/api` - Go REST API サーバー
 - `apps/bot` - 戦略実行用の Go ワーカー
-- `packages/shared` - 共有ユーティリティとタイプ
+- `packages/core` - api / bot 共通の Go モジュール（ブローカー interface、GMOコイン FX アダプタ、市場データ、リスク管理）。各 `go.mod` の `replace` で参照
 
 ## クイックスタート
 
@@ -184,13 +184,10 @@ DB パスワードなどは `.env` を編集して設定してください。
 - `REDIS_PORT` - Redis ポート（デフォルト: 6379。ホストから compose の Redis に繋ぐ場合は 6380）
 - `REDIS_PASSWORD` - Redis パスワード（デフォルト: 空）
 
-### Moomoo
+### GMOコイン 外国為替FX（任意）
 
-- `MOOMOO_HOST` - Moomoo OpenD ホスト
-- `MOOMOO_USERNAME` - Moomoo ユーザー名
-- `MOOMOO_PASSWORD` - Moomoo パスワード
-- `MOOMOO_APP_ID` - Moomoo アプリ ID
-- `MOOMOO_APP_KEY` - Moomoo アプリキー
+- `GMO_PUBLIC_URL` - Public REST API のベース URL（デフォルト: https://forex-api.coin.z.com/public）
+- `GMO_PUBLIC_WS_URL` - Public WebSocket URL（デフォルト: wss://forex-api.coin.z.com/ws/public/v1）
 
 ## 開発
 
@@ -202,6 +199,19 @@ DB パスワードなどは `.env` を編集して設定してください。
 - ホストから手動で適用する場合は `make migrate` を実行します。
 - 新しいマイグレーションは `007_xxx.sql` のように連番で追加します（適用済みファイルは編集しない）。
 - 旧方式（MySQL の初回起動時に適用）で作られた DB は、初回実行時に 001〜006 を適用済みとして記録します。
+
+### 過去データの取得（backfill）
+
+GMOコインの Public API（キー不要）から足データを取得し、`bars` テーブルに BID / ASK 別で保存します。
+途中で止めても、再実行すると保存済みの最新の足から再開します。完了後に欠損（週末を除く）を表示します。
+
+```bash
+make backfill                                   # USD_JPY 1時間足を 2023-10-28 から現在まで
+make backfill ARGS="-symbol EUR_JPY -interval 4h -from 2025-01-01"
+```
+
+- 取引日の区切りは 06:00 JST（GMO の klines の `date` 単位）。時刻はすべて UTC で保存します。
+- リクエスト間隔は既定 1 秒（`-min-interval` で変更可）。1時間足の全期間で数十分かかります。
 
 ### 新しい API エンドポイントの追加
 
