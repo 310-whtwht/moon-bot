@@ -51,6 +51,17 @@ func (s *memStore) LatestOpenTime(_ context.Context, key market.InstrumentKey, t
 	return ts[len(ts)-1], true, nil
 }
 
+func (s *memStore) Bars(_ context.Context, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType, from, to time.Time) ([]market.Bar, error) {
+	var out []market.Bar
+	for _, b := range s.bars {
+		if b.Key == key && b.Timeframe == tf && b.PriceType == pt && !b.OpenTime.Before(from) && b.OpenTime.Before(to) {
+			out = append(out, b)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].OpenTime.Before(out[j].OpenTime) })
+	return out, nil
+}
+
 func (s *memStore) OpenTimes(_ context.Context, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType, from, to time.Time) ([]time.Time, error) {
 	var out []time.Time
 	for _, t := range s.times(key, tf, pt) {

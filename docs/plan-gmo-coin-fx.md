@@ -116,6 +116,8 @@ type Broker interface {
 
 ### Phase 2 — 戦略とバックテスト（3〜4日）
 
+> 実装は2つの PR に分ける。**2a**: 2-1 / 2-2 / 2-3 / 2-5（core の指標・戦略・エンジン・評価指標、`bot backtest` CLI、実データでの評価）。**2b**: 2-1b / 2-4（API・Web の統合、ジョブ実行、戦略管理画面）と api の Dockerfile のビルドコンテキスト変更。
+
 | # | 作業 | 完了条件 |
 |---|---|---|
 | 2-1 | `Strategy` interface（`OnBar(history) Signal`）と、EMA クロス戦略の実装（ATR 基準の損切りを含む）。指標（EMA / ATR）は自前で実装し、単体テストを付ける | 既知の数値で指標の計算値が一致する |

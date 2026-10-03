@@ -213,6 +213,27 @@ make backfill ARGS="-symbol EUR_JPY -interval 4h -from 2025-01-01"
 - 取引日の区切りは 06:00 JST（GMO の klines の `date` 単位）。時刻はすべて UTC で保存します。
 - リクエスト間隔は既定 1 秒（`-min-interval` で変更可）。1時間足の全期間で数十分かかります。
 
+### バックテスト
+
+保存済みの BID / ASK の足でストラテジーを検証します（先に backfill が必要）。
+
+```bash
+make backtest                                                         # ema_cross・既定パラメータ
+make backtest ARGS="-param fast_period=8 -param slow_period=21"
+make backtest ARGS="-sweep fast_period=8,12,20 -sweep slow_period=26,50,100 -from 2023-10-28 -to 2025-10-01"
+make backtest ARGS="-json"                                            # 取引一覧・損益曲線を含む JSON
+```
+
+約定モデル（`packages/core/backtest`）:
+
+- シグナルは確定足で計算し、**次の足の始値**で執行（未来のデータを使わない）
+- 買いは ASK、売りは BID で約定（スプレッドを毎回負担）
+- 損切りは BID の安値（買い）/ ASK の高値（売り）で判定し、窓開けで超えた場合は始値で約定
+- 手数料は約定金額 × 0.002%（GMOコイン API 手数料）、証拠金はレバレッジ 25 倍で判定
+- 建玉は1つまで、損益は円（JPY 建て通貨ペアのみ）
+
+戦略は `packages/core/strategy` に Go で実装し、`Register` で登録します（パラメータの範囲・既定値も定義）。
+
 ### 新しい API エンドポイントの追加
 
 1. `apps/api/internal/handlers/` にハンドラー関数を追加
