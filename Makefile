@@ -1,4 +1,4 @@
-.PHONY: help dev build test clean docker-up docker-down setup env migrate backfill
+.PHONY: help dev build test clean docker-up docker-down setup env migrate backfill backtest
 
 # .env があれば読み込み、ホストで動かすコマンド（api-dev / bot-dev / migrate）に渡す
 -include .env
@@ -57,6 +57,9 @@ api-dev: ## Start API in development mode
 
 backfill: ## Download historical bars from GMO FX (ARGS="-from 2023-10-28 -interval 1h")
 	cd apps/bot && go run . backfill $(ARGS)
+
+backtest: ## Backtest a strategy on stored bars (ARGS="-strategy ema_cross -sweep fast_period=8,12")
+	cd apps/bot && go run . backtest $(ARGS)
 
 web-dev: ## Start Web in development mode
 	@echo "Starting Web application..."

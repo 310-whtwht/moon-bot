@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/moomoo-trading/bot/internal/backfill"
+	"github.com/moomoo-trading/bot/internal/backtestcmd"
 	"github.com/moomoo-trading/bot/internal/config"
 	"github.com/moomoo-trading/bot/internal/worker"
 )
@@ -16,14 +18,22 @@ func main() {
 	// Load configuration
 	cfg := config.Load()
 
-	// Subcommands: `bot backfill [flags]` downloads historical bars and exits.
-	if len(os.Args) > 1 && os.Args[1] == "backfill" {
-		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer stop()
-		if err := backfill.Run(ctx, cfg, os.Args[2:], os.Stdout); err != nil {
-			log.Fatalf("backfill failed: %v", err)
+	// Subcommands run once and exit:
+	//   bot backfill [flags]  download historical bars
+	//   bot backtest [flags]  run a strategy over stored bars
+	if len(os.Args) > 1 {
+		commands := map[string]func(context.Context, *config.Config, []string, io.Writer) error{
+			"backfill": backfill.Run,
+			"backtest": backtestcmd.Run,
 		}
-		return
+		if run, ok := commands[os.Args[1]]; ok {
+			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
+			if err := run(ctx, cfg, os.Args[2:], os.Stdout); err != nil {
+				log.Fatalf("%s failed: %v", os.Args[1], err)
+			}
+			return
+		}
 	}
 
 	// Create context with cancellation

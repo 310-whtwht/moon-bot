@@ -17,6 +17,8 @@ type BarStore interface {
 	UpsertBars(ctx context.Context, bars []market.Bar) error
 	// LatestOpenTime returns the newest stored open time, or ok=false if none.
 	LatestOpenTime(ctx context.Context, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType) (t time.Time, ok bool, err error)
+	// Bars returns stored bars with open time in [from, to), ascending.
+	Bars(ctx context.Context, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType, from, to time.Time) ([]market.Bar, error)
 	// OpenTimes returns stored open times in [from, to), ascending.
 	OpenTimes(ctx context.Context, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType, from, to time.Time) ([]time.Time, error)
 }
@@ -84,6 +86,30 @@ func (s *MySQLBarStore) LatestOpenTime(ctx context.Context, key market.Instrumen
 		return time.Time{}, false, nil
 	}
 	return latest.Time.UTC(), true, nil
+}
+
+func (s *MySQLBarStore) Bars(ctx context.Context, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType, from, to time.Time) ([]market.Bar, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT open_time, open, high, low, close FROM bars
+WHERE broker = ? AND symbol = ? AND timeframe = ? AND price_type = ? AND open_time >= ? AND open_time < ?
+ORDER BY open_time`,
+		key.Broker, key.Symbol, string(tf), string(pt), from.UTC(), to.UTC(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list bars: %w", err)
+	}
+	defer rows.Close()
+
+	var bars []market.Bar
+	for rows.Next() {
+		b := market.Bar{Key: key, Timeframe: tf, PriceType: pt}
+		if err := rows.Scan(&b.OpenTime, &b.Open, &b.High, &b.Low, &b.Close); err != nil {
+			return nil, err
+		}
+		b.OpenTime = b.OpenTime.UTC()
+		bars = append(bars, b)
+	}
+	return bars, rows.Err()
 }
 
 func (s *MySQLBarStore) OpenTimes(ctx context.Context, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType, from, to time.Time) ([]time.Time, error) {
