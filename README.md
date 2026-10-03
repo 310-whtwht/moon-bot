@@ -234,6 +234,17 @@ make backtest ARGS="-json"                                            # 取引�
 
 戦略は `packages/core/strategy` に Go で実装し、`Register` で登録します（パラメータの範囲・既定値も定義）。
 
+### Web からのバックテスト（ジョブ）
+
+1. 戦略画面で「New Version」から、戦略の種類（`/api/v1/strategy-types`）とパラメータを選んでバージョンを作る
+   （`strategy_versions.code` に種類、`strategy_params` に解決済みのパラメータを保存。作成後は変更せず、新しいバージョンを作る）
+2. 「Backtest」でバージョン・銘柄・時間足・期間・数量・初期資金を指定して実行
+3. API は条件のスナップショットを `backtests.parameters` に保存し、Redis Stream `backtest_jobs` に積む
+4. bot（`make bot-dev` / compose の `bot`）がコンシューマーグループ `backtest_workers` で受け取り、実行して `results` に保存
+5. 結果ページは実行中に自動更新し、完了後に評価指標・損益曲線・取引一覧を表示
+
+bot が止まっている間に積まれたジョブは、起動時に処理されます。キャンセルされたジョブは実行しません。
+
 ### 新しい API エンドポイントの追加
 
 1. `apps/api/internal/handlers/` にハンドラー関数を追加

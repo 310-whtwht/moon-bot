@@ -8,7 +8,10 @@ post {
   url: {{baseUrl}}/api/v1/strategies/{{strategyId}}/versions
   body: json
     {
-      "code": "package main\nfunc main(){}"
+      "version": "1.0.0",
+      "strategy_type": "ema_cross",
+      "params": { "fast_period": 8, "slow_period": 26 },
+      "is_active": true
     }
   auth: {
     type: bearer

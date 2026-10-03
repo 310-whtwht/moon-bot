@@ -3,6 +3,8 @@ package database
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -241,4 +243,69 @@ func (r *StrategyRepository) GetParamsByVersionID(ctx context.Context, versionID
 	}
 
 	return params, nil
+}
+// CreateVersionWithParams creates a version and its numeric parameters in one
+// transaction. When the version is active, other versions of the package are
+// deactivated so that at most one version is active.
+func (r *StrategyRepository) CreateVersionWithParams(ctx context.Context, version *StrategyVersion, params map[string]float64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	version.ID = uuid.New().String()
+	version.CreatedAt = time.Now().UTC()
+	version.UpdatedAt = version.CreatedAt
+
+	if version.IsActive {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE strategy_versions SET is_active = FALSE, updated_at = ? WHERE package_id = ?`,
+			version.UpdatedAt, version.PackageID); err != nil {
+			return fmt.Errorf("deactivate versions: %w", err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO strategy_versions (id, package_id, version, code, description, is_active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		version.ID, version.PackageID, version.Version, version.Code, version.Description, version.IsActive,
+		version.CreatedAt, version.UpdatedAt); err != nil {
+		return fmt.Errorf("insert version: %w", err)
+	}
+
+	for name, value := range params {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO strategy_params (id, version_id, param_name, param_type, default_value, description, is_required, created_at, updated_at)
+			VALUES (?, ?, ?, 'number', ?, NULL, TRUE, ?, ?)`,
+			uuid.New().String(), version.ID, name, strconv.FormatFloat(value, 'f', -1, 64),
+			version.CreatedAt, version.UpdatedAt); err != nil {
+			return fmt.Errorf("insert param %s: %w", name, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	version.Params = params
+	return nil
+}
+
+// NumericParams returns a version's parameters as numbers. Values that are not
+// numbers (legacy rows) are skipped.
+func (r *StrategyRepository) NumericParams(ctx context.Context, versionID string) (map[string]float64, error) {
+	params, err := r.GetParamsByVersionID(ctx, versionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]float64, len(params))
+	for _, p := range params {
+		if p.DefaultValue == nil {
+			continue
+		}
+		if v, err := strconv.ParseFloat(*p.DefaultValue, 64); err == nil {
+			out[p.ParamName] = v
+		}
+	}
+	return out, nil
 }

@@ -32,8 +32,8 @@ services:
 
   api:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/api/Dockerfile
     container_name: moomoo_api
     ports:
       - "8081:8081"
@@ -57,6 +57,23 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8081/healthz"]
       timeout: 30s
       retries: 3
+
+  bot:
+    build:
+      context: .
+      dockerfile: apps/bot/Dockerfile
+    container_name: moomoo_bot
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=${DB_USER:-moomoo}
+      - DB_PASSWORD=${DB_PASSWORD:?set DB_PASSWORD in .env}
+      - DB_NAME=${DB_NAME:-moomoo_trading}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      api:
+        condition: service_healthy
 
   web:
     build:

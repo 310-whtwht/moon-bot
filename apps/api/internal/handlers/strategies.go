@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/moomoo-trading/api/internal/database"
+	"github.com/moomoo-trading/core/strategy"
 )
 
 // StrategyHandler handles strategy-related HTTP requests
@@ -182,10 +183,25 @@ func (h *StrategyHandler) GetStrategyVersions(c *gin.Context) {
 		return
 	}
 
+	for _, v := range versions {
+		v.StrategyType = strategyTypeOf(v.Code)
+		params, err := h.repo.NumericParams(c.Request.Context(), v.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve strategy parameters"})
+			return
+		}
+		v.Params = params
+	}
+	if versions == nil {
+		versions = []*database.StrategyVersion{}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": versions})
 }
 
-// CreateStrategyVersion creates a new strategy version
+// CreateStrategyVersion creates a strategy version from a registered strategy
+// type and its parameters. Parameters are validated and stored with defaults
+// applied, so the version fully describes what will run.
 func (h *StrategyHandler) CreateStrategyVersion(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
@@ -194,26 +210,48 @@ func (h *StrategyHandler) CreateStrategyVersion(c *gin.Context) {
 	}
 
 	var req struct {
-		Version     string  `json:"version" binding:"required"`
-		Code        string  `json:"code" binding:"required"`
-		Description *string `json:"description"`
-		IsActive    bool    `json:"is_active"`
+		Version      string             `json:"version" binding:"required"`
+		StrategyType string             `json:"strategy_type" binding:"required"`
+		Params       map[string]float64 `json:"params"`
+		Description  *string            `json:"description"`
+		IsActive     bool               `json:"is_active"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: version and strategy_type are required"})
+		return
+	}
+
+	def, err := strategy.Lookup(req.StrategyType)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	params, err := def.Resolve(req.Params)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if _, err := h.repo.GetPackageByID(c.Request.Context(), id); err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Strategy not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve strategy"})
 		return
 	}
 
 	version := &database.StrategyVersion{
-		PackageID:   id,
-		Version:     req.Version,
-		Code:        req.Code,
-		Description: req.Description,
-		IsActive:    req.IsActive,
+		PackageID:    id,
+		Version:      req.Version,
+		Code:         def.Type,
+		Description:  req.Description,
+		IsActive:     req.IsActive,
+		StrategyType: def.Type,
 	}
 
-	if err := h.repo.CreateVersion(c.Request.Context(), version); err != nil {
+	if err := h.repo.CreateVersionWithParams(c.Request.Context(), version, params); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create strategy version"})
 		return
 	}

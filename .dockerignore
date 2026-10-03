@@ -1,0 +1,8 @@
+# Build context is the repository root for api / bot (they import packages/core).
+.git
+**/node_modules
+apps/web
+**/bin
+*.log
+.env
+.env.*

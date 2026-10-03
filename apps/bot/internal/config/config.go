@@ -9,7 +9,6 @@ type Config struct {
 	Database DatabaseConfig
 	Redis    RedisConfig
 	GMO      GMOConfig
-	Worker   WorkerConfig
 }
 
 type DatabaseConfig struct {
@@ -32,10 +31,6 @@ type GMOConfig struct {
 	PublicWSURL string
 }
 
-type WorkerConfig struct {
-	Concurrency int
-	PollInterval int // seconds
-}
 
 func Load() *Config {
 	return &Config{
@@ -55,10 +50,6 @@ func Load() *Config {
 		GMO: GMOConfig{
 			PublicURL:   getEnv("GMO_PUBLIC_URL", ""),
 			PublicWSURL: getEnv("GMO_PUBLIC_WS_URL", ""),
-		},
-		Worker: WorkerConfig{
-			Concurrency:  5,
-			PollInterval: 30,
 		},
 	}
 }
