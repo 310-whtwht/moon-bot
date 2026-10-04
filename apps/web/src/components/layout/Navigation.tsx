@@ -3,14 +3,25 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { Settings, FileText, Shield, Home, TrendingUp } from 'lucide-react';
+import {
+  BarChart3,
+  Bell,
+  Globe,
+  Home,
+  ListOrdered,
+  Shield,
+  TrendingUp,
+} from 'lucide-react';
 
+// Only link to pages that exist under src/app.
 const navigation = [
-  { name: 'ダッシュボード', href: '/', icon: Home },
+  { name: 'ダッシュボード', href: '/dashboard', icon: Home },
   { name: '戦略管理', href: '/strategies', icon: TrendingUp },
+  { name: 'バックテスト', href: '/backtests', icon: BarChart3 },
+  { name: '注文', href: '/orders', icon: ListOrdered },
+  { name: 'ユニバース', href: '/universe', icon: Globe },
   { name: '監査・ログ', href: '/audit', icon: Shield },
-  { name: '設定', href: '/settings', icon: Settings },
-  { name: 'ドキュメント', href: '/docs', icon: FileText },
+  { name: '通知', href: '/notifications', icon: Bell },
 ];
 
 export default function Navigation() {
@@ -19,7 +30,8 @@ export default function Navigation() {
   return (
     <nav className="flex space-x-4 lg:space-x-6">
       {navigation.map(item => {
-        const isActive = pathname === item.href;
+        const isActive =
+          pathname === item.href || pathname.startsWith(`${item.href}/`);
         return (
           <Link
             key={item.name}

@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { signIn } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,7 +22,6 @@ export default function SignInPage() {
   const [showTotp, setShowTotp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const router = useRouter();
 
   // One handler for both steps: the server answers "totp_required" when the
   // password is correct and a 2FA code is still needed.
@@ -55,7 +53,10 @@ export default function SignInPage() {
       }
 
       if (result?.ok) {
-        router.push('/dashboard');
+        // Full page load, not router.push: links prefetched while signed out
+        // are cached by the client router as redirects to this page, and a
+        // client-side navigation would keep using them after sign-in.
+        window.location.assign('/dashboard');
       }
     } catch {
       setError('ログイン中にエラーが発生しました。');

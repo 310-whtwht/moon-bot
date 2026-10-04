@@ -14,6 +14,11 @@ export default auth(req => {
     return Response.redirect(new URL('/auth/signin', nextUrl));
   }
 
+  // Signed-in users have no use for the sign-in page
+  if (isLoggedIn && nextUrl.pathname === '/auth/signin') {
+    return Response.redirect(new URL('/dashboard', nextUrl));
+  }
+
   // Allow access to auth pages
   if (nextUrl.pathname.startsWith('/auth')) {
     return null;
