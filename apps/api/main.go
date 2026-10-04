@@ -89,8 +89,17 @@ func main() {
 	// Health check endpoint
 	r.GET("/healthz", handlers.HealthCheck)
 
-	// API routes
+	// API routes. Every route needs the bearer token; without one configured
+	// the API only runs in development (it controls orders and the kill switch).
 	api := r.Group("/api/v1")
+	switch {
+	case cfg.APIToken != "":
+		api.Use(middleware.RequireToken(cfg.APIToken))
+	case cfg.Environment == "production":
+		log.Fatal("API_TOKEN is required when ENVIRONMENT=production")
+	default:
+		log.Println("WARNING: API_TOKEN is not set; /api/v1 is open to anyone who can reach this port (development only)")
+	}
 	{
 		// Orders
 		orders := api.Group("/orders")

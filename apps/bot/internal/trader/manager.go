@@ -280,6 +280,45 @@ func (m *Manager) OnTick(ctx context.Context, tick market.Tick) {
 	}
 }
 
+// OnExecution reacts to a fill reported by a broker's execution stream: the
+// runners trading that symbol on that broker reconcile at once, so a stop
+// order executed at the broker is settled within moments rather than at the
+// next periodic check. The bot's own fills arrive here too; reconciling after
+// them is harmless.
+func (m *Manager) OnExecution(ctx context.Context, brokerName string, e broker.Execution) {
+	m.mu.Lock()
+	var affected []*Runner
+	for _, r := range m.runners {
+		if r.dep.Broker == brokerName && r.dep.Symbol == e.Symbol {
+			affected = append(affected, r)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, r := range affected {
+		if err := r.Reconcile(ctx); err != nil {
+			m.Logf("%s: reconcile after execution: %v", r.dep.Name, err)
+		}
+	}
+}
+
+// WatchExecutions forwards a broker's execution stream to OnExecution until
+// the stream ends or ctx is cancelled.
+func (m *Manager) WatchExecutions(ctx context.Context, brokerName string, events <-chan broker.Execution) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e, ok := <-events:
+			if !ok {
+				m.Logf("trader: %s execution stream ended; relying on periodic reconciliation", brokerName)
+				return
+			}
+			m.OnExecution(ctx, brokerName, e)
+		}
+	}
+}
+
 // Run polls on an interval and watches quotes until ctx is cancelled.
 // Stop-losses are enforced from quotes, so pass the broker's tick stream for
 // every symbol that can hold a position.

@@ -43,6 +43,10 @@ type PrivateOptions struct {
 	APIKey     string
 	APISecret  string
 	PrivateURL string
+	// PrivateWSURL is the private WebSocket endpoint (the token is appended).
+	PrivateWSURL string
+	// TokenExtendInterval is how often the WebSocket token is extended.
+	TokenExtendInterval time.Duration
 	// AccountID labels this account on orders and positions (not sent to GMO).
 	AccountID string
 	Now       func() time.Time
@@ -58,6 +62,9 @@ type Private struct {
 	privateURL string
 	accountID  string
 	now        func() time.Time
+
+	privateWSURL        string
+	tokenExtendInterval time.Duration
 
 	getGate, postGate gate
 
@@ -118,6 +125,14 @@ func NewPrivate(opts PrivateOptions) (*Private, error) {
 	if p.privateURL == "" {
 		p.privateURL = DefaultPrivateURL
 	}
+	p.privateWSURL = opts.PrivateWSURL
+	if p.privateWSURL == "" {
+		p.privateWSURL = DefaultPrivateWSURL
+	}
+	p.tokenExtendInterval = opts.TokenExtendInterval
+	if p.tokenExtendInterval == 0 {
+		p.tokenExtendInterval = defaultTokenExtendInterval
+	}
 	if p.accountID == "" {
 		p.accountID = "default"
 	}
@@ -133,8 +148,10 @@ func NewPrivate(opts PrivateOptions) (*Private, error) {
 func (p *Private) AccountID() string { return p.accountID }
 
 // Sign returns the API-SIGN header: hex HMAC-SHA256 of
-// timestamp + method + path + body, where path starts with /v1 and GET
-// requests sign an empty body (the query string is not signed).
+// timestamp + method + path + body, where path starts with /v1 and the query
+// string is never signed. Only POST signs its body: GET has none, and the
+// PUT / DELETE calls (ws-auth) send a body but sign without it, as in the
+// official examples. Use signedBody to pick the right text.
 func Sign(secret []byte, timestamp, method, path, body string) string {
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(timestamp + method + path + body))
@@ -156,6 +173,14 @@ func ClientOrderID(id string) string {
 		out = out[len(out)-maxClientOrderIDLen:]
 	}
 	return out
+}
+
+// signedBody is the body text that goes into the signature for a method.
+func signedBody(method, body string) string {
+	if method == http.MethodPost {
+		return body
+	}
+	return ""
 }
 
 func (p *Private) timestamp() string {
@@ -236,7 +261,7 @@ func (p *Private) once(ctx context.Context, method, path string, query url.Value
 	ts := p.timestamp()
 	req.Header.Set("API-KEY", p.apiKey)
 	req.Header.Set("API-TIMESTAMP", ts)
-	req.Header.Set("API-SIGN", Sign(p.apiSecret, ts, method, path, bodyText))
+	req.Header.Set("API-SIGN", Sign(p.apiSecret, ts, method, path, signedBody(method, bodyText)))
 	if bodyText != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -578,9 +603,4 @@ func (p *Private) OrderActive(ctx context.Context, orderID string) (bool, error)
 		}
 	}
 	return false, nil
-}
-
-// SubscribeExecutions (private WebSocket) is added in a later phase.
-func (p *Private) SubscribeExecutions(ctx context.Context) (<-chan broker.Execution, error) {
-	return nil, broker.ErrNotSupported
 }

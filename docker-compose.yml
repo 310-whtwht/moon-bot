@@ -48,6 +48,7 @@ services:
       - REDIS_PASSWORD=
       - PORT=8081
       - AUTO_MIGRATE=true
+      - API_TOKEN=${API_TOKEN:?set API_TOKEN in .env}
     depends_on:
       mysql:
         condition: service_healthy
@@ -87,6 +88,9 @@ services:
       - NEXTAUTH_URL=http://localhost:3001
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:?set NEXTAUTH_SECRET in .env}
       - NEXT_PUBLIC_API_URL=http://localhost:8081
+      # /api/v1/* is proxied by the web server to the API with this token.
+      - API_URL=http://api:8081
+      - API_TOKEN=${API_TOKEN:?set API_TOKEN in .env}
       - NEXTAUTH_URL_INTERNAL=http://moomoo_web:3001
     depends_on:
       api:

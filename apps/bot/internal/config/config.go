@@ -19,10 +19,10 @@ type Config struct {
 
 // TraderConfig controls live strategy execution (paper trading in Phase 3).
 type TraderConfig struct {
-	Enabled             bool
-	PollInterval        time.Duration
+	Enabled      bool
+	PollInterval time.Duration
 	// ReconcileInterval is how often positions are compared with the broker.
-	ReconcileInterval time.Duration
+	ReconcileInterval   time.Duration
 	PaperInitialBalance float64
 	AccountLimits       risk.Limits
 	GlobalLimits        risk.Limits
@@ -67,16 +67,16 @@ type RedisConfig struct {
 }
 
 type GMOConfig struct {
-	PublicURL   string
-	PublicWSURL string
-	PrivateURL  string
+	PublicURL    string
+	PublicWSURL  string
+	PrivateURL   string
+	PrivateWSURL string
 	// APIKey / APISecret are only read from the environment; never log them.
 	APIKey    string
 	APISecret string
 	// AccountID labels the account on orders and positions.
 	AccountID string
 }
-
 
 func Load() *Config {
 	return &Config{
@@ -94,12 +94,13 @@ func Load() *Config {
 			DB:       0,
 		},
 		GMO: GMOConfig{
-			PublicURL:   getEnv("GMO_PUBLIC_URL", ""),
-			PublicWSURL: getEnv("GMO_PUBLIC_WS_URL", ""),
-			PrivateURL:  getEnv("GMO_PRIVATE_URL", ""),
-			APIKey:      getEnv("GMO_API_KEY", ""),
-			APISecret:   getEnv("GMO_API_SECRET", ""),
-			AccountID:   getEnv("GMO_ACCOUNT_ID", "default"),
+			PublicURL:    getEnv("GMO_PUBLIC_URL", ""),
+			PublicWSURL:  getEnv("GMO_PUBLIC_WS_URL", ""),
+			PrivateURL:   getEnv("GMO_PRIVATE_URL", ""),
+			PrivateWSURL: getEnv("GMO_PRIVATE_WS_URL", ""),
+			APIKey:       getEnv("GMO_API_KEY", ""),
+			APISecret:    getEnv("GMO_API_SECRET", ""),
+			AccountID:    getEnv("GMO_ACCOUNT_ID", "default"),
 		},
 		Trader: TraderConfig{
 			Enabled:             getEnv("TRADER_ENABLED", "true") == "true",
@@ -138,6 +139,7 @@ func getEnv(key, defaultValue string) string {
 	}
 	return defaultValue
 }
+
 // getFloat reads a number, falling back (with a warning) on bad input so a
 // typo cannot silently disable a risk limit by parsing to zero.
 func getFloat(key string, defaultValue float64) float64 {

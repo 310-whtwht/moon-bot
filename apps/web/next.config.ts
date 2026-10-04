@@ -1,16 +1,10 @@
 import type { NextConfig } from 'next';
 
+// /api/v1/* is proxied to the Go API by src/middleware.ts (not by a rewrite
+// here), so that every call passes the session check and gets the API token.
 const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
-  },
-  async rewrites() {
-    return [
-      {
-        source: '/api/v1/:path*',
-        destination: 'http://localhost:8081/api/v1/:path*',
-      },
-    ];
   },
 };
 
