@@ -192,7 +192,7 @@ type Broker interface {
 
 ### Phase 5 — Paper 運用（2週間以上・ほぼ待ち時間）
 
-- 実際のレートで Paper モードを連続稼働させる（ローカルの Mac か OCI）。
+- 実際のレートで Paper モードを連続稼働させる（ローカルの Mac か OCI）。Mac での手順は `docs/paper-run-mac.md`。
 - **合格基準**（全て満たしたら Phase 6 へ）:
   - 10営業日以上、プロセスの異常終了がない（あっても自動で復帰する）
   - 約定・建玉・損益の記録が、ticker から再計算した値と一致する
