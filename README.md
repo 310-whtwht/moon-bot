@@ -295,6 +295,25 @@ UPDATE deployments SET enabled = TRUE WHERE id = 'dddddddd-dddd-dddd-dddd-dddddd
 
 損失の集計は取引日（06:00 JST 区切り）・取引週（月曜 06:00 JST 始まり）単位です。発注には利用可能な証拠金の 50% までしか使いません。
 
+### Kill Switch・通知・ダッシュボード
+
+**Kill Switch** は新規の発注だけを止めます（決済と損切りは止めません）。範囲は「全体（global）」か、ブローカー単位（`paper` / `gmo`）です。
+
+| 止め方 | 方法 |
+|---|---|
+| Web | ヘッダーの「Kill Switch」→「停止する」を **2回押す**（1回目は準備、5秒以内の2回目で発動）。「保有中の建玉も成行で決済する」を選ぶと全決済 |
+| CLI | `cd apps/bot && go run . kill on -reason "理由"`（`-close` で全決済、`-scope paper` でブローカー単位）／`kill off`／`kill status` |
+| 環境変数 | bot に `KILL_SWITCH=true`（DB に繋がらなくても効く。解除は変数を外して再起動） |
+
+- 新規の発注は、発注の直前に毎回スイッチを確認して止めます。状態を読めない場合は安全側（停止）に倒します
+- 全決済は次の定期確認（既定30秒以内）で実行します。市場が閉じている間は保留し、開いたら決済します
+
+**Slack 通知**: bot に `SLACK_WEBHOOK_URL`（Incoming Webhook の URL）を設定すると、新規約定・決済・注文見送り・エラー・Kill Switch の発動と解除・日次サマリ（取引日が切り替わる 06:00 JST）を送ります。送信は裏で行い、Slack が遅くても売買は待ちません。
+
+**ダッシュボード**（`/dashboard`）: bot の稼働状況（生存確認）、当日・今週の確定損益、割り当ての有効／無効の切り替え、保有中の建玉、最近の決済を表示します（`GET /api/v1/bot/status`）。
+
+> 注意: API には認証がありません。現状は Web（Next.js）経由でのみ使う前提で、API を外部に公開する場合は先に認証を入れてください。
+
 ### Web からのバックテスト（ジョブ）
 
 1. 戦略画面で「New Version」から、戦略の種類（`/api/v1/strategy-types`）とパラメータを選んでバージョンを作る

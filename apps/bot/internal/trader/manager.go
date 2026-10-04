@@ -10,6 +10,7 @@ import (
 
 	"github.com/moomoo-trading/core/broker"
 	"github.com/moomoo-trading/core/market"
+	"github.com/moomoo-trading/core/risk"
 )
 
 // Manager runs one Runner per deployment and feeds them bars and quotes.
@@ -22,8 +23,27 @@ type Manager struct {
 	Now      func() time.Time
 	Logf     func(format string, args ...any)
 
-	mu      sync.Mutex
-	runners map[string]*Runner
+	// Kills, when set, makes the manager close positions for kill switches
+	// activated with close_positions, and report switch changes.
+	Kills KillStore
+	// Ops, when set, receives heartbeats and provides the daily summary.
+	Ops OpsStore
+	// Instance identifies this bot in heartbeats.
+	Instance     string
+	PollInterval time.Duration
+
+	mu          sync.Mutex
+	runners     map[string]*Runner
+	startedAt   time.Time
+	activeKills map[string]bool
+	summaryDay  time.Time
+}
+
+// OpsStore is the operational bookkeeping around trading.
+type OpsStore interface {
+	Heartbeat(ctx context.Context, instance string, startedAt, now time.Time, pollInterval time.Duration, runners int) error
+	// ClosedSummary returns the number of positions closed in [from, to) and their net P&L.
+	ClosedSummary(ctx context.Context, from, to time.Time) (closed int, pnlJPY float64, err error)
 }
 
 func (m *Manager) defaults() {
@@ -41,6 +61,12 @@ func (m *Manager) defaults() {
 	}
 	if m.runners == nil {
 		m.runners = map[string]*Runner{}
+	}
+	if m.activeKills == nil {
+		m.activeKills = map[string]bool{}
+	}
+	if m.startedAt.IsZero() {
+		m.startedAt = m.Now()
 	}
 	m.Config = m.Config.withDefaults()
 }
@@ -117,7 +143,85 @@ func (m *Manager) PollOnce(ctx context.Context) error {
 		}
 	}
 	m.checkStopsFromREST(ctx, runners)
+	m.applyKillSwitches(ctx, runners)
+	m.housekeeping(ctx, len(runners))
 	return nil
+}
+
+// applyKillSwitches reports switch changes and, for switches activated with
+// close_positions, closes the positions they cover. (New entries are blocked
+// separately, by the Guard, right before each order.)
+func (m *Manager) applyKillSwitches(ctx context.Context, runners []*Runner) {
+	if m.Kills == nil {
+		return
+	}
+	switches, err := m.Kills.KillSwitches(ctx)
+	if err != nil {
+		m.Logf("trader: kill switches: %v", err)
+		return
+	}
+
+	m.mu.Lock()
+	for _, k := range switches {
+		if k.Active != m.activeKills[k.Scope] {
+			m.activeKills[k.Scope] = k.Active
+			state := "解除"
+			if k.Active {
+				state = "発動"
+				if k.ClosePositions {
+					state += "（全決済）"
+				}
+			}
+			msg := fmt.Sprintf("Kill Switch %s: %s", k.Scope, state)
+			if k.Reason != "" {
+				msg += " — " + k.Reason
+			}
+			m.Logf("%s", msg)
+			m.Notifier.Notify(Event{Kind: "kill_switch", Message: msg, At: m.Now()})
+		}
+	}
+	m.mu.Unlock()
+
+	for _, r := range runners {
+		for _, k := range switches {
+			if k.covers(r.dep.Broker) && k.ClosePositions && r.HasPosition() {
+				if err := r.ForceClose(ctx, "kill switch"); err != nil {
+					m.Logf("%s: kill switch close failed: %v", r.dep.Name, err)
+				}
+				break
+			}
+		}
+	}
+}
+
+// housekeeping writes the heartbeat and sends the daily summary once the
+// trading day (06:00 JST) rolls over.
+func (m *Manager) housekeeping(ctx context.Context, runners int) {
+	if m.Ops == nil {
+		return
+	}
+	now := m.Now()
+	if err := m.Ops.Heartbeat(ctx, m.Instance, m.startedAt, now, m.PollInterval, runners); err != nil {
+		m.Logf("trader: heartbeat: %v", err)
+	}
+
+	today := risk.TradingDayStart(now)
+	m.mu.Lock()
+	previous := m.summaryDay
+	m.summaryDay = today
+	m.mu.Unlock()
+	if previous.IsZero() || !today.After(previous) {
+		return
+	}
+	closed, pnl, err := m.Ops.ClosedSummary(ctx, previous, today)
+	if err != nil {
+		m.Logf("trader: daily summary: %v", err)
+		return
+	}
+	msg := fmt.Sprintf("日次サマリ（%s 〜）: 決済 %d 件、損益 %+.0f 円",
+		previous.In(time.FixedZone("JST", 9*60*60)).Format("1/2 15:04"), closed, pnl)
+	m.Logf("%s", msg)
+	m.Notifier.Notify(Event{Kind: "daily_summary", Message: msg, At: now})
 }
 
 // checkStopsFromREST is the safety net for the quote stream: every poll it

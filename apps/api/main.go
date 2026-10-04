@@ -65,6 +65,7 @@ func main() {
 	universeHandler := handlers.NewUniverseHandler(universeRepo)
 	streamManager := redis.NewStreamManager(redisClient)
 	backtestHandler := handlers.NewBacktestHandler(backtestRepo, strategyRepo, streamManager)
+	botHandler := handlers.NewBotHandler(database.NewBotRepository(db))
 	auditHandler := handlers.NewAuditHandler(audit.NewTraceManager(gormDB, redisClient))
 
 	// Initialize Redis Streams
@@ -106,6 +107,11 @@ func main() {
 		{
 			trades.GET("", orderHandler.GetTrades)
 		}
+
+		// Bot state and controls
+		api.GET("/bot/status", botHandler.GetStatus)
+		api.PUT("/kill-switch/:scope", botHandler.SetKillSwitch)
+		api.PUT("/deployments/:id", botHandler.SetDeploymentEnabled)
 
 		// Strategy types (registered in packages/core/strategy)
 		api.GET("/strategy-types", handlers.GetStrategyTypes)

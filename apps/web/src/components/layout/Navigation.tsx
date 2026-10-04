@@ -28,7 +28,7 @@ export default function Navigation() {
   const pathname = usePathname();
 
   return (
-    <nav className="flex space-x-4 lg:space-x-6">
+    <nav className="flex space-x-4 xl:space-x-6">
       {navigation.map(item => {
         const isActive =
           pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -36,13 +36,14 @@ export default function Navigation() {
           <Link
             key={item.name}
             href={item.href}
+            title={item.name}
             className={cn(
-              'flex items-center space-x-2 text-sm font-medium transition-colors hover:text-primary',
+              'flex items-center space-x-2 whitespace-nowrap text-sm font-medium transition-colors hover:text-primary',
               isActive ? 'text-black dark:text-white' : 'text-muted-foreground'
             )}
           >
             <item.icon className="h-4 w-4" />
-            <span className="hidden md:inline-block">{item.name}</span>
+            <span className="hidden xl:inline-block">{item.name}</span>
           </Link>
         );
       })}

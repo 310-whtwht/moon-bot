@@ -273,3 +273,60 @@ func (s *MySQLStore) RealizedPnL(ctx context.Context, brokerName, accountID stri
 		brokerName, accountID).Scan(&total)
 	return total, err
 }
+
+var (
+	_ KillStore = (*MySQLStore)(nil)
+	_ OpsStore  = (*MySQLStore)(nil)
+)
+
+func (s *MySQLStore) KillSwitches(ctx context.Context) ([]KillSwitch, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT scope, active, close_positions, COALESCE(reason, ''), COALESCE(updated_by, ''), updated_at FROM kill_switches`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []KillSwitch
+	for rows.Next() {
+		var k KillSwitch
+		if err := rows.Scan(&k.Scope, &k.Active, &k.ClosePositions, &k.Reason, &k.UpdatedBy, &k.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// SetKillSwitch turns a switch on or off. Turning it off also clears close_positions.
+func (s *MySQLStore) SetKillSwitch(ctx context.Context, k KillSwitch) error {
+	if !k.Active {
+		k.ClosePositions = false
+	}
+	_, err := s.DB.ExecContext(ctx, `
+INSERT INTO kill_switches (scope, active, close_positions, reason, updated_by, updated_at)
+VALUES (?, ?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE active = VALUES(active), close_positions = VALUES(close_positions),
+  reason = VALUES(reason), updated_by = VALUES(updated_by), updated_at = VALUES(updated_at)`,
+		k.Scope, k.Active, k.ClosePositions, nullable(k.Reason), nullable(k.UpdatedBy), time.Now().UTC())
+	return err
+}
+
+func (s *MySQLStore) Heartbeat(ctx context.Context, instance string, startedAt, now time.Time, pollInterval time.Duration, runners int) error {
+	_, err := s.DB.ExecContext(ctx, `
+INSERT INTO bot_heartbeats (instance, started_at, last_seen_at, poll_interval_seconds, runners)
+VALUES (?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE started_at = VALUES(started_at), last_seen_at = VALUES(last_seen_at),
+  poll_interval_seconds = VALUES(poll_interval_seconds), runners = VALUES(runners)`,
+		instance, startedAt.UTC(), now.UTC(), int(pollInterval.Seconds()), runners)
+	return err
+}
+
+func (s *MySQLStore) ClosedSummary(ctx context.Context, from, to time.Time) (int, float64, error) {
+	var closed int
+	var pnl float64
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(realized_pnl), 0) FROM positions WHERE status = 'closed' AND closed_at >= ? AND closed_at < ?`,
+		from.UTC(), to.UTC()).Scan(&closed, &pnl)
+	return closed, pnl, err
+}
