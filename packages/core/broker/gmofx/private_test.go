@@ -329,3 +329,50 @@ func TestSubscribeExecutionsNotYetSupported(t *testing.T) {
 	_, err := p.SubscribeExecutions(context.Background())
 	assert.ErrorIs(t, err, broker.ErrNotSupported)
 }
+
+func TestProtectiveStopAndOrderActive(t *testing.T) {
+	f, p := newFakeAPI(t)
+	f.on("POST /v1/closeOrder", `{"status":0,"data":[{"rootOrderId":55,"orderId":55,"symbol":"USD_JPY","side":"SELL","executionType":"STOP","settleType":"CLOSE","size":"100","price":"149.5","status":"WAITING"}]}`)
+
+	ack, err := p.PlaceProtectiveStop(context.Background(), broker.StopOrder{
+		ClientOrderID: "dddddddd-pstop-aaaaaaaa", Symbol: "USD_JPY", PositionID: "1000342",
+		Side: broker.SideSell, Size: dec("100"), StopPrice: dec("149.5"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "55", ack.OrderID)
+	assert.Equal(t, "WAITING", ack.Status)
+
+	var sent map[string]any
+	require.NoError(t, json.Unmarshal([]byte(f.last().Body), &sent))
+	assert.Equal(t, "STOP", sent["executionType"])
+	assert.Equal(t, "149.5", sent["stopPrice"])
+	assert.Equal(t, "SELL", sent["side"])
+	assert.NotContains(t, sent, "limitPrice")
+
+	statuses := map[string]string{"55": "ORDERED", "56": "EXECUTED", "57": "EXPIRED", "58": "CANCELED"}
+	f.handlers["GET /v1/orders"] = func(_ int, w http.ResponseWriter, r recorded) {
+		id := r.Query[len("orderId="):]
+		if st, ok := statuses[id]; ok {
+			fmt.Fprintf(w, `{"status":0,"data":{"list":[{"orderId":%s,"status":%q}]}}`, id, st)
+			return
+		}
+		fmt.Fprint(w, `{"status":0,"data":{"list":[]}}`)
+	}
+	for id, want := range map[string]bool{"55": true, "56": false, "57": false, "58": false, "999": false} {
+		active, err := p.OrderActive(context.Background(), id)
+		require.NoError(t, err)
+		assert.Equal(t, want, active, "order %s", id)
+	}
+}
+
+func TestRecentExecutions(t *testing.T) {
+	f, p := newFakeAPI(t)
+	f.on("GET /v1/latestExecutions", executionsJSON)
+
+	execs, err := p.RecentExecutions(context.Background(), "USD_JPY")
+	require.NoError(t, err)
+	assert.Equal(t, "symbol=USD_JPY", f.last().Query)
+	require.Len(t, execs, 2)
+	assert.Equal(t, "CLOSE", execs[0].SettleType)
+	assert.Equal(t, "2234567", execs[0].PositionID)
+}

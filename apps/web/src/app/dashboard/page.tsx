@@ -297,6 +297,11 @@ export default function DashboardPage() {
                       </td>
                       <td className="py-2 pr-3 text-right">
                         {p.stop_price != null ? p.stop_price.toFixed(3) : '—'}
+                        <div className="text-xs text-muted-foreground">
+                          {p.stop_order_id
+                            ? 'ブローカーに逆指値あり'
+                            : 'bot が監視'}
+                        </div>
                       </td>
                       <td className="py-2 whitespace-nowrap">
                         {dateTime(p.opened_at)}

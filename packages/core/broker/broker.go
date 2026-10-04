@@ -151,3 +151,29 @@ type OrderLookup interface {
 	// trace of it in its recent history.
 	FindOrder(ctx context.Context, symbol, clientOrderID string) (fills []Execution, found bool, err error)
 }
+
+// StopOrder is a protective stop held at the broker: it closes the position
+// at market once the price reaches StopPrice, even while the bot is down.
+type StopOrder struct {
+	ClientOrderID string
+	Symbol        string
+	PositionID    string
+	Side          Side // the closing side: SELL for a long position, BUY for a short
+	Size          decimal.Decimal
+	StopPrice     decimal.Decimal
+}
+
+// ProtectiveStopper is implemented by brokers that can hold stop orders.
+type ProtectiveStopper interface {
+	PlaceProtectiveStop(ctx context.Context, order StopOrder) (OrderAck, error)
+	// OrderActive reports whether an order is still working (not filled,
+	// cancelled or expired).
+	OrderActive(ctx context.Context, orderID string) (bool, error)
+}
+
+// ExecutionHistory is implemented by brokers that can list recent fills,
+// used to learn how a position was closed when the bot did not close it
+// (a stop order, a margin call, a manual trade).
+type ExecutionHistory interface {
+	RecentExecutions(ctx context.Context, symbol string) ([]Execution, error)
+}

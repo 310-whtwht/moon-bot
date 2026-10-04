@@ -21,6 +21,8 @@ type Config struct {
 type TraderConfig struct {
 	Enabled             bool
 	PollInterval        time.Duration
+	// ReconcileInterval is how often positions are compared with the broker.
+	ReconcileInterval time.Duration
 	PaperInitialBalance float64
 	AccountLimits       risk.Limits
 	GlobalLimits        risk.Limits
@@ -102,6 +104,7 @@ func Load() *Config {
 		Trader: TraderConfig{
 			Enabled:             getEnv("TRADER_ENABLED", "true") == "true",
 			PollInterval:        getDuration("TRADER_POLL_INTERVAL", 30*time.Second),
+			ReconcileInterval:   getDuration("TRADER_RECONCILE_INTERVAL", 5*time.Minute),
 			PaperInitialBalance: getFloat("PAPER_INITIAL_BALANCE", 30000),
 			KillSwitch:          getEnv("KILL_SWITCH", "false") == "true",
 			SlackWebhookURL:     getEnv("SLACK_WEBHOOK_URL", ""),

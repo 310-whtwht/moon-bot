@@ -132,6 +132,17 @@ func (s *memStore) InsertPosition(_ context.Context, p Position) error {
 	return nil
 }
 
+func (s *memStore) SetPositionStopOrder(_ context.Context, id, stopOrderID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.positions {
+		if p.ID == id {
+			p.StopOrderID = stopOrderID
+		}
+	}
+	return nil
+}
+
 func (s *memStore) ClosePosition(_ context.Context, id string, price, pnl, _ decimal.Decimal, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

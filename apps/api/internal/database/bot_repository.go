@@ -144,21 +144,23 @@ func (r *BotRepository) SetDeploymentEnabled(ctx context.Context, id string, ena
 }
 
 type Position struct {
-	ID           string     `json:"id"`
-	DeploymentID *string    `json:"deployment_id"`
-	Broker       string     `json:"broker"`
-	AccountID    string     `json:"account_id"`
-	Symbol       string     `json:"symbol"`
-	Side         string     `json:"side"`
-	Quantity     float64    `json:"quantity"`
-	OpenPrice    float64    `json:"open_price"`
-	StopPrice    *float64   `json:"stop_price"`
-	ClosePrice   *float64   `json:"close_price"`
-	RealizedPnL  *float64   `json:"realized_pnl"`
-	Fees         float64    `json:"fees"`
-	Status       string     `json:"status"`
-	OpenedAt     time.Time  `json:"opened_at"`
-	ClosedAt     *time.Time `json:"closed_at"`
+	ID           string   `json:"id"`
+	DeploymentID *string  `json:"deployment_id"`
+	Broker       string   `json:"broker"`
+	AccountID    string   `json:"account_id"`
+	Symbol       string   `json:"symbol"`
+	Side         string   `json:"side"`
+	Quantity     float64  `json:"quantity"`
+	OpenPrice    float64  `json:"open_price"`
+	StopPrice    *float64 `json:"stop_price"`
+	// StopOrderID is set when the stop is also held at the broker.
+	StopOrderID *string    `json:"stop_order_id"`
+	ClosePrice  *float64   `json:"close_price"`
+	RealizedPnL *float64   `json:"realized_pnl"`
+	Fees        float64    `json:"fees"`
+	Status      string     `json:"status"`
+	OpenedAt    time.Time  `json:"opened_at"`
+	ClosedAt    *time.Time `json:"closed_at"`
 }
 
 // Positions returns open positions, or the most recently closed ones.
@@ -168,7 +170,7 @@ func (r *BotRepository) Positions(ctx context.Context, status string, limit int)
 		order = "closed_at DESC"
 	}
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, deployment_id, broker, account_id, symbol, side, quantity, open_price, stop_price, close_price,
+SELECT id, deployment_id, broker, account_id, symbol, side, quantity, open_price, stop_price, stop_order_id, close_price,
   realized_pnl, fees, status, opened_at, closed_at
 FROM positions WHERE status = ? ORDER BY `+order+` LIMIT ?`, status, limit)
 	if err != nil {
@@ -180,7 +182,7 @@ FROM positions WHERE status = ? ORDER BY `+order+` LIMIT ?`, status, limit)
 	for rows.Next() {
 		var p Position
 		if err := rows.Scan(&p.ID, &p.DeploymentID, &p.Broker, &p.AccountID, &p.Symbol, &p.Side, &p.Quantity,
-			&p.OpenPrice, &p.StopPrice, &p.ClosePrice, &p.RealizedPnL, &p.Fees, &p.Status, &p.OpenedAt, &p.ClosedAt); err != nil {
+			&p.OpenPrice, &p.StopPrice, &p.StopOrderID, &p.ClosePrice, &p.RealizedPnL, &p.Fees, &p.Status, &p.OpenedAt, &p.ClosedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

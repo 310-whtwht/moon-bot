@@ -42,6 +42,8 @@ export interface Position {
   quantity: number;
   open_price: number;
   stop_price: number | null;
+  /** Set when the stop is also held at the broker (works while the bot is down). */
+  stop_order_id: string | null;
   close_price: number | null;
   realized_pnl: number | null;
   fees: number;

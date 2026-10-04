@@ -89,21 +89,22 @@ func (s *MySQLStore) withParams(ctx context.Context, v Version) (Version, error)
 }
 
 const positionColumns = `id, deployment_id, broker, account_id, broker_position_id, symbol, side, quantity,
-open_price, stop_price, fees, strategy_id, strategy_version_id, opened_at`
+open_price, stop_price, stop_order_id, fees, strategy_id, strategy_version_id, opened_at`
 
 func scanPosition(scan func(...any) error) (Position, error) {
 	var p Position
-	var deploymentID, brokerPositionID, strategyID, versionID sql.NullString
+	var deploymentID, brokerPositionID, strategyID, versionID, stopOrderID sql.NullString
 	var side string
 	var stop decimal.NullDecimal
 	err := scan(&p.ID, &deploymentID, &p.Broker, &p.AccountID, &brokerPositionID, &p.Symbol, &side, &p.Units,
-		&p.OpenPrice, &stop, &p.Fees, &strategyID, &versionID, &p.OpenedAt)
+		&p.OpenPrice, &stop, &stopOrderID, &p.Fees, &strategyID, &versionID, &p.OpenedAt)
 	if err != nil {
 		return Position{}, err
 	}
 	p.DeploymentID, p.BrokerPositionID = deploymentID.String, brokerPositionID.String
 	p.StrategyID, p.StrategyVersionID = strategyID.String, versionID.String
 	p.StopPrice = stop.Decimal
+	p.StopOrderID = stopOrderID.String
 	p.Side = sideFromDB(side)
 	p.OpenedAt = p.OpenedAt.UTC()
 	return p, nil
@@ -227,11 +228,16 @@ func (s *MySQLStore) MarkOrderUnknown(ctx context.Context, clientOrderID, reason
 func (s *MySQLStore) InsertPosition(ctx context.Context, p Position) error {
 	_, err := s.DB.ExecContext(ctx, `
 INSERT INTO positions (id, deployment_id, broker, account_id, broker_position_id, symbol, side, quantity,
-  open_price, stop_price, fees, strategy_id, strategy_version_id, status, opened_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)`,
+  open_price, stop_price, stop_order_id, fees, strategy_id, strategy_version_id, status, opened_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)`,
 		p.ID, nullable(p.DeploymentID), p.Broker, p.AccountID, nullable(p.BrokerPositionID), p.Symbol, sideToDB(p.Side),
-		p.Units.String(), p.OpenPrice.String(), p.StopPrice.String(), p.Fees.String(),
+		p.Units.String(), p.OpenPrice.String(), p.StopPrice.String(), nullable(p.StopOrderID), p.Fees.String(),
 		nullable(p.StrategyID), nullable(p.StrategyVersionID), p.OpenedAt.UTC())
+	return err
+}
+
+func (s *MySQLStore) SetPositionStopOrder(ctx context.Context, positionID, stopOrderID string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE positions SET stop_order_id = ? WHERE id = ?`, nullable(stopOrderID), positionID)
 	return err
 }
 

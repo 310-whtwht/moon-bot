@@ -161,6 +161,8 @@ type Broker interface {
 
 > 実装は2つの PR に分ける。**4a**: 4-1 / 4-2 / 4-4b / 4-5（署名・レート制限・REST の各 API、結果不明の注文の照合、本番ガード）。**4b**: 4-3 / 4-4（Private WebSocket、建玉の照合）と、ブローカー側の逆指値注文、API の認証。
 >
+> 4b（この PR）では、本番前に必須の2点を実装: **ブローカー側の逆指値注文**（`closeOrder` の STOP を建玉ごとに置く）と**建玉の照合**（4-4）。Private WebSocket（4-3）と API の認証は **4c** に分ける。REST のポーリングで機能は足りており、WebSocket は反応速度の改善が目的のため。
+>
 > 4a で公式ドキュメントから確認した仕様（着手前の要確認事項の回答）:
 > - 署名対象は `timestamp + method + path + body`。path は `/v1` 始まり、GET はボディ空で**クエリ文字列は含めない**
 > - WebSocket 用トークンは `POST / PUT / DELETE /v1/ws-auth`（有効60分、延長で60分に戻る、最大5個）。接続先は `wss://forex-api.coin.z.com/ws/private/v1/{token}`、チャンネルは `executionEvents` など

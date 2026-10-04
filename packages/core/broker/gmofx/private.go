@@ -66,8 +66,10 @@ type Private struct {
 }
 
 var (
-	_ broker.Broker      = (*Private)(nil)
-	_ broker.OrderLookup = (*Private)(nil)
+	_ broker.Broker            = (*Private)(nil)
+	_ broker.OrderLookup       = (*Private)(nil)
+	_ broker.ProtectiveStopper = (*Private)(nil)
+	_ broker.ExecutionHistory  = (*Private)(nil)
 )
 
 // gate spaces calls at least `interval` apart.
@@ -486,16 +488,12 @@ func (p *Private) FindOrder(ctx context.Context, symbol, clientOrderID string) (
 		return nil, false, errors.New("gmofx: empty client order id")
 	}
 
-	q := url.Values{}
-	q.Set("symbol", symbol)
-	var execs struct {
-		List []executionPayload `json:"list"`
-	}
-	if err := p.call(ctx, http.MethodGet, "/v1/latestExecutions", q, nil, &execs); err != nil {
+	latest, err := p.latestExecutions(ctx, symbol)
+	if err != nil {
 		return nil, false, err
 	}
 	var fills []broker.Execution
-	for _, e := range execs.List {
+	for _, e := range latest {
 		if e.ClientOrderID == want {
 			fills = append(fills, e.execution())
 		}
@@ -503,6 +501,9 @@ func (p *Private) FindOrder(ctx context.Context, symbol, clientOrderID string) (
 	if len(fills) > 0 {
 		return fills, true, nil
 	}
+
+	q := url.Values{}
+	q.Set("symbol", symbol)
 
 	var active struct {
 		List []struct {
@@ -520,7 +521,66 @@ func (p *Private) FindOrder(ctx context.Context, symbol, clientOrderID string) (
 	return nil, false, nil
 }
 
-// SubscribeExecutions (private WebSocket) is added in Phase 4b.
+// latestExecutions returns the fills of the last day, newest first (up to 100).
+func (p *Private) latestExecutions(ctx context.Context, symbol string) ([]executionPayload, error) {
+	q := url.Values{}
+	q.Set("symbol", symbol)
+	var data struct {
+		List []executionPayload `json:"list"`
+	}
+	if err := p.call(ctx, http.MethodGet, "/v1/latestExecutions", q, nil, &data); err != nil {
+		return nil, err
+	}
+	return data.List, nil
+}
+
+// RecentExecutions lists the fills of the last day for a symbol (up to 100).
+func (p *Private) RecentExecutions(ctx context.Context, symbol string) ([]broker.Execution, error) {
+	latest, err := p.latestExecutions(ctx, symbol)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]broker.Execution, 0, len(latest))
+	for _, e := range latest {
+		out = append(out, e.execution())
+	}
+	return out, nil
+}
+
+// PlaceProtectiveStop places a STOP close order on one position. It stays at
+// GMO and executes there, so the stop works while the bot is down.
+func (p *Private) PlaceProtectiveStop(ctx context.Context, order broker.StopOrder) (broker.OrderAck, error) {
+	price := order.StopPrice
+	return p.PlaceClose(ctx, broker.CloseOrder{
+		ClientOrderID: order.ClientOrderID, Symbol: order.Symbol, PositionID: order.PositionID,
+		Side: order.Side, Type: broker.OrderStop, Size: order.Size, Price: &price,
+	})
+}
+
+// activeStatuses are the order states in which an order can still execute.
+var activeStatuses = map[string]bool{"WAITING": true, "ORDERED": true, "MODIFYING": true}
+
+// OrderActive reports whether an order is still working (GET /v1/orders?orderId=).
+func (p *Private) OrderActive(ctx context.Context, orderID string) (bool, error) {
+	q := url.Values{}
+	q.Set("orderId", orderID)
+	var data struct {
+		List []struct {
+			Status string `json:"status"`
+		} `json:"list"`
+	}
+	if err := p.call(ctx, http.MethodGet, "/v1/orders", q, nil, &data); err != nil {
+		return false, err
+	}
+	for _, o := range data.List {
+		if activeStatuses[o.Status] {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// SubscribeExecutions (private WebSocket) is added in a later phase.
 func (p *Private) SubscribeExecutions(ctx context.Context) (<-chan broker.Execution, error) {
 	return nil, broker.ErrNotSupported
 }

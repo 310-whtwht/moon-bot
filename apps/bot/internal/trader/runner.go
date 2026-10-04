@@ -33,6 +33,8 @@ type Config struct {
 	// whose result is unknown.
 	FillPollInterval time.Duration
 	FillPollAttempts int
+	// ReconcileInterval is how often positions are compared with the broker.
+	ReconcileInterval time.Duration
 }
 
 // HardMaxLiveUnits caps the size of any order sent to a real-money broker,
@@ -57,6 +59,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.FillPollAttempts == 0 {
 		c.FillPollAttempts = 10
+	}
+	if c.ReconcileInterval == 0 {
+		c.ReconcileInterval = 5 * time.Minute
 	}
 	return c
 }
@@ -89,6 +94,11 @@ type Runner struct {
 	// pendingExit is the reason of an exit that could not be executed yet
 	// (market closed, broker error). It is retried on every poll and tick.
 	pendingExit string
+
+	lastReconcile time.Time
+	lastMismatch  string // the mismatch already reported, to avoid repeating it
+	tickSize      decimal.Decimal
+	tickLoaded    bool
 }
 
 // SetDeployment updates the deployment settings (e.g. enabled flag).
@@ -116,6 +126,13 @@ func (r *Runner) Poll(ctx context.Context) error {
 			return fmt.Errorf("load position: %w", err)
 		}
 		r.pos, r.loaded = pos, true
+	}
+	if r.now().Sub(r.lastReconcile) >= r.cfg.ReconcileInterval {
+		// Not fatal: a failed check is logged and tried again on the next poll.
+		if err := r.reconcile(ctx); err != nil {
+			r.lastReconcile = time.Time{}
+			r.logf("%s: %v", r.dep.Name, err)
+		}
 	}
 	if err := r.retryPendingExit(ctx); err != nil {
 		return err
@@ -409,12 +426,16 @@ func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDis
 	if side == broker.SideSell {
 		stop = tick.Ask.Add(dist)
 	}
+	stop = r.roundToTick(ctx, stop)
 	pos := Position{
 		ID: uuid.NewString(), DeploymentID: r.dep.ID, Broker: r.dep.Broker, AccountID: r.dep.AccountID,
 		BrokerPositionID: fill.BrokerPositionID, Symbol: r.dep.Symbol, Side: side, Units: fill.Size,
 		OpenPrice: fill.Price, StopPrice: stop, Fees: fill.Fee,
 		StrategyID: r.dep.StrategyID, StrategyVersionID: r.version.ID, OpenedAt: fill.At,
 	}
+	// The stop goes to the broker first, so the position row already carries
+	// the stop order's ID when it is written.
+	r.placeProtectiveStop(ctx, &pos)
 	if err := r.store.InsertPosition(ctx, pos); err != nil {
 		return fmt.Errorf("record position: %w", err)
 	}
@@ -582,6 +603,15 @@ func (r *Runner) close(ctx context.Context, tag, reason string) error {
 		return nil
 	}
 
+	stillOpen, err := r.cancelProtectiveStop(ctx)
+	if err != nil {
+		r.pendingExit = reason
+		return err
+	}
+	if !stillOpen {
+		return nil
+	}
+
 	side := broker.SideSell
 	if pos.Side == broker.SideSell {
 		side = broker.SideBuy
@@ -668,6 +698,14 @@ func (r *Runner) OnTick(ctx context.Context, tick market.Tick) error {
 	if !hit {
 		return nil
 	}
+	if r.pos.StopOrderID != "" {
+		// The broker holds the stop and executes it itself; sending our own
+		// close would race with it. Just learn the outcome (at most every 5 s).
+		if r.now().Sub(r.lastReconcile) < 5*time.Second {
+			return nil
+		}
+		return r.reconcile(ctx)
+	}
 	// One order ID per position and minute: a burst of ticks cannot double-close.
 	tag := fmt.Sprintf("stop-%s-%d", r.pos.ID[:8], r.now().Unix()/60)
 	if err := r.close(ctx, tag, "stop"); err != nil {
@@ -675,6 +713,28 @@ func (r *Runner) OnTick(ctx context.Context, tick market.Tick) error {
 		return err
 	}
 	return nil
+}
+
+// roundToTick rounds a price to the instrument's tick size (a stop price off
+// the tick grid is rejected by real brokers). The tick size is read once.
+func (r *Runner) roundToTick(ctx context.Context, price decimal.Decimal) decimal.Decimal {
+	if !r.tickLoaded {
+		r.tickLoaded = true
+		instruments, err := r.broker.Instruments(ctx)
+		if err != nil {
+			r.tickLoaded = false
+			r.logf("%s: instruments: %v", r.dep.Name, err)
+		}
+		for _, in := range instruments {
+			if in.Key.Symbol == r.dep.Symbol {
+				r.tickSize = in.TickSize
+			}
+		}
+	}
+	if !r.tickSize.IsPositive() {
+		return price
+	}
+	return price.DivRound(r.tickSize, 0).Mul(r.tickSize)
 }
 
 func (r *Runner) notify(kind, msg string) {
