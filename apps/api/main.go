@@ -63,11 +63,11 @@ func main() {
 	strategyHandler := handlers.NewStrategyHandler(strategyRepo)
 	orderHandler := handlers.NewOrderHandler(orderRepo)
 	universeHandler := handlers.NewUniverseHandler(universeRepo)
-	backtestHandler := handlers.NewBacktestHandler(backtestRepo)
+	streamManager := redis.NewStreamManager(redisClient)
+	backtestHandler := handlers.NewBacktestHandler(backtestRepo, strategyRepo, streamManager)
 	auditHandler := handlers.NewAuditHandler(audit.NewTraceManager(gormDB, redisClient))
 
 	// Initialize Redis Streams
-	streamManager := redis.NewStreamManager(redisClient)
 	if err := streamManager.InitializeStreams(context.Background()); err != nil {
 		log.Fatalf("Failed to initialize Redis streams: %v", err)
 	}
@@ -94,8 +94,8 @@ func main() {
 		// Orders
 		orders := api.Group("/orders")
 		{
-			orders.GET("/", orderHandler.GetOrders)
-			orders.POST("/", orderHandler.CreateOrder)
+			orders.GET("", orderHandler.GetOrders)
+			orders.POST("", orderHandler.CreateOrder)
 			orders.GET("/:id", orderHandler.GetOrder)
 			orders.PUT("/:id", orderHandler.UpdateOrder)
 			orders.DELETE("/:id", orderHandler.CancelOrder)
@@ -104,14 +104,17 @@ func main() {
 		// Trades
 		trades := api.Group("/trades")
 		{
-			trades.GET("/", orderHandler.GetTrades)
+			trades.GET("", orderHandler.GetTrades)
 		}
+
+		// Strategy types (registered in packages/core/strategy)
+		api.GET("/strategy-types", handlers.GetStrategyTypes)
 
 		// Strategies
 		strategies := api.Group("/strategies")
 		{
-			strategies.GET("/", strategyHandler.GetStrategies)
-			strategies.POST("/", strategyHandler.CreateStrategy)
+			strategies.GET("", strategyHandler.GetStrategies)
+			strategies.POST("", strategyHandler.CreateStrategy)
 			strategies.GET("/:id", strategyHandler.GetStrategy)
 			strategies.PUT("/:id", strategyHandler.UpdateStrategy)
 			strategies.DELETE("/:id", strategyHandler.DeleteStrategy)
@@ -122,8 +125,8 @@ func main() {
 		// Backtests
 		backtests := api.Group("/backtests")
 		{
-			backtests.GET("/", backtestHandler.GetBacktests)
-			backtests.POST("/", backtestHandler.CreateBacktest)
+			backtests.GET("", backtestHandler.GetBacktests)
+			backtests.POST("", backtestHandler.CreateBacktest)
 			backtests.GET("/:id", backtestHandler.GetBacktest)
 			backtests.DELETE("/:id", backtestHandler.DeleteBacktest)
 			backtests.POST("/:id/cancel", backtestHandler.CancelBacktest)
@@ -132,8 +135,8 @@ func main() {
 		// Universe
 		universe := api.Group("/universe")
 		{
-			universe.GET("/", universeHandler.GetUniverse)
-			universe.POST("/", universeHandler.AddSymbol)
+			universe.GET("", universeHandler.GetUniverse)
+			universe.POST("", universeHandler.AddSymbol)
 			universe.DELETE("/:symbol", universeHandler.RemoveSymbol)
 			universe.POST("/bulk", universeHandler.BulkAddSymbols)
 		}
@@ -141,7 +144,7 @@ func main() {
 		// Audit traces
 		audit := api.Group("/audit/traces")
 		{
-			audit.POST("/", auditHandler.CreateTrace)
+			audit.POST("", auditHandler.CreateTrace)
 			audit.GET("/:id", auditHandler.GetTraceByID)
 			audit.GET("/:id/chain", auditHandler.GetTraceChain)
 			audit.GET("/strategy/:strategy_id", auditHandler.GetTracesByStrategy)

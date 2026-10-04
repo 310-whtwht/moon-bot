@@ -26,6 +26,11 @@ type StrategyVersion struct {
 	IsActive    bool      `json:"is_active" db:"is_active"`
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+
+	// StrategyType is Code interpreted as a registered strategy type
+	// (empty for legacy versions whose code is not a known type).
+	StrategyType string             `json:"strategy_type"`
+	Params       map[string]float64 `json:"params"`
 }
 
 // StrategyParam represents a strategy parameter

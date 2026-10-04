@@ -120,8 +120,6 @@ temp/
 *.db
 *.sqlite
 
-# Docker
-.dockerignore
 
 # Binaries
 bin/

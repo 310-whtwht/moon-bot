@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/moomoo-trading/core/backtest"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -167,6 +168,19 @@ func (sm *StreamManager) PublishOrderEvent(ctx context.Context, event map[string
 		return fmt.Errorf("failed to publish order event: %w", err)
 	}
 
+	return nil
+}
+
+// PublishBacktestJob queues a backtest for the bot (stream backtest_jobs).
+// The bot creates the consumer group, so the API only appends.
+func (sm *StreamManager) PublishBacktestJob(ctx context.Context, backtestID string) error {
+	_, err := sm.client.XAdd(ctx, &redis.XAddArgs{
+		Stream: backtest.JobStream,
+		Values: map[string]interface{}{backtest.JobField: backtestID},
+	}).Result()
+	if err != nil {
+		return fmt.Errorf("failed to publish backtest job: %w", err)
+	}
 	return nil
 }
 

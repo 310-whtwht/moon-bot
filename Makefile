@@ -12,7 +12,7 @@ help: ## Show this help message
 
 dev: ## Start development environment
 	@echo "Starting development environment..."
-	docker compose up -d mysql redis api web
+	docker compose up -d mysql redis api bot web
 	@echo "Development environment started!"
 	@echo "API: http://localhost:8081"
 	@echo "Web: http://localhost:3001"

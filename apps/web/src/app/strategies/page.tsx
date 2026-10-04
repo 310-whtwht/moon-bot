@@ -62,9 +62,7 @@ export default function StrategiesPage() {
       }
       await fetchStrategies();
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : '戦略の削除に失敗しました'
-      );
+      setError(err instanceof Error ? err.message : '戦略の削除に失敗しました');
     }
   };
 
@@ -93,9 +91,7 @@ export default function StrategiesPage() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold">戦略管理</h1>
-          <p className="text-muted-foreground">
-            トレーディング戦略の管理
-          </p>
+          <p className="text-muted-foreground">トレーディング戦略の管理</p>
         </div>
         <Link href="/strategies/new">
           <Button>

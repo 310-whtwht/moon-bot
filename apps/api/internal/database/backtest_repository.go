@@ -71,14 +71,15 @@ func (r *BacktestRepository) GetBacktestByID(ctx context.Context, id string) (*B
 	`
 
 	var backtest Backtest
-	var symbolsJSON []byte
+	var symbolsJSON, params, results []byte
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&backtest.ID, &backtest.Name, &backtest.StrategyID, &symbolsJSON, &backtest.StartDate, &backtest.EndDate,
-		&backtest.Parameters, &backtest.Status, &backtest.Progress, &backtest.Results, &backtest.Error,
+		&params, &backtest.Status, &backtest.Progress, &results, &backtest.Error,
 		&backtest.CreatedAt, &backtest.UpdatedAt, &backtest.CompletedAt)
 	if err != nil {
 		return nil, err
 	}
+	backtest.Parameters, backtest.Results = nullableJSON(params), nullableJSON(results)
 
 	// Parse symbols JSON
 	if err := json.Unmarshal(symbolsJSON, &backtest.Symbols); err != nil {
@@ -117,14 +118,15 @@ func (r *BacktestRepository) ListBacktests(ctx context.Context, strategyID, stat
 	var backtests []*Backtest
 	for rows.Next() {
 		var backtest Backtest
-		var symbolsJSON []byte
+		var symbolsJSON, params, results []byte
 		err := rows.Scan(
 			&backtest.ID, &backtest.Name, &backtest.StrategyID, &symbolsJSON, &backtest.StartDate, &backtest.EndDate,
-			&backtest.Parameters, &backtest.Status, &backtest.Progress, &backtest.Results, &backtest.Error,
+			&params, &backtest.Status, &backtest.Progress, &results, &backtest.Error,
 			&backtest.CreatedAt, &backtest.UpdatedAt, &backtest.CompletedAt)
 		if err != nil {
 			return nil, err
 		}
+		backtest.Parameters, backtest.Results = nullableJSON(params), nullableJSON(results)
 
 		// Parse symbols JSON
 		if err := json.Unmarshal(symbolsJSON, &backtest.Symbols); err != nil {
@@ -183,4 +185,13 @@ func (r *BacktestRepository) DeleteBacktest(ctx context.Context, id string) erro
 	query := `DELETE FROM backtests WHERE id = ?`
 	_, err := r.db.ExecContext(ctx, query, id)
 	return err
+}
+// nullableJSON turns a nullable JSON column into a RawMessage. Scanning NULL
+// directly into json.RawMessage fails, so columns are read as []byte first;
+// NULL becomes JSON null in responses.
+func nullableJSON(b []byte) json.RawMessage {
+	if b == nil {
+		return nil
+	}
+	return json.RawMessage(b)
 }

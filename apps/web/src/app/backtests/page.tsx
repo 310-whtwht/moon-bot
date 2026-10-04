@@ -20,35 +20,13 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import Link from 'next/link';
-
-interface BacktestParameters {
-  [key: string]: string | number | boolean;
-}
-
-interface BacktestResults {
-  total_return: number;
-  sharpe_ratio: number;
-  max_drawdown: number;
-  win_rate: number;
-  total_trades: number;
-}
-
-interface Backtest {
-  id: string;
-  name: string;
-  strategy_id: string;
-  symbols: string[];
-  start_date: string;
-  end_date: string;
-  parameters: BacktestParameters;
-  status: string;
-  progress: number;
-  results: BacktestResults | null;
-  error?: string;
-  created_at: string;
-  updated_at: string;
-  completed_at?: string;
-}
+import {
+  type Backtest,
+  STATUS_LABELS,
+  formatPercent,
+  formatYen,
+  parseResult,
+} from '@/lib/backtest';
 
 interface Strategy {
   id: string;
@@ -135,17 +113,6 @@ export default function BacktestsPage() {
       default:
         return 'bg-yellow-100 text-yellow-800';
     }
-  };
-
-  const formatNumber = (num: number) => {
-    return new Intl.NumberFormat('en-US', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(num);
-  };
-
-  const formatPercentage = (num: number) => {
-    return `${num >= 0 ? '+' : ''}${formatNumber(num)}%`;
   };
 
   const filteredBacktests = backtests.filter(backtest => {
@@ -243,11 +210,7 @@ export default function BacktestsPage() {
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {filteredBacktests.map(backtest => {
             const strategy = strategies.get(backtest.strategy_id);
-            const results = backtest.results
-              ? typeof backtest.results === 'string'
-                ? JSON.parse(backtest.results)
-                : backtest.results
-              : null;
+            const metrics = parseResult(backtest.results)?.metrics;
 
             return (
               <Card
@@ -265,7 +228,7 @@ export default function BacktestsPage() {
                     <div className="flex items-center gap-1">
                       {getStatusIcon(backtest.status)}
                       <Badge className={getStatusColor(backtest.status)}>
-                        {backtest.status}
+                        {STATUS_LABELS[backtest.status] ?? backtest.status}
                       </Badge>
                     </div>
                   </div>
@@ -303,35 +266,38 @@ export default function BacktestsPage() {
                       </div>
                     )}
 
-                    {backtest.status === 'completed' && results && (
+                    {backtest.status === 'completed' && metrics && (
                       <div className="grid grid-cols-2 gap-2 text-sm">
                         <div>
-                          <span className="font-medium">Return:</span>
+                          <span className="font-medium">損益:</span>
                           <div
-                            className={`font-bold ${results.total_return >= 0 ? 'text-green-600' : 'text-red-600'}`}
+                            className={`font-bold ${metrics.net_profit >= 0 ? 'text-green-600' : 'text-red-600'}`}
                           >
-                            {formatPercentage(results.total_return)}
+                            {formatYen(metrics.net_profit)}
                           </div>
                         </div>
                         <div>
-                          <span className="font-medium">Sharpe:</span>
+                          <span className="font-medium">PF:</span>
                           <div className="font-bold">
-                            {formatNumber(results.sharpe_ratio)}
+                            {metrics.profit_factor
+                              ? metrics.profit_factor.toFixed(2)
+                              : '—'}
                           </div>
                         </div>
                         <div>
-                          <span className="font-medium">Max DD:</span>
+                          <span className="font-medium">最大DD:</span>
                           <div className="font-bold text-red-600">
-                            {formatPercentage(results.max_drawdown)}
+                            {formatPercent(metrics.max_drawdown)}
                           </div>
                         </div>
                         <div>
-                          <span className="font-medium">Win Rate:</span>
-                          <div className="font-bold">
-                            {formatNumber(results.win_rate)}%
-                          </div>
+                          <span className="font-medium">取引数:</span>
+                          <div className="font-bold">{metrics.num_trades}</div>
                         </div>
                       </div>
+                    )}
+                    {backtest.status === 'failed' && backtest.error && (
+                      <p className="text-sm text-red-600">{backtest.error}</p>
                     )}
 
                     <div className="flex gap-2 pt-2">

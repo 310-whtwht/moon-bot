@@ -1,24 +1,21 @@
+# Build context: repository root (docker compose sets it), because the API
+# imports packages/core through a replace directive.
 FROM golang:1.24-alpine
 
-WORKDIR /app
-
-# Install git, ca-certificates, and curl
 RUN apk add --no-cache git ca-certificates curl
 
-# Copy go mod files
-COPY go.mod go.sum ./
-
-# Download dependencies
+WORKDIR /src
+COPY packages/core/go.mod packages/core/go.sum packages/core/
+COPY apps/api/go.mod apps/api/go.sum apps/api/
+WORKDIR /src/apps/api
 RUN go mod download
 
-# Copy source code
-COPY . .
+WORKDIR /src
+COPY packages/core packages/core
+COPY apps/api apps/api
+WORKDIR /src/apps/api
+RUN go build -o /app/main .
 
-# Build the application
-RUN go build -o main .
-
-# Expose port
+WORKDIR /app
 EXPOSE 8081
-
-# Start the application
 CMD ["./main"]

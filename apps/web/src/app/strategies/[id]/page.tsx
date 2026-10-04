@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowLeft, Edit, Play, Plus, Trash2, Code } from 'lucide-react';
 import Link from 'next/link';
+import { type StrategyVersion, formatParams } from '@/lib/backtest';
 
 interface Strategy {
   id: string;
@@ -21,17 +22,6 @@ interface Strategy {
   description?: string;
   author: string;
   is_public: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-interface StrategyVersion {
-  id: string;
-  package_id: string;
-  version: string;
-  code: string;
-  description?: string;
-  is_active: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -229,7 +219,7 @@ export default function StrategyDetailPage() {
           <Tabs defaultValue="versions" className="w-full">
             <TabsList>
               <TabsTrigger value="versions">Versions</TabsTrigger>
-              <TabsTrigger value="code">Code</TabsTrigger>
+              <TabsTrigger value="code">パラメータ</TabsTrigger>
               <TabsTrigger value="backtests">Backtests</TabsTrigger>
             </TabsList>
 
@@ -277,8 +267,13 @@ export default function StrategyDetailPage() {
                                 <Badge variant="default">Active</Badge>
                               )}
                             </div>
+                            <p className="text-sm mt-1 font-mono">
+                              {version.strategy_type
+                                ? `${version.strategy_type} ${formatParams(version.params)}`
+                                : '旧形式（実行できません）'}
+                            </p>
                             <p className="text-sm text-muted-foreground mt-1">
-                              {version.description || 'No description'}
+                              {version.description || 'メモなし'}
                             </p>
                             <p className="text-xs text-muted-foreground mt-1">
                               Created{' '}
@@ -286,16 +281,6 @@ export default function StrategyDetailPage() {
                                 version.created_at
                               ).toLocaleDateString()}
                             </p>
-                          </div>
-                          <div className="flex gap-2">
-                            <Link
-                              href={`/strategies/${strategyId}/versions/${version.id}`}
-                            >
-                              <Button variant="outline" size="sm">
-                                <Edit className="w-4 h-4 mr-1" />
-                                Edit
-                              </Button>
-                            </Link>
                           </div>
                         </div>
                       ))}
@@ -308,7 +293,7 @@ export default function StrategyDetailPage() {
             <TabsContent value="code" className="mt-6">
               <Card>
                 <CardHeader>
-                  <CardTitle>Strategy Code</CardTitle>
+                  <CardTitle>有効なバージョンの設定</CardTitle>
                   <CardDescription>
                     {activeVersion
                       ? `Active version: ${activeVersion.version}`
@@ -317,9 +302,28 @@ export default function StrategyDetailPage() {
                 </CardHeader>
                 <CardContent>
                   {activeVersion ? (
-                    <pre className="bg-muted p-4 rounded-lg overflow-x-auto text-sm">
-                      <code>{activeVersion.code}</code>
-                    </pre>
+                    <table className="w-full text-sm">
+                      <tbody>
+                        <tr className="border-b">
+                          <td className="py-2 text-muted-foreground">
+                            戦略の種類
+                          </td>
+                          <td className="py-2 font-mono">
+                            {activeVersion.strategy_type || '旧形式'}
+                          </td>
+                        </tr>
+                        {Object.entries(activeVersion.params ?? {}).map(
+                          ([name, value]) => (
+                            <tr key={name} className="border-b last:border-0">
+                              <td className="py-2 text-muted-foreground font-mono">
+                                {name}
+                              </td>
+                              <td className="py-2 font-mono">{value}</td>
+                            </tr>
+                          )
+                        )}
+                      </tbody>
+                    </table>
                   ) : (
                     <div className="text-center py-8">
                       <Code className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
