@@ -50,11 +50,11 @@ const label = encodeURIComponent(`moon-bot:${email}`);
 const uri = `otpauth://totp/${label}?secret=${totpSecret}&issuer=moon-bot&algorithm=SHA1&digits=6&period=30`;
 
 console.log(`
-以下を Vercel の Environment Variables（Production）に設定してください。
-AUTH_SECRET は別途 \`openssl rand -base64 32\` で生成します。
+以下を apps/web/.env.prod に貼り付け、npm run env:push で Vercel（Production）に反映してください。
+（AUTH_SECRET は空のままにすると env:push が自動で生成します）
 
 ADMIN_EMAIL=${email}
-ADMIN_PASSWORD_HASH=${hash}
+ADMIN_PASSWORD_HASH='${hash}'
 ADMIN_TOTP_SECRET=${totpSecret}
 
 認証アプリには次の URI（またはシークレット）を登録してください:

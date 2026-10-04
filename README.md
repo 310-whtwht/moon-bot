@@ -190,6 +190,20 @@ DB パスワードなどは `.env` を編集して設定してください。
 `ADMIN_*` の 3 つは `cd apps/web && npm run auth:setup` で生成できます（メールアドレスとパスワードを入力すると、
 ハッシュ・TOTP シークレット・認証アプリ登録用の otpauth URI を表示します。値はどこにも保存されません）。
 
+#### Vercel への反映（`.env.prod`）
+
+```bash
+cd apps/web
+vercel link                          # 初回のみ（Vercel プロジェクトに紐づける）
+cp .env.prod.example .env.prod       # 値を記入（.env.prod は git 管理外）
+npm run auth:setup                   # ADMIN_* を生成して .env.prod に貼り付け
+npm run env:push                     # .env.prod の値を Vercel の Production に設定
+```
+
+- 値は標準入力で `vercel env add` に渡し、画面にもコマンド引数にも出しません。既存の変数は上書きし、Sensitive として保存します。
+- `AUTH_SECRET` を空にしておくと初回に生成してファイルへ書き戻します（変えると全員ログアウト）。
+- 反映には再デプロイが必要です（`vercel --prod`、または Vercel の画面で Redeploy）。
+
 ### Redis
 
 - `REDIS_HOST` - Redis ホスト（デフォルト: localhost）
