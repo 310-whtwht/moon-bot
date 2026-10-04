@@ -2,6 +2,7 @@ services:
   mysql:
     image: mysql:8.0
     container_name: moomoo_mysql
+    restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
       MYSQL_DATABASE: ${DB_NAME:-moomoo_trading}
@@ -20,6 +21,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: moomoo_redis
+    restart: unless-stopped
     ports:
       - "6380:6379"
     volumes:
@@ -35,6 +37,7 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     container_name: moomoo_api
+    restart: unless-stopped
     ports:
       - "8081:8081"
     environment:
@@ -72,6 +75,27 @@ services:
       - DB_NAME=${DB_NAME:-moomoo_trading}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      # Optional settings, taken from .env when present (see .env.example).
+      - TRADER_ENABLED=${TRADER_ENABLED:-true}
+      - TRADER_POLL_INTERVAL=${TRADER_POLL_INTERVAL:-30s}
+      - TRADER_RECONCILE_INTERVAL=${TRADER_RECONCILE_INTERVAL:-5m}
+      - PAPER_INITIAL_BALANCE=${PAPER_INITIAL_BALANCE:-30000}
+      - RISK_ACCOUNT_MAX_UNITS=${RISK_ACCOUNT_MAX_UNITS:-1000}
+      - RISK_ACCOUNT_MAX_POSITIONS=${RISK_ACCOUNT_MAX_POSITIONS:-1}
+      - RISK_ACCOUNT_MAX_DAILY_LOSS=${RISK_ACCOUNT_MAX_DAILY_LOSS:-500}
+      - RISK_ACCOUNT_MAX_WEEKLY_LOSS=${RISK_ACCOUNT_MAX_WEEKLY_LOSS:-1500}
+      - RISK_GLOBAL_MAX_POSITIONS=${RISK_GLOBAL_MAX_POSITIONS:-3}
+      - RISK_GLOBAL_MAX_DAILY_LOSS=${RISK_GLOBAL_MAX_DAILY_LOSS:-1000}
+      - RISK_GLOBAL_MAX_WEEKLY_LOSS=${RISK_GLOBAL_MAX_WEEKLY_LOSS:-3000}
+      - KILL_SWITCH=${KILL_SWITCH:-false}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      # Real-money trading stays off unless every one of these is set.
+      - BROKER_MODE=${BROKER_MODE:-paper}
+      - LIVE_CONFIRM=${LIVE_CONFIRM:-}
+      - GMO_API_KEY=${GMO_API_KEY:-}
+      - GMO_API_SECRET=${GMO_API_SECRET:-}
+      - GMO_ACCOUNT_ID=${GMO_ACCOUNT_ID:-default}
+    restart: unless-stopped
     depends_on:
       api:
         condition: service_healthy
@@ -81,6 +105,7 @@ services:
       context: ./apps/web
       dockerfile: Dockerfile
     container_name: moomoo_web
+    restart: unless-stopped
     ports:
       - "3001:3001"
     environment:

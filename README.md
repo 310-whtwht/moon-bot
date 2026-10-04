@@ -262,6 +262,8 @@ make backtest ARGS="-json"                                            # 取引�
 
 ### 自動売買（Paper）
 
+> Mac で常時動かして検証する手順は [docs/paper-run-mac.md](docs/paper-run-mac.md) にまとめています。
+
 bot は `deployments` テーブルの割り当て（どの戦略を、どの口座・銘柄・時間足・数量で動かすか）に従って売買します。
 Phase 3 時点のブローカーは **paper**（模擬約定）だけで、GMOコインの実際のレートに対して約定させます。
 
