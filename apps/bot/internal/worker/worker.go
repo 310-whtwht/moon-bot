@@ -105,10 +105,26 @@ func (w *Worker) startTrader(ctx context.Context) error {
 		return err
 	}
 
+	var notifier trader.Notifier = trader.NoNotify{}
+	if tc.SlackWebhookURL != "" {
+		notifier = trader.NewSlackNotifier(ctx, tc.SlackWebhookURL, log.Printf)
+		log.Println("Slack notifications enabled")
+	}
+	if tc.KillSwitch {
+		log.Println("KILL_SWITCH is set: new entries are blocked")
+	}
+
+	host, _ := os.Hostname()
 	manager := &trader.Manager{
-		Store:   store,
-		Brokers: map[string]broker.Broker{paper.BrokerName: paperBroker},
-		Config:  trader.Config{AccountLimits: tc.AccountLimits, GlobalLimits: tc.GlobalLimits},
+		Store:        store,
+		Brokers:      map[string]broker.Broker{paper.BrokerName: paperBroker},
+		Guard:        trader.SwitchGuard{Store: store, EnvActive: tc.KillSwitch},
+		Notifier:     notifier,
+		Kills:        store,
+		Ops:          store,
+		Instance:     host,
+		PollInterval: tc.PollInterval,
+		Config:       trader.Config{AccountLimits: tc.AccountLimits, GlobalLimits: tc.GlobalLimits},
 	}
 	quotes := trader.StreamQuotes(ctx, source, store, tc.PollInterval, log.Printf)
 

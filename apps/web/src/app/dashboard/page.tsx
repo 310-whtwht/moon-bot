@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { Activity, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -10,551 +12,349 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
 import {
-  DollarSign,
-  Activity,
-  AlertTriangle,
-  CheckCircle,
-  Clock,
-  BarChart3,
-  Target,
-  Zap,
-  Shield,
-} from 'lucide-react';
+  BOT_STATUS_CHANGED,
+  type BotStatus,
+  type Position,
+  SCOPE_LABELS,
+  fetchBotStatus,
+  formatYenSigned,
+  killActive,
+  setDeploymentEnabled,
+} from '@/lib/bot';
+import { TIMEFRAMES } from '@/lib/backtest';
 
-interface DashboardStats {
-  totalPnL: number;
-  dailyPnL: number;
-  totalTrades: number;
-  winRate: number;
-  maxDrawdown: number;
-  sharpeRatio: number;
-  activeStrategies: number;
-  totalStrategies: number;
-  activeOrders: number;
-  pendingOrders: number;
-  systemHealth: 'healthy' | 'warning' | 'error';
-  lastUpdate: string;
-}
+const REFRESH_MS = 15000;
 
-interface Strategy {
-  id: string;
-  name: string;
-  status: 'active' | 'paused' | 'stopped';
-  pnl: number;
-  trades: number;
-  winRate: number;
-  lastTrade: string;
-}
+const dateTime = (iso: string) =>
+  new Date(iso).toLocaleString('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 
-interface Order {
-  id: string;
-  symbol: string;
-  side: string;
-  status: string;
-  quantity: number;
-  price?: number;
-  created_at: string;
-}
+const sideLabel = (side: Position['side']) =>
+  side === 'buy' ? '買い' : '売り';
 
-interface Alert {
-  id: string;
-  level: 'info' | 'warning' | 'error';
-  message: string;
-  timestamp: string;
-  category: string;
+const pnlColor = (v: number) =>
+  v > 0 ? 'text-green-600' : v < 0 ? 'text-red-600' : '';
+
+function Stat({
+  label,
+  value,
+  note,
+  tone,
+}: {
+  label: string;
+  value: string;
+  note?: string;
+  tone?: string;
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardDescription>{label}</CardDescription>
+        <CardTitle className={`text-2xl ${tone ?? ''}`}>{value}</CardTitle>
+      </CardHeader>
+      {note && (
+        <CardContent className="text-xs text-muted-foreground">
+          {note}
+        </CardContent>
+      )}
+    </Card>
+  );
 }
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [strategies, setStrategies] = useState<Strategy[]>([]);
-  const [recentOrders, setRecentOrders] = useState<Order[]>([]);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [status, setStatus] = useState<BotStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchDashboardData();
-    // Set up real-time updates every 30 seconds
-    const interval = setInterval(fetchDashboardData, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const fetchDashboardData = async () => {
+  const refresh = useCallback(async () => {
     try {
-      setLoading(true);
-
-      // Fetch strategies
-      const strategiesResponse = await fetch('/api/v1/strategies');
-      if (strategiesResponse.ok) {
-        const strategiesData = await strategiesResponse.json();
-        setStrategies(strategiesData.data || []);
-      }
-
-      // Fetch recent orders
-      const ordersResponse = await fetch('/api/v1/orders?limit=10');
-      if (ordersResponse.ok) {
-        const ordersData = await ordersResponse.json();
-        setRecentOrders(ordersData.data || []);
-      }
-
-      // Mock dashboard stats for now
-      setStats({
-        totalPnL: 15420.5,
-        dailyPnL: 1250.75,
-        totalTrades: 342,
-        winRate: 68.5,
-        maxDrawdown: -8.2,
-        sharpeRatio: 1.85,
-        activeStrategies: 3,
-        totalStrategies: 5,
-        activeOrders: 2,
-        pendingOrders: 1,
-        systemHealth: 'healthy',
-        lastUpdate: new Date().toISOString(),
-      });
-
-      // Mock alerts
-      setAlerts([
-        {
-          id: '1',
-          level: 'info',
-          message: '戦略「EMA Cross」が本日5回の取引を実行しました',
-          timestamp: new Date(Date.now() - 300000).toISOString(),
-          category: 'strategy',
-        },
-        {
-          id: '2',
-          level: 'warning',
-          message: 'AAPLで高ボラティリティが検出されました',
-          timestamp: new Date(Date.now() - 600000).toISOString(),
-          category: 'market',
-        },
-        {
-          id: '3',
-          level: 'error',
-          message: 'moomoo APIへの接続が失われました',
-          timestamp: new Date(Date.now() - 900000).toISOString(),
-          category: 'system',
-        },
-      ]);
+      setStatus(await fetchBotStatus());
+      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'エラーが発生しました');
+      setError(err instanceof Error ? err.message : '取得できませんでした');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const getHealthColor = (health: string) => {
-    switch (health) {
-      case 'healthy':
-        return 'bg-green-100 text-green-800';
-      case 'warning':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'error':
-        return 'bg-red-100 text-red-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
+  useEffect(() => {
+    refresh();
+    const timer = setInterval(refresh, REFRESH_MS);
+    window.addEventListener(BOT_STATUS_CHANGED, refresh);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener(BOT_STATUS_CHANGED, refresh);
+    };
+  }, [refresh]);
+
+  const toggleDeployment = async (id: string, enabled: boolean) => {
+    setPending(id);
+    try {
+      await setDeploymentEnabled(id, enabled);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新できませんでした');
+    } finally {
+      setPending(null);
     }
-  };
-
-  const getHealthIcon = (health: string) => {
-    switch (health) {
-      case 'healthy':
-        return <CheckCircle className="w-4 h-4" />;
-      case 'warning':
-        return <AlertTriangle className="w-4 h-4" />;
-      case 'error':
-        return <AlertTriangle className="w-4 h-4" />;
-      default:
-        return <Clock className="w-4 h-4" />;
-    }
-  };
-
-  const getAlertIcon = (level: string) => {
-    switch (level) {
-      case 'info':
-        return <CheckCircle className="w-4 h-4 text-blue-600" />;
-      case 'warning':
-        return <AlertTriangle className="w-4 h-4 text-yellow-600" />;
-      case 'error':
-        return <AlertTriangle className="w-4 h-4 text-red-600" />;
-      default:
-        return <Activity className="w-4 h-4" />;
-    }
-  };
-
-  const formatCurrency = (num: number) => {
-    return new Intl.NumberFormat('ja-JP', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(num);
   };
 
   if (loading) {
     return (
       <div className="container mx-auto p-6">
         <div className="flex items-center justify-center h-64">
-          <div className="text-lg">ダッシュボードを読み込み中...</div>
+          読み込み中...
         </div>
       </div>
     );
   }
 
-  if (error) {
+  if (!status) {
     return (
       <div className="container mx-auto p-6">
-        <div className="flex items-center justify-center h-64">
-          <div className="text-red-500">エラー: {error}</div>
+        <div className="p-4 bg-red-50 border border-red-200 rounded-md text-red-700">
+          ダッシュボードのデータを取得できませんでした: {error}
         </div>
       </div>
     );
   }
 
+  const killed = killActive(status.kill_switches);
+  const lastSeen = status.heartbeats[0]?.last_seen_at;
+  const enabledCount = status.deployments.filter(d => d.enabled).length;
+  const deploymentName = (id: string | null) =>
+    status.deployments.find(d => d.id === id)?.name ?? '—';
+  const timeframeLabel = (tf: string) =>
+    TIMEFRAMES.find(t => t.value === tf)?.label ?? tf;
+
   return (
-    <div className="container mx-auto p-6">
-      <div className="flex justify-between items-center mb-6">
+    <div className="container mx-auto p-6 space-y-6">
+      <div className="flex justify-between items-start">
         <div>
-          <h1 className="text-3xl font-bold">トレーディングダッシュボード</h1>
-          <p className="text-muted-foreground">
-            リアルタイム監視とパフォーマンス概要
+          <h1 className="text-3xl font-bold">ダッシュボード</h1>
+          <p className="text-muted-foreground mt-1">
+            自動売買の状態（15秒ごとに更新）
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={fetchDashboardData}>
-            <Activity className="w-4 h-4 mr-2" />
-            更新
-          </Button>
+        <Button variant="outline" size="sm" onClick={refresh}>
+          <RefreshCw className="w-4 h-4 mr-2" />
+          更新
+        </Button>
+      </div>
+
+      {error && (
+        <div className="p-3 bg-red-50 border border-red-200 rounded-md text-red-700 text-sm">
+          {error}
         </div>
+      )}
+
+      {killed && (
+        <div className="p-3 bg-red-50 border border-red-200 rounded-md text-red-700 text-sm">
+          Kill Switch により新規の発注を停止しています（
+          {status.kill_switches
+            .filter(k => k.active)
+            .map(k => SCOPE_LABELS[k.scope] ?? k.scope)
+            .join('・')}
+          ）。決済と損切りは動作します。解除は画面上部のボタンから行えます。
+        </div>
+      )}
+
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+        <Stat
+          label="Bot"
+          value={status.bot_alive ? '稼働中' : '停止'}
+          tone={status.bot_alive ? 'text-green-600' : 'text-red-600'}
+          note={
+            lastSeen
+              ? `最終確認 ${dateTime(lastSeen)}`
+              : 'まだ一度も起動していません'
+          }
+        />
+        <Stat
+          label="当日の確定損益"
+          value={formatYenSigned(status.daily.pnl)}
+          tone={pnlColor(status.daily.pnl)}
+          note={`決済 ${status.daily.closed} 件（${dateTime(status.daily.since)} 〜）`}
+        />
+        <Stat
+          label="今週の確定損益"
+          value={formatYenSigned(status.weekly.pnl)}
+          tone={pnlColor(status.weekly.pnl)}
+          note={`決済 ${status.weekly.closed} 件（${dateTime(status.weekly.since)} 〜）`}
+        />
+        <Stat
+          label="建玉 / 稼働中の割り当て"
+          value={`${status.open_positions.length} / ${enabledCount}`}
+          note={`割り当て ${status.deployments.length} 件`}
+        />
       </div>
 
-      {/* Key Metrics */}
-      <div className="grid gap-4 mb-6 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  総損益
-                </p>
-                <p
-                  className={`text-2xl font-bold ${stats?.totalPnL && stats.totalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}
+      <Card>
+        <CardHeader>
+          <CardTitle>割り当て</CardTitle>
+          <CardDescription>
+            どの戦略を、どの口座・銘柄で動かすか。無効にしても保有中の建玉は自動では閉じません（決済と損切りは続きます）。
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {status.deployments.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              割り当てがありません。
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {status.deployments.map(d => (
+                <div
+                  key={d.id}
+                  className="flex items-center justify-between gap-4 p-4 border rounded-lg"
                 >
-                  {stats?.totalPnL ? formatCurrency(stats.totalPnL) : '$0.00'}
-                </p>
-                <p
-                  className={`text-sm ${stats?.dailyPnL && stats.dailyPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}
-                >
-                  {stats?.dailyPnL
-                    ? `本日 ${formatCurrency(stats.dailyPnL)}`
-                    : '本日 $0.00'}
-                </p>
-              </div>
-              <DollarSign className="w-8 h-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  勝率
-                </p>
-                <p className="text-2xl font-bold">
-                  {stats?.winRate ? `${stats.winRate}%` : '0%'}
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  {stats?.totalTrades
-                    ? `${stats.totalTrades} 取引`
-                    : '0 取引'}
-                </p>
-              </div>
-              <Target className="w-8 h-8 text-blue-600" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  シャープレシオ
-                </p>
-                <p className="text-2xl font-bold">
-                  {stats?.sharpeRatio ? stats.sharpeRatio.toFixed(2) : '0.00'}
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  最大ドローダウン: {stats?.maxDrawdown ? `${stats.maxDrawdown}%` : '0%'}
-                </p>
-              </div>
-              <BarChart3 className="w-8 h-8 text-purple-600" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  システム状態
-                </p>
-                <div className="flex items-center gap-2 mt-1">
-                  {stats?.systemHealth && getHealthIcon(stats.systemHealth)}
-                  <Badge
-                    className={
-                      stats?.systemHealth
-                        ? getHealthColor(stats.systemHealth)
-                        : 'bg-gray-100 text-gray-800'
-                    }
-                  >
-                    {stats?.systemHealth === 'healthy' ? '正常' : 
-                     stats?.systemHealth === 'warning' ? '警告' :
-                     stats?.systemHealth === 'error' ? 'エラー' : '不明'}
-                  </Badge>
-                </div>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {stats?.activeStrategies
-                    ? `${stats.activeStrategies}/${stats.totalStrategies} アクティブ`
-                    : '0/0 アクティブ'}
-                </p>
-              </div>
-              <Shield className="w-8 h-8 text-green-600" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Tabs defaultValue="overview" className="w-full">
-        <TabsList>
-          <TabsTrigger value="overview">概要</TabsTrigger>
-          <TabsTrigger value="strategies">戦略</TabsTrigger>
-          <TabsTrigger value="orders">最近の注文</TabsTrigger>
-          <TabsTrigger value="alerts">アラート</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="mt-6">
-          <div className="grid gap-6 md:grid-cols-2">
-            {/* Performance Chart Placeholder */}
-            <Card>
-              <CardHeader>
-                <CardTitle>パフォーマンスチャート</CardTitle>
-                <CardDescription>時系列での日次損益</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="h-64 flex items-center justify-center bg-muted rounded-lg">
-                  <div className="text-center">
-                    <BarChart3 className="w-12 h-12 text-muted-foreground mx-auto mb-2" />
-                    <p className="text-muted-foreground">
-                      チャートコンポーネントは実装予定です
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium">{d.name}</span>
+                      <Badge variant="secondary">
+                        {SCOPE_LABELS[d.broker] ?? d.broker}
+                      </Badge>
+                      {d.enabled ? (
+                        <Badge>有効</Badge>
+                      ) : (
+                        <Badge variant="outline">無効</Badge>
+                      )}
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {d.symbol} / {timeframeLabel(d.timeframe)} /{' '}
+                      {d.units.toLocaleString('ja-JP')} 通貨 — 戦略:{' '}
+                      <Link
+                        href={`/strategies/${d.strategy_id}`}
+                        className="underline"
+                      >
+                        {d.strategy_name}
+                      </Link>
+                      {d.active_version
+                        ? `（バージョン ${d.active_version}）`
+                        : '（有効なバージョンなし）'}
                     </p>
                   </div>
+                  <Switch
+                    checked={d.enabled}
+                    disabled={pending === d.id}
+                    onCheckedChange={(checked: boolean) =>
+                      toggleDeployment(d.id, checked)
+                    }
+                    aria-label={`${d.name} を有効にする`}
+                  />
                 </div>
-              </CardContent>
-            </Card>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-            {/* Active Orders Summary */}
-            <Card>
-              <CardHeader>
-                <CardTitle>アクティブ注文</CardTitle>
-                <CardDescription>現在の注文状況</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm font-medium">アクティブ注文:</span>
-                    <Badge variant="outline">{stats?.activeOrders || 0}</Badge>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm font-medium">保留中注文:</span>
-                    <Badge variant="outline">{stats?.pendingOrders || 0}</Badge>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm font-medium">
-                      総戦略数:
-                    </span>
-                    <Badge variant="outline">
-                      {stats?.totalStrategies || 0}
-                    </Badge>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="strategies" className="mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>アクティブ戦略</CardTitle>
-              <CardDescription>リアルタイム戦略パフォーマンス</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {strategies.length === 0 ? (
-                <div className="text-center py-8">
-                  <Zap className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">
-                    戦略が見つかりません
-                  </h3>
-                  <p className="text-muted-foreground">
-                    最初の戦略を作成して開始してください
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {strategies.map(strategy => (
-                    <div
-                      key={strategy.id}
-                      className="flex items-center justify-between p-4 border rounded-lg"
-                    >
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h4 className="font-medium">{strategy.name}</h4>
-                          <Badge
-                            variant={
-                              strategy.status === 'active'
-                                ? 'default'
-                                : 'secondary'
-                            }
-                          >
-                            {strategy.status === 'active' ? 'アクティブ' :
-                             strategy.status === 'paused' ? '一時停止' :
-                             strategy.status === 'stopped' ? '停止' : strategy.status}
-                          </Badge>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>保有中の建玉</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {status.open_positions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                <Activity className="inline w-4 h-4 mr-1" />
+                建玉はありません。
+              </p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-muted-foreground border-b">
+                    <th className="py-2 pr-3">銘柄</th>
+                    <th className="py-2 pr-3">売買</th>
+                    <th className="py-2 pr-3 text-right">数量</th>
+                    <th className="py-2 pr-3 text-right">建値</th>
+                    <th className="py-2 pr-3 text-right">損切り</th>
+                    <th className="py-2">建てた時刻</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {status.open_positions.map(p => (
+                    <tr key={p.id} className="border-b last:border-0">
+                      <td className="py-2 pr-3">
+                        {p.symbol}
+                        <div className="text-xs text-muted-foreground">
+                          {deploymentName(p.deployment_id)}
                         </div>
-                        <div className="grid grid-cols-3 gap-4 text-sm text-muted-foreground">
-                          <div>
-                            <span className="font-medium">損益:</span>{' '}
-                            {formatCurrency(strategy.pnl)}
-                          </div>
-                          <div>
-                            <span className="font-medium">取引数:</span>{' '}
-                            {strategy.trades}
-                          </div>
-                          <div>
-                            <span className="font-medium">勝率:</span>{' '}
-                            {strategy.winRate}%
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-right text-sm text-muted-foreground">
-                        最終取引: {' '}
-                        {new Date(strategy.lastTrade).toLocaleDateString('ja-JP')}
-                      </div>
-                    </div>
+                      </td>
+                      <td className="py-2 pr-3">{sideLabel(p.side)}</td>
+                      <td className="py-2 pr-3 text-right">
+                        {p.quantity.toLocaleString('ja-JP')}
+                      </td>
+                      <td className="py-2 pr-3 text-right">
+                        {p.open_price.toFixed(3)}
+                      </td>
+                      <td className="py-2 pr-3 text-right">
+                        {p.stop_price != null ? p.stop_price.toFixed(3) : '—'}
+                      </td>
+                      <td className="py-2 whitespace-nowrap">
+                        {dateTime(p.opened_at)}
+                      </td>
+                    </tr>
                   ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+                </tbody>
+              </table>
+            )}
+          </CardContent>
+        </Card>
 
-        <TabsContent value="orders" className="mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>最近の注文</CardTitle>
-              <CardDescription>最新の注文アクティビティ</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {recentOrders.length === 0 ? (
-                <div className="text-center py-8">
-                  <Activity className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">
-                    最近の注文がありません
-                  </h3>
-                  <p className="text-muted-foreground">
-                    注文が発注されるとここに表示されます
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {recentOrders.map(order => (
-                    <div
-                      key={order.id}
-                      className="flex items-center justify-between p-4 border rounded-lg"
-                    >
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h4 className="font-medium">{order.symbol}</h4>
-                          <Badge
-                            className={
-                              order.side === 'buy'
-                                ? 'bg-green-100 text-green-800'
-                                : 'bg-red-100 text-red-800'
-                            }
-                          >
-                            {order.side === 'buy' ? '買い' : '売り'}
-                          </Badge>
-                          <Badge variant="outline">{order.status}</Badge>
-                        </div>
-                        <div className="text-sm text-muted-foreground">
-                          {order.quantity} 株{' '}
-                          {order.price && `@ ${formatCurrency(order.price)}`}
-                        </div>
-                      </div>
-                      <div className="text-right text-sm text-muted-foreground">
-                        {new Date(order.created_at).toLocaleString('ja-JP')}
-                      </div>
-                    </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>最近の決済</CardTitle>
+            <CardDescription>損益は手数料を引いた後の金額</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {status.closed_positions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                まだ決済はありません。
+              </p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-muted-foreground border-b">
+                    <th className="py-2 pr-3">銘柄</th>
+                    <th className="py-2 pr-3">売買</th>
+                    <th className="py-2 pr-3 text-right">建値 → 決済</th>
+                    <th className="py-2 pr-3 text-right">損益</th>
+                    <th className="py-2">決済時刻</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {status.closed_positions.map(p => (
+                    <tr key={p.id} className="border-b last:border-0">
+                      <td className="py-2 pr-3">{p.symbol}</td>
+                      <td className="py-2 pr-3">{sideLabel(p.side)}</td>
+                      <td className="py-2 pr-3 text-right whitespace-nowrap">
+                        {p.open_price.toFixed(3)} →{' '}
+                        {p.close_price != null ? p.close_price.toFixed(3) : '—'}
+                      </td>
+                      <td
+                        className={`py-2 pr-3 text-right font-medium ${pnlColor(p.realized_pnl ?? 0)}`}
+                      >
+                        {formatYenSigned(p.realized_pnl ?? 0)}
+                      </td>
+                      <td className="py-2 whitespace-nowrap">
+                        {p.closed_at ? dateTime(p.closed_at) : '—'}
+                      </td>
+                    </tr>
                   ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="alerts" className="mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>システムアラート</CardTitle>
-              <CardDescription>
-                最近のシステム通知と警告
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {alerts.length === 0 ? (
-                <div className="text-center py-8">
-                  <CheckCircle className="w-12 h-12 text-green-600 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">
-                    すべてのシステムが正常に動作中
-                  </h3>
-                  <p className="text-muted-foreground">
-                    現在アラートはありません
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {alerts.map(alert => (
-                    <div
-                      key={alert.id}
-                      className="flex items-start gap-3 p-4 border rounded-lg"
-                    >
-                      {getAlertIcon(alert.level)}
-                      <div className="flex-1">
-                        <p className="text-sm font-medium">{alert.message}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <Badge variant="outline" className="text-xs">
-                            {alert.category === 'strategy' ? '戦略' :
-                             alert.category === 'market' ? '市場' :
-                             alert.category === 'system' ? 'システム' : alert.category}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(alert.timestamp).toLocaleString('ja-JP')}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+                </tbody>
+              </table>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

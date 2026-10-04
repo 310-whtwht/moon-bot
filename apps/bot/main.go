@@ -11,6 +11,7 @@ import (
 	"github.com/moomoo-trading/bot/internal/backfill"
 	"github.com/moomoo-trading/bot/internal/backtestcmd"
 	"github.com/moomoo-trading/bot/internal/config"
+	"github.com/moomoo-trading/bot/internal/killcmd"
 	"github.com/moomoo-trading/bot/internal/worker"
 )
 
@@ -21,10 +22,12 @@ func main() {
 	// Subcommands run once and exit:
 	//   bot backfill [flags]  download historical bars
 	//   bot backtest [flags]  run a strategy over stored bars
+	//   bot kill status|on|off  show or change the kill switches
 	if len(os.Args) > 1 {
 		commands := map[string]func(context.Context, *config.Config, []string, io.Writer) error{
 			"backfill": backfill.Run,
 			"backtest": backtestcmd.Run,
+			"kill":     killcmd.Run,
 		}
 		if run, ok := commands[os.Args[1]]; ok {
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

@@ -448,7 +448,9 @@ func (r *Runner) close(ctx context.Context, tag, reason string) error {
 		return err
 	}
 	if tick.Status != market.StatusOpen {
-		r.logf("%s: exit (%s) deferred, market %s", r.dep.Name, reason, tick.Status)
+		if r.pendingExit != reason { // log once, not on every retry
+			r.logf("%s: exit (%s) deferred, market %s; will retry", r.dep.Name, reason, tick.Status)
+		}
 		r.pendingExit = reason
 		return nil
 	}
@@ -500,6 +502,18 @@ func (r *Runner) close(ctx context.Context, tag, reason string) error {
 	r.notify("closed", fmt.Sprintf("%s %s closed @ %s (%s), P&L %s JPY",
 		pos.Side, pos.Symbol, fill.Price.String(), reason, net.StringFixed(0)))
 	return nil
+}
+
+// ForceClose exits the current position at market (kill switch). If it cannot
+// be closed now, it stays pending and is retried on every poll and tick.
+func (r *Runner) ForceClose(ctx context.Context, reason string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pos == nil {
+		return nil
+	}
+	r.pendingExit = reason
+	return r.retryPendingExit(ctx)
 }
 
 // OnTick checks the protective stop against a new quote and closes the

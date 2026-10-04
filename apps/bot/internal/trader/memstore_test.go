@@ -188,3 +188,54 @@ func (s *memStore) statuses() []string {
 	}
 	return out
 }
+
+// --- kill switches and ops (heartbeat, summary) -------------------------------
+
+type memOps struct {
+	mu         sync.Mutex
+	switches   []KillSwitch
+	killErr    error
+	heartbeats int
+	lastRunner int
+	store      *memStore
+}
+
+func (o *memOps) KillSwitches(context.Context) ([]KillSwitch, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]KillSwitch(nil), o.switches...), o.killErr
+}
+
+func (o *memOps) set(k KillSwitch) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for i := range o.switches {
+		if o.switches[i].Scope == k.Scope {
+			o.switches[i] = k
+			return
+		}
+	}
+	o.switches = append(o.switches, k)
+}
+
+func (o *memOps) Heartbeat(_ context.Context, _ string, _, _ time.Time, _ time.Duration, runners int) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.heartbeats++
+	o.lastRunner = runners
+	return nil
+}
+
+func (o *memOps) ClosedSummary(_ context.Context, from, to time.Time) (int, float64, error) {
+	o.store.mu.Lock()
+	defer o.store.mu.Unlock()
+	var n int
+	var pnl float64
+	for _, p := range o.store.positions {
+		if p.Closed && !p.ClosedAt.Before(from) && p.ClosedAt.Before(to) {
+			n++
+			pnl += p.RealizedPnL.InexactFloat64()
+		}
+	}
+	return n, pnl, nil
+}

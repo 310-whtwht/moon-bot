@@ -24,6 +24,10 @@ type TraderConfig struct {
 	PaperInitialBalance float64
 	AccountLimits       risk.Limits
 	GlobalLimits        risk.Limits
+	// KillSwitch (KILL_SWITCH=true) blocks all new entries regardless of the database.
+	KillSwitch bool
+	// SlackWebhookURL enables Slack notifications when set.
+	SlackWebhookURL string
 }
 
 type DatabaseConfig struct {
@@ -70,6 +74,8 @@ func Load() *Config {
 			Enabled:             getEnv("TRADER_ENABLED", "true") == "true",
 			PollInterval:        getDuration("TRADER_POLL_INTERVAL", 30*time.Second),
 			PaperInitialBalance: getFloat("PAPER_INITIAL_BALANCE", 30000),
+			KillSwitch:          getEnv("KILL_SWITCH", "false") == "true",
+			SlackWebhookURL:     getEnv("SLACK_WEBHOOK_URL", ""),
 			// Defaults are deliberately small (Phase 6 starts at 100 units).
 			AccountLimits: risk.Limits{
 				MaxUnitsPerPosition: getFloat("RISK_ACCOUNT_MAX_UNITS", 1000),

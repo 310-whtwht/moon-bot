@@ -14,6 +14,7 @@ import {
 import { User, LogOut, Settings, BarChart3 } from 'lucide-react';
 import Link from 'next/link';
 import Navigation from './Navigation';
+import { KillSwitchButton } from '@/components/bot/KillSwitchButton';
 
 export default function Header() {
   const { data: session } = useSession();
@@ -22,9 +23,13 @@ export default function Header() {
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container flex h-14 items-center">
         <div className="mr-4 hidden md:flex">
-          <Link href="/" className="mr-6 flex items-center space-x-2">
+          <Link
+            href="/dashboard"
+            className="mr-6 flex items-center space-x-2"
+            title="Moomoo トレーディング"
+          >
             <BarChart3 className="h-6 w-6" />
-            <span className="hidden font-bold sm:inline-block">
+            <span className="hidden whitespace-nowrap font-bold 2xl:inline-block">
               Moomoo トレーディング
             </span>
           </Link>
@@ -33,6 +38,7 @@ export default function Header() {
         <Navigation />
 
         <div className="ml-auto flex items-center space-x-4">
+          <KillSwitchButton />
           {session ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
