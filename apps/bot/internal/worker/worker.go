@@ -148,7 +148,10 @@ func (w *Worker) startTrader(ctx context.Context) error {
 		Ops:          store,
 		Instance:     host,
 		PollInterval: tc.PollInterval,
-		Config:       trader.Config{AccountLimits: tc.AccountLimits, GlobalLimits: tc.GlobalLimits},
+		Config: trader.Config{
+			AccountLimits: tc.AccountLimits, GlobalLimits: tc.GlobalLimits,
+			ReconcileInterval: tc.ReconcileInterval,
+		},
 	}
 	quotes := trader.StreamQuotes(ctx, source, store, tc.PollInterval, log.Printf)
 

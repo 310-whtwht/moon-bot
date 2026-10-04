@@ -99,6 +99,16 @@ VALUES (?, 'e2e', ?, 'paper', ?, 'USD_JPY', '1h', 100, TRUE)`, deployID, strateg
 	assert.Equal(t, versionID, pos.StrategyVersionID)
 	assert.Equal(t, time.UTC, pos.OpenedAt.Location())
 
+	// The broker-side stop order ID round-trips (and can be cleared).
+	require.NoError(t, store.SetPositionStopOrder(ctx, pos.ID, "987654321"))
+	pos, err = store.OpenPosition(ctx, deployID)
+	require.NoError(t, err)
+	assert.Equal(t, "987654321", pos.StopOrderID)
+	require.NoError(t, store.SetPositionStopOrder(ctx, pos.ID, ""))
+	pos, err = store.OpenPosition(ctx, deployID)
+	require.NoError(t, err)
+	assert.Empty(t, pos.StopOrderID)
+
 	// The same decision cannot be recorded twice.
 	created, err := store.CreateOrder(ctx, Order{ClientOrderID: fmt.Sprintf("e2e00000-%d-open", t0.Add(10*time.Hour).Unix()), Broker: "paper",
 		AccountID: account, Symbol: "USD_JPY", Side: broker.SideBuy, SettleType: "open", Units: d("100")})

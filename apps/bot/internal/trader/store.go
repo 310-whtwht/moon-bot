@@ -38,16 +38,18 @@ type Version struct {
 
 // Position is an open position owned by a deployment.
 type Position struct {
-	ID                string
-	DeploymentID      string
-	Broker            string
-	AccountID         string
-	BrokerPositionID  string
-	Symbol            string
-	Side              broker.Side
-	Units             decimal.Decimal
-	OpenPrice         decimal.Decimal
-	StopPrice         decimal.Decimal
+	ID               string
+	DeploymentID     string
+	Broker           string
+	AccountID        string
+	BrokerPositionID string
+	Symbol           string
+	Side             broker.Side
+	Units            decimal.Decimal
+	OpenPrice        decimal.Decimal
+	StopPrice        decimal.Decimal
+	// StopOrderID is the protective stop order held at the broker, if any.
+	StopOrderID       string
 	Fees              decimal.Decimal // fees paid so far (entry)
 	StrategyID        string
 	StrategyVersionID string
@@ -101,6 +103,8 @@ type Store interface {
 	MarkOrderUnknown(ctx context.Context, clientOrderID, reason string) error
 
 	InsertPosition(ctx context.Context, p Position) error
+	// SetPositionStopOrder records (or clears, with "") the broker-side stop order.
+	SetPositionStopOrder(ctx context.Context, positionID, stopOrderID string) error
 	// ClosePosition closes a position. realizedPnL is net of all fees.
 	ClosePosition(ctx context.Context, positionID string, closePrice, realizedPnL, closeFee decimal.Decimal, at time.Time) error
 
