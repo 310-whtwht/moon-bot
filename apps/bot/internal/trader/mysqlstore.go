@@ -216,6 +216,14 @@ func (s *MySQLStore) MarkOrderRejected(ctx context.Context, clientOrderID, reaso
 	return err
 }
 
+// MarkOrderUnknown keeps the order as 'submitted' (sent, outcome unknown) with the reason.
+func (s *MySQLStore) MarkOrderUnknown(ctx context.Context, clientOrderID, reason string) error {
+	_, err := s.DB.ExecContext(ctx,
+		`UPDATE orders SET status = 'submitted', error_message = ?, updated_at = ? WHERE client_order_id = ?`,
+		"outcome unknown: "+reason, time.Now().UTC(), clientOrderID)
+	return err
+}
+
 func (s *MySQLStore) InsertPosition(ctx context.Context, p Position) error {
 	_, err := s.DB.ExecContext(ctx, `
 INSERT INTO positions (id, deployment_id, broker, account_id, broker_position_id, symbol, side, quantity,

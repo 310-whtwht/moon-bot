@@ -108,7 +108,7 @@ func (m *Manager) sync(ctx context.Context) ([]*Runner, error) {
 		}
 		m.runners[d.ID] = &Runner{
 			dep: d, broker: br, store: m.Store, guard: m.Guard, notifier: m.Notifier,
-			cfg: m.Config, now: m.Now, logf: m.Logf,
+			cfg: m.Config, now: m.Now, logf: m.Logf, halt: m.haltBroker,
 		}
 		m.Logf("%s: runner started (%s %s %s, %s units, enabled=%v)",
 			d.Name, d.Broker, d.Symbol, d.Timeframe, d.Units.String(), d.Enabled)
@@ -128,6 +128,25 @@ func (m *Manager) sync(ctx context.Context) ([]*Runner, error) {
 	}
 	sort.Slice(active, func(i, j int) bool { return active[i].dep.ID < active[j].dep.ID })
 	return active, nil
+}
+
+// KillSetter can activate a kill switch (implemented by the MySQL store).
+type KillSetter interface {
+	SetKillSwitch(ctx context.Context, k KillSwitch) error
+}
+
+// haltBroker turns the broker's kill switch on. It is what a runner calls
+// when it can no longer trust its picture of an order.
+func (m *Manager) haltBroker(ctx context.Context, brokerName, reason string) {
+	setter, ok := m.Kills.(KillSetter)
+	if !ok {
+		m.Logf("trader: cannot halt %s (no kill switch store): %s", brokerName, reason)
+		return
+	}
+	err := setter.SetKillSwitch(ctx, KillSwitch{Scope: brokerName, Active: true, Reason: reason, UpdatedBy: "bot"})
+	if err != nil {
+		m.Logf("trader: halt %s failed: %v", brokerName, err)
+	}
 }
 
 // PollOnce syncs deployments and lets every runner process newly closed bars.

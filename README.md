@@ -295,6 +295,25 @@ UPDATE deployments SET enabled = TRUE WHERE id = 'dddddddd-dddd-dddd-dddd-dddddd
 
 損失の集計は取引日（06:00 JST 区切り）・取引週（月曜 06:00 JST 始まり）単位です。発注には利用可能な証拠金の 50% までしか使いません。
 
+### 本番ブローカー（GMOコイン Private API）
+
+既定では Paper だけが動きます。GMOコインの口座に実際に発注するには、bot に次の **すべて** を設定します（1つでも欠けると Paper のみ）。
+
+| 変数 | 値 |
+|---|---|
+| `BROKER_MODE` | `live` |
+| `LIVE_CONFIRM` | `yes` |
+| `GMO_API_KEY` / `GMO_API_SECRET` | 会員ページで発行した API キー（権限は取引と照会のみ、IP 制限を有効に） |
+| `GMO_ACCOUNT_ID` | 注文・建玉に付ける口座のラベル（任意、既定 `default`） |
+
+- 起動時に口座残高を読めることを確認し、読めなければ起動を止めます
+- 割り当て（`deployments`）の `broker` が `gmo` のものだけが本番に発注します。`paper` の割り当ては引き続き模擬約定です
+- 1注文の数量はコード上の上限 `HardMaxLiveUnits`（10,000）を超えられません。加えて `RISK_*` の上限が効きます
+- 発注の応答が失われた場合（タイムアウトなど）は**再送せず**、`clientOrderId` で約定を照合します。確定できないときは、そのブローカーの Kill Switch を自動で入れて通知します（解除は人が状態を確認してから）
+- `clientOrderId` は GMO の制約（英数字のみ・36文字以内）に合わせて変換して送ります
+
+> **注意（Phase 4b が入るまで本番では使わないこと）**: 損切りは bot がレートを監視して決済する方式で、bot が止まっている間は効きません。ブローカー側の逆指値注文と、DB とブローカーの建玉の照合は Phase 4b で追加します。
+
 ### Kill Switch・通知・ダッシュボード
 
 **Kill Switch** は新規の発注だけを止めます（決済と損切りは止めません）。範囲は「全体（global）」か、ブローカー単位（`paper` / `gmo`）です。

@@ -117,6 +117,14 @@ func (s *memStore) MarkOrderRejected(_ context.Context, id, reason string) error
 	return nil
 }
 
+func (s *memStore) MarkOrderUnknown(_ context.Context, id, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.orders[id].Status = "unknown"
+	s.orders[id].Reason = reason
+	return nil
+}
+
 func (s *memStore) InsertPosition(_ context.Context, p Position) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -238,4 +246,10 @@ func (o *memOps) ClosedSummary(_ context.Context, from, to time.Time) (int, floa
 		}
 	}
 	return n, pnl, nil
+}
+
+// SetKillSwitch lets the manager halt a broker in tests.
+func (o *memOps) SetKillSwitch(_ context.Context, k KillSwitch) error {
+	o.set(k)
+	return nil
 }

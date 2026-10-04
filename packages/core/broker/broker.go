@@ -15,6 +15,14 @@ import (
 // (weekends, holidays, before the broker's history starts).
 var ErrNoData = errors.New("no data for requested range")
 
+// ErrUnknownResult means an order was sent but the broker's answer never
+// arrived (timeout, connection lost, 5xx). The order may or may not exist, so
+// it must never be re-sent blindly: look it up first (see OrderLookup).
+var ErrUnknownResult = errors.New("order result unknown")
+
+// ErrNotSupported is returned by optional features an adapter does not have.
+var ErrNotSupported = errors.New("not supported by this broker")
+
 // BarsRequest asks for bars whose OpenTime is in [From, To).
 type BarsRequest struct {
 	Symbol    string
@@ -133,4 +141,13 @@ type Trading interface {
 type Broker interface {
 	MarketData
 	Trading
+}
+
+// OrderLookup is implemented by brokers that can find what happened to an
+// order by its client order ID, used to resolve ErrUnknownResult.
+type OrderLookup interface {
+	// FindOrder returns the fills of the order and whether the broker knows it
+	// at all (filled or still working). found=false means the broker has no
+	// trace of it in its recent history.
+	FindOrder(ctx context.Context, symbol, clientOrderID string) (fills []Execution, found bool, err error)
 }

@@ -114,10 +114,34 @@ func (w *Worker) startTrader(ctx context.Context) error {
 		log.Println("KILL_SWITCH is set: new entries are blocked")
 	}
 
+	brokers := map[string]broker.Broker{paper.BrokerName: paperBroker}
+	if live, why := w.config.LiveTrading(); live {
+		gmo, err := gmofx.NewPrivate(gmofx.PrivateOptions{
+			Options:    gmofx.Options{PublicURL: w.config.GMO.PublicURL, PublicWSURL: w.config.GMO.PublicWSURL},
+			APIKey:     w.config.GMO.APIKey,
+			APISecret:  w.config.GMO.APISecret,
+			PrivateURL: w.config.GMO.PrivateURL,
+			AccountID:  w.config.GMO.AccountID,
+		})
+		if err != nil {
+			return err
+		}
+		// Fail at start-up, not at the first order, if the key does not work.
+		assets, err := gmo.Assets(ctx)
+		if err != nil {
+			return fmt.Errorf("live trading: cannot read GMO account: %w", err)
+		}
+		brokers[gmofx.BrokerName] = gmo
+		log.Printf("LIVE TRADING ENABLED: GMO account %q connected (available margin %s JPY, max %d units per order)",
+			w.config.GMO.AccountID, assets.AvailableMargin.StringFixed(0), trader.HardMaxLiveUnits)
+	} else {
+		log.Printf("Live trading off (%s): only the paper broker is available", why)
+	}
+
 	host, _ := os.Hostname()
 	manager := &trader.Manager{
 		Store:        store,
-		Brokers:      map[string]broker.Broker{paper.BrokerName: paperBroker},
+		Brokers:      brokers,
 		Guard:        trader.SwitchGuard{Store: store, EnvActive: tc.KillSwitch},
 		Notifier:     notifier,
 		Kills:        store,
