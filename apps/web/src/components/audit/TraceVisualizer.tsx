@@ -434,16 +434,19 @@ export default function TraceVisualizer() {
             <div>
               <Label htmlFor="side">サイド</Label>
               <Select
-                value={searchFilters.side}
+                value={searchFilters.side || 'all'}
                 onValueChange={value =>
-                  setSearchFilters(prev => ({ ...prev, side: value }))
+                  setSearchFilters(prev => ({
+                    ...prev,
+                    side: value === 'all' ? '' : value,
+                  }))
                 }
               >
                 <SelectTrigger>
                   <SelectValue placeholder="サイドを選択" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">すべて</SelectItem>
+                  <SelectItem value="all">すべて</SelectItem>
                   <SelectItem value="buy">買い</SelectItem>
                   <SelectItem value="sell">売り</SelectItem>
                 </SelectContent>
