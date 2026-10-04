@@ -312,6 +312,8 @@ UPDATE deployments SET enabled = TRUE WHERE id = 'dddddddd-dddd-dddd-dddd-dddddd
 - 発注の応答が失われた場合（タイムアウトなど）は**再送せず**、`clientOrderId` で約定を照合します。確定できないときは、そのブローカーの Kill Switch を自動で入れて通知します（解除は人が状態を確認してから）
 - `clientOrderId` は GMO の制約（英数字のみ・36文字以内）に合わせて変換して送ります
 
+**約定の即時検知（Private WebSocket）**: 本番ブローカー接続時は GMOコインの約定通知（`executionEvents`）を購読し、約定が届いたらその銘柄の建玉をすぐ照合します。ブローカー側で逆指値が執行された場合も、定期照合を待たずに精算されます。トークンは 30 分ごとに延長し、切断時は新しいトークンで再接続、終了時に削除します。通知は取りこぼしうるため、定期照合はそのまま続けます。
+
 **損切り（ブローカー側の逆指値）**: 建玉を建てた直後に、損切り価格の逆指値（STOP の決済注文）を GMOコインに置きます。bot が止まっていても GMOコイン側で執行されます。
 
 - 逆指値の価格は銘柄の呼値（USD_JPY は 0.001）に丸めます
@@ -345,7 +347,13 @@ UPDATE deployments SET enabled = TRUE WHERE id = 'dddddddd-dddd-dddd-dddd-dddddd
 
 **ダッシュボード**（`/dashboard`）: bot の稼働状況（生存確認）、当日・今週の確定損益、割り当ての有効／無効の切り替え、保有中の建玉、最近の決済を表示します（`GET /api/v1/bot/status`）。
 
-> 注意: API には認証がありません。現状は Web（Next.js）経由でのみ使う前提で、API を外部に公開する場合は先に認証を入れてください。
+**API の認証**: `/api/v1/*` はすべて `Authorization: Bearer <API_TOKEN>` が必要です（`/healthz` を除く）。
+
+- ブラウザは API を直接呼びません。Web サーバー（`apps/web/src/middleware.ts`）が、ログイン済みであることを確認してから、サーバー側だけが持つ `API_TOKEN` を付けて API（`API_URL`）へ転送します。ブラウザが送った `Authorization` は捨てます
+- API は `ENVIRONMENT=production` で `API_TOKEN` が未設定なら起動しません。開発環境で未設定の場合は警告を出して認証なしで動きます
+- `make setup` / `make env` が `.env` に `API_TOKEN` を生成します。docker compose は api と web の両方に渡します
+- Web を Vercel で動かす場合は、Vercel 側に `API_URL`（API の公開 URL）と `API_TOKEN` を設定します
+- Bruno で API を直接叩くときは、環境の `authToken` に同じトークンを入れてください
 
 ### Web からのバックテスト（ジョブ）
 

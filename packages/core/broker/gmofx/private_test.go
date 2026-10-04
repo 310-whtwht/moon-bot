@@ -38,12 +38,14 @@ type fakeAPI struct {
 	requests []recorded
 	handlers map[string]func(n int, w http.ResponseWriter, r recorded)
 	counts   map[string]int
+	url      string // base URL of the fake API
 }
 
 func newFakeAPI(t *testing.T) (*fakeAPI, *Private) {
 	f := &fakeAPI{t: t, handlers: map[string]func(int, http.ResponseWriter, recorded){}, counts: map[string]int{}}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(srv.Close)
+	f.url = srv.URL
 
 	p, err := NewPrivate(PrivateOptions{
 		Options:    Options{MinInterval: time.Millisecond},
@@ -64,7 +66,12 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 	// Every request must be signed over timestamp + method + path + body (no query).
 	ts := r.Header.Get("API-TIMESTAMP")
 	assert.Equal(f.t, testKey, r.Header.Get("API-KEY"))
-	assert.Equal(f.t, Sign([]byte(testSecret), ts, r.Method, r.URL.Path, string(body)), r.Header.Get("API-SIGN"),
+	// Only POST signs its body (PUT / DELETE send one but do not sign it).
+	signed := ""
+	if r.Method == http.MethodPost {
+		signed = string(body)
+	}
+	assert.Equal(f.t, Sign([]byte(testSecret), ts, r.Method, r.URL.Path, signed), r.Header.Get("API-SIGN"),
 		"signature of %s %s", r.Method, r.URL.Path)
 
 	key := r.Method + " " + r.URL.Path
@@ -322,12 +329,6 @@ func TestOrderWithoutAnswerIsUnknownResult(t *testing.T) {
 		require.Error(t, err)
 		assert.NotErrorIs(t, err, broker.ErrUnknownResult)
 	})
-}
-
-func TestSubscribeExecutionsNotYetSupported(t *testing.T) {
-	_, p := newFakeAPI(t)
-	_, err := p.SubscribeExecutions(context.Background())
-	assert.ErrorIs(t, err, broker.ErrNotSupported)
 }
 
 func TestProtectiveStopAndOrderActive(t *testing.T) {

@@ -117,11 +117,12 @@ func (w *Worker) startTrader(ctx context.Context) error {
 	brokers := map[string]broker.Broker{paper.BrokerName: paperBroker}
 	if live, why := w.config.LiveTrading(); live {
 		gmo, err := gmofx.NewPrivate(gmofx.PrivateOptions{
-			Options:    gmofx.Options{PublicURL: w.config.GMO.PublicURL, PublicWSURL: w.config.GMO.PublicWSURL},
-			APIKey:     w.config.GMO.APIKey,
-			APISecret:  w.config.GMO.APISecret,
-			PrivateURL: w.config.GMO.PrivateURL,
-			AccountID:  w.config.GMO.AccountID,
+			Options:      gmofx.Options{PublicURL: w.config.GMO.PublicURL, PublicWSURL: w.config.GMO.PublicWSURL},
+			APIKey:       w.config.GMO.APIKey,
+			APISecret:    w.config.GMO.APISecret,
+			PrivateURL:   w.config.GMO.PrivateURL,
+			PrivateWSURL: w.config.GMO.PrivateWSURL,
+			AccountID:    w.config.GMO.AccountID,
 		})
 		if err != nil {
 			return err
@@ -154,6 +155,24 @@ func (w *Worker) startTrader(ctx context.Context) error {
 		},
 	}
 	quotes := trader.StreamQuotes(ctx, source, store, tc.PollInterval, log.Printf)
+
+	// Real brokers push fills over a private WebSocket; use them to reconcile
+	// immediately. (The paper broker's fills are always the bot's own.)
+	for name, br := range brokers {
+		if name == paper.BrokerName {
+			continue
+		}
+		events, err := br.SubscribeExecutions(ctx)
+		if err != nil {
+			log.Printf("%s: no execution stream (%v); relying on periodic reconciliation", name, err)
+			continue
+		}
+		w.wg.Add(1)
+		go func(name string, events <-chan broker.Execution) {
+			defer w.wg.Done()
+			manager.WatchExecutions(ctx, name, events)
+		}(name, events)
+	}
 
 	w.wg.Add(1)
 	go func() {

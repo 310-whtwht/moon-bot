@@ -163,6 +163,11 @@ type Broker interface {
 >
 > 4b（この PR）では、本番前に必須の2点を実装: **ブローカー側の逆指値注文**（`closeOrder` の STOP を建玉ごとに置く）と**建玉の照合**（4-4）。Private WebSocket（4-3）と API の認証は **4c** に分ける。REST のポーリングで機能は足りており、WebSocket は反応速度の改善が目的のため。
 >
+> 4c 実装時の補足:
+> - **API の認証**: `/api/v1/*` に Bearer トークン（`API_TOKEN`）を必須化。Web は middleware でセッションを確認してからトークンを付けて転送する（従来は `/api` が認証チェックの対象外で、そのまま API に転送されていた）。転送先は `API_URL` で指定（従来は `localhost:8081` 固定で、compose や Vercel では届かなかった）
+> - **署名の補足**: `PUT` / `DELETE /v1/ws-auth` は本文を送るが、**署名には本文を含めない**（公式サンプルどおり。本文を署名に含めるのは POST のみ）
+> - Private WebSocket は照合の高速化に使い、正は定期照合に置く（通知は取りこぼしうるため）
+>
 > 4a で公式ドキュメントから確認した仕様（着手前の要確認事項の回答）:
 > - 署名対象は `timestamp + method + path + body`。path は `/v1` 始まり、GET はボディ空で**クエリ文字列は含めない**
 > - WebSocket 用トークンは `POST / PUT / DELETE /v1/ws-auth`（有効60分、延長で60分に戻る、最大5個）。接続先は `wss://forex-api.coin.z.com/ws/private/v1/{token}`、チャンネルは `executionEvents` など

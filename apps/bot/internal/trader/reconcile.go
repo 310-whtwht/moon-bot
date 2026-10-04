@@ -8,6 +8,16 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// Reconcile runs a reconciliation now (used when the broker reports a fill).
+func (r *Runner) Reconcile(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.loaded {
+		return nil // the first poll loads the position and reconciles
+	}
+	return r.reconcile(ctx)
+}
+
 // reconcile compares the runner's position with what the broker actually
 // holds. It runs at start-up, on an interval, and when a quote crosses a
 // broker-side stop.

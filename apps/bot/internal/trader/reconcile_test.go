@@ -346,3 +346,27 @@ func TestPositionGoneWithoutAFillHalts(t *testing.T) {
 	assert.Len(t, h.gmoPositions(), 1, "left open in the database for a human to resolve")
 	assert.Contains(t, h.events[len(h.events)-2].Message, "決済の約定も見つかりません")
 }
+
+func TestExecutionEventTriggersImmediateReconcile(t *testing.T) {
+	h, sb, _ := stopHarness(t)
+	setScript(0, map[int]strategy.Signal{10: long(149)})
+	h.poll(10)
+	h.poll(11)
+	stopID := h.gmoPositions()[0].StopOrderID
+
+	// The periodic check is far away; only the execution event can settle this.
+	h.mgr.runners["dep-00000001"].cfg.ReconcileInterval = 24 * time.Hour
+	h.feed.quote("148.900", "148.910")
+	sb.trigger(t, stopID)
+
+	events := make(chan broker.Execution, 2)
+	events <- broker.Execution{Symbol: "EUR_JPY", SettleType: "CLOSE"} // another symbol: ignored
+	events <- broker.Execution{Symbol: "USD_JPY", SettleType: "CLOSE"}
+	close(events)
+	h.mgr.WatchExecutions(context.Background(), "gmo", events)
+
+	assert.Empty(t, h.gmoPositions(), "settled as soon as the broker reported the fill")
+	assert.Equal(t, 0, sb.closes)
+	assert.Equal(t, "148.9", h.store.positions[0].ClosePrice.String())
+	assert.True(t, h.logged("execution stream ended"))
+}

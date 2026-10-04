@@ -7,6 +7,8 @@ import (
 type Config struct {
 	Environment string
 	AutoMigrate bool
+	// APIToken is the bearer token every /api/v1 request must carry.
+	APIToken string
 	Database    DatabaseConfig
 	Redis       RedisConfig
 }
@@ -31,6 +33,7 @@ func Load() *Config {
 	return &Config{
 		Environment: getEnv("ENVIRONMENT", "development"),
 		AutoMigrate: getEnv("AUTO_MIGRATE", "false") == "true",
+		APIToken:    getEnv("API_TOKEN", ""),
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
 			Port:     getEnv("DB_PORT", "3306"),

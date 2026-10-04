@@ -77,10 +77,11 @@ install-deps: ## Install all dependencies
 	@echo "Installing Node.js dependencies..."
 	cd apps/web && npm install
 
-env: ## Create .env from .env.example (generates NEXTAUTH_SECRET)
+env: ## Create .env from .env.example (generates NEXTAUTH_SECRET and API_TOKEN)
 	@if [ ! -f .env ]; then \
 		cp .env.example .env; \
 		sed -i.bak "s|^NEXTAUTH_SECRET=$$|NEXTAUTH_SECRET=$$(openssl rand -base64 32)|" .env && rm -f .env.bak; \
+		sed -i.bak "s|^API_TOKEN=$$|API_TOKEN=$$(openssl rand -hex 32)|" .env && rm -f .env.bak; \
 		echo "Created .env (edit DB passwords if needed)"; \
 	fi
 
