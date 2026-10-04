@@ -28,6 +28,25 @@ type TraderConfig struct {
 	KillSwitch bool
 	// SlackWebhookURL enables Slack notifications when set.
 	SlackWebhookURL string
+	// BrokerMode is "paper" (default) or "live". LiveConfirm must be "yes" as
+	// well before any real-money broker is connected.
+	BrokerMode  string
+	LiveConfirm string
+}
+
+// LiveTrading reports whether the real-money broker may be connected, and if
+// not, why. Two separate switches plus credentials are required so that a
+// single stray variable cannot start live trading.
+func (c *Config) LiveTrading() (bool, string) {
+	switch {
+	case c.Trader.BrokerMode != "live":
+		return false, "BROKER_MODE is not \"live\""
+	case c.Trader.LiveConfirm != "yes":
+		return false, "BROKER_MODE=live but LIVE_CONFIRM is not \"yes\""
+	case c.GMO.APIKey == "" || c.GMO.APISecret == "":
+		return false, "BROKER_MODE=live but GMO_API_KEY / GMO_API_SECRET are not set"
+	}
+	return true, ""
 }
 
 type DatabaseConfig struct {
@@ -48,6 +67,12 @@ type RedisConfig struct {
 type GMOConfig struct {
 	PublicURL   string
 	PublicWSURL string
+	PrivateURL  string
+	// APIKey / APISecret are only read from the environment; never log them.
+	APIKey    string
+	APISecret string
+	// AccountID labels the account on orders and positions.
+	AccountID string
 }
 
 
@@ -69,6 +94,10 @@ func Load() *Config {
 		GMO: GMOConfig{
 			PublicURL:   getEnv("GMO_PUBLIC_URL", ""),
 			PublicWSURL: getEnv("GMO_PUBLIC_WS_URL", ""),
+			PrivateURL:  getEnv("GMO_PRIVATE_URL", ""),
+			APIKey:      getEnv("GMO_API_KEY", ""),
+			APISecret:   getEnv("GMO_API_SECRET", ""),
+			AccountID:   getEnv("GMO_ACCOUNT_ID", "default"),
 		},
 		Trader: TraderConfig{
 			Enabled:             getEnv("TRADER_ENABLED", "true") == "true",
@@ -76,6 +105,8 @@ func Load() *Config {
 			PaperInitialBalance: getFloat("PAPER_INITIAL_BALANCE", 30000),
 			KillSwitch:          getEnv("KILL_SWITCH", "false") == "true",
 			SlackWebhookURL:     getEnv("SLACK_WEBHOOK_URL", ""),
+			BrokerMode:          getEnv("BROKER_MODE", "paper"),
+			LiveConfirm:         getEnv("LIVE_CONFIRM", ""),
 			// Defaults are deliberately small (Phase 6 starts at 100 units).
 			AccountLimits: risk.Limits{
 				MaxUnitsPerPosition: getFloat("RISK_ACCOUNT_MAX_UNITS", 1000),

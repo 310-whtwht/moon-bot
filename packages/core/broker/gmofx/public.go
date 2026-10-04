@@ -86,6 +86,8 @@ type APIError struct {
 	HTTPStatus int
 	Code       string
 	Message    string
+	// ServerTime is the broker's clock from the response, when present.
+	ServerTime time.Time
 }
 
 func (e *APIError) Error() string {

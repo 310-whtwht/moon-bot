@@ -74,6 +74,7 @@ type Order struct {
 type Fill struct {
 	BrokerOrderID    string
 	BrokerPositionID string
+	Size             decimal.Decimal
 	Price            decimal.Decimal
 	Fee              decimal.Decimal
 	At               time.Time
@@ -95,6 +96,9 @@ type Store interface {
 	CreateOrder(ctx context.Context, o Order) (created bool, err error)
 	MarkOrderFilled(ctx context.Context, o Order, f Fill) error
 	MarkOrderRejected(ctx context.Context, clientOrderID, reason string) error
+	// MarkOrderUnknown records that the order was sent but its outcome could
+	// not be determined; it needs a human (or reconciliation) to resolve.
+	MarkOrderUnknown(ctx context.Context, clientOrderID, reason string) error
 
 	InsertPosition(ctx context.Context, p Position) error
 	// ClosePosition closes a position. realizedPnL is net of all fees.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/moomoo-trading/core/broker"
+	"github.com/moomoo-trading/core/broker/paper"
 	"github.com/moomoo-trading/core/market"
 	"github.com/moomoo-trading/core/risk"
 	"github.com/moomoo-trading/core/strategy"
@@ -27,7 +28,16 @@ type Config struct {
 	// MaxSignalAge: a signal is only acted on if its bar closed this recently.
 	// Older signals (bot was down, data was late) are skipped.
 	MaxSignalAge time.Duration
+	// FillPollInterval / FillPollAttempts: after an order is accepted, its fills
+	// are polled this often, this many times. Also used to look up an order
+	// whose result is unknown.
+	FillPollInterval time.Duration
+	FillPollAttempts int
 }
+
+// HardMaxLiveUnits caps the size of any order sent to a real-money broker,
+// whatever the configuration says. Raise it deliberately, in code.
+const HardMaxLiveUnits = 10000
 
 func (c Config) withDefaults() Config {
 	if c.WarmupBars == 0 {
@@ -41,6 +51,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MarginBuffer == 0 {
 		c.MarginBuffer = 0.5
+	}
+	if c.FillPollInterval == 0 {
+		c.FillPollInterval = 500 * time.Millisecond
+	}
+	if c.FillPollAttempts == 0 {
+		c.FillPollAttempts = 10
 	}
 	return c
 }
@@ -60,6 +76,9 @@ type Runner struct {
 	cfg      Config
 	now      func() time.Time
 	logf     func(format string, args ...any)
+	// halt stops new entries on a broker (kill switch). Called when an
+	// order's outcome cannot be determined.
+	halt func(ctx context.Context, brokerName, reason string)
 
 	mu      sync.Mutex
 	strat   strategy.Strategy
@@ -322,6 +341,11 @@ func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDis
 		r.notify("skipped", "entry without a valid stop-loss was refused")
 		return nil
 	}
+	if r.dep.Broker != paper.BrokerName && r.dep.Units.GreaterThan(decimal.NewFromInt(HardMaxLiveUnits)) {
+		r.notify("skipped", fmt.Sprintf("entry refused: %s units exceeds the hard cap of %d for real-money brokers",
+			r.dep.Units.String(), HardMaxLiveUnits))
+		return nil
+	}
 
 	tick, err := r.quote(ctx)
 	if err != nil {
@@ -361,12 +385,15 @@ func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDis
 		return err
 	}
 
-	fill, err := r.send(ctx, func() (broker.OrderAck, error) {
+	fill, err := r.send(ctx, order, func() (broker.OrderAck, error) {
 		return r.broker.PlaceOpen(ctx, broker.OpenOrder{
 			ClientOrderID: order.ClientOrderID, Symbol: order.Symbol, Side: side,
 			Type: broker.OrderMarket, Size: order.Units, StrategyVersionID: r.version.ID,
 		})
 	})
+	if errors.Is(err, errUnresolved) {
+		return r.unresolved(ctx, order, err)
+	}
 	if err != nil {
 		r.notify("rejected", err.Error())
 		return r.store.MarkOrderRejected(ctx, order.ClientOrderID, err.Error())
@@ -384,7 +411,7 @@ func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDis
 	}
 	pos := Position{
 		ID: uuid.NewString(), DeploymentID: r.dep.ID, Broker: r.dep.Broker, AccountID: r.dep.AccountID,
-		BrokerPositionID: fill.BrokerPositionID, Symbol: r.dep.Symbol, Side: side, Units: order.Units,
+		BrokerPositionID: fill.BrokerPositionID, Symbol: r.dep.Symbol, Side: side, Units: fill.Size,
 		OpenPrice: fill.Price, StopPrice: stop, Fees: fill.Fee,
 		StrategyID: r.dep.StrategyID, StrategyVersionID: r.version.ID, OpenedAt: fill.At,
 	}
@@ -393,7 +420,7 @@ func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDis
 	}
 	r.pos = &pos
 	r.notify("opened", fmt.Sprintf("%s %s %s @ %s, stop %s (%s)",
-		side, order.Units.String(), r.dep.Symbol, fill.Price.String(), stop.StringFixed(3), reason))
+		side, fill.Size.String(), r.dep.Symbol, fill.Price.String(), stop.StringFixed(3), reason))
 	return nil
 }
 
@@ -414,29 +441,129 @@ func (r *Runner) checkRisk(ctx context.Context, price decimal.Decimal) error {
 	}, r.cfg.AccountLimits, r.cfg.GlobalLimits, account, global)
 }
 
+// errUnresolved: the order was sent but nobody can tell whether it executed.
+var errUnresolved = errors.New("order outcome could not be determined")
+
 // send places an order and collects its fill.
-func (r *Runner) send(ctx context.Context, place func() (broker.OrderAck, error)) (Fill, error) {
+//
+// A real broker reports fills a moment after accepting a market order, so
+// they are polled. If the broker's answer never arrived (ErrUnknownResult),
+// the order is looked up by its client order ID instead of being sent again.
+// When neither gives an answer, errUnresolved is returned.
+func (r *Runner) send(ctx context.Context, order Order, place func() (broker.OrderAck, error)) (Fill, error) {
 	ack, err := place()
-	if err != nil {
-		return Fill{}, err
+	var execs []broker.Execution
+	switch {
+	case errors.Is(err, broker.ErrUnknownResult):
+		r.logf("%s: order %s: no answer from broker (%v); looking it up", r.dep.Name, order.ClientOrderID, err)
+		execs, err = r.lookup(ctx, order)
+		if err != nil {
+			return Fill{}, fmt.Errorf("%w: %v", errUnresolved, err)
+		}
+	case err != nil:
+		return Fill{}, err // a definite rejection
+	default:
+		execs, err = r.awaitFills(ctx, ack.OrderID)
+		if err != nil {
+			return Fill{}, fmt.Errorf("%w: order %s was accepted but %v", errUnresolved, ack.OrderID, err)
+		}
 	}
-	execs, err := r.broker.Executions(ctx, ack.OrderID)
-	if err != nil {
-		return Fill{}, fmt.Errorf("executions for %s: %w", ack.OrderID, err)
-	}
-	if len(execs) == 0 {
-		return Fill{}, fmt.Errorf("order %s accepted but not filled", ack.OrderID)
-	}
+
 	// Size-weighted average price across partial fills.
-	fill := Fill{BrokerOrderID: ack.OrderID, BrokerPositionID: execs[0].PositionID, At: execs[len(execs)-1].ExecutedAt}
-	notional, size := decimal.Zero, decimal.Zero
+	fill := Fill{BrokerOrderID: execs[0].OrderID, BrokerPositionID: execs[0].PositionID, At: execs[len(execs)-1].ExecutedAt}
+	notional := decimal.Zero
 	for _, e := range execs {
 		notional = notional.Add(e.Price.Mul(e.Size))
-		size = size.Add(e.Size)
+		fill.Size = fill.Size.Add(e.Size)
 		fill.Fee = fill.Fee.Add(e.Fee)
 	}
-	fill.Price = notional.Div(size)
+	fill.Price = notional.Div(fill.Size)
 	return fill, nil
+}
+
+func (r *Runner) pause(ctx context.Context) error {
+	t := time.NewTimer(r.cfg.FillPollInterval)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// awaitFills polls the fills of an accepted order.
+func (r *Runner) awaitFills(ctx context.Context, orderID string) ([]broker.Execution, error) {
+	var lastErr error
+	for attempt := 0; attempt < r.cfg.FillPollAttempts; attempt++ {
+		if attempt > 0 {
+			if err := r.pause(ctx); err != nil {
+				return nil, err
+			}
+		}
+		execs, err := r.broker.Executions(ctx, orderID)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if len(execs) > 0 {
+			return execs, nil
+		}
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("its fills could not be read: %v", lastErr)
+	}
+	return nil, errors.New("no fill was reported")
+}
+
+// lookup finds the fills of an order whose result is unknown.
+func (r *Runner) lookup(ctx context.Context, order Order) ([]broker.Execution, error) {
+	finder, ok := r.broker.(broker.OrderLookup)
+	if !ok {
+		return nil, errors.New("broker cannot look orders up")
+	}
+	var lastErr error
+	known := false
+	for attempt := 0; attempt < r.cfg.FillPollAttempts; attempt++ {
+		if attempt > 0 {
+			if err := r.pause(ctx); err != nil {
+				return nil, err
+			}
+		}
+		fills, found, err := finder.FindOrder(ctx, order.Symbol, order.ClientOrderID)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		lastErr = nil
+		known = known || found
+		if len(fills) > 0 {
+			return fills, nil
+		}
+	}
+	switch {
+	case lastErr != nil:
+		return nil, fmt.Errorf("lookup failed: %v", lastErr)
+	case known:
+		return nil, errors.New("broker has the order but reports no fill")
+	default:
+		return nil, errors.New("broker has no trace of the order")
+	}
+}
+
+// unresolved handles an order whose outcome is unknown: it is recorded, new
+// entries on the broker are halted and a human is told. Nothing is re-sent.
+func (r *Runner) unresolved(ctx context.Context, order Order, cause error) error {
+	msg := fmt.Sprintf("order %s (%s %s %s): %v — 新規発注を停止しました。ブローカーの画面で状態を確認してください",
+		order.ClientOrderID, order.SettleType, order.Side, order.Symbol, cause)
+	if err := r.store.MarkOrderUnknown(ctx, order.ClientOrderID, cause.Error()); err != nil {
+		r.logf("%s: record unknown order: %v", r.dep.Name, err)
+	}
+	if r.halt != nil {
+		r.halt(ctx, r.dep.Broker, "発注結果が不明: "+order.ClientOrderID)
+	}
+	r.notify("error", msg)
+	return cause
 }
 
 // close exits the current position at market. It is never blocked by the
@@ -475,12 +602,18 @@ func (r *Runner) close(ctx context.Context, tag, reason string) error {
 		return nil
 	}
 
-	fill, err := r.send(ctx, func() (broker.OrderAck, error) {
+	fill, err := r.send(ctx, order, func() (broker.OrderAck, error) {
 		return r.broker.PlaceClose(ctx, broker.CloseOrder{
 			ClientOrderID: order.ClientOrderID, Symbol: pos.Symbol, PositionID: pos.BrokerPositionID,
 			Side: side, Type: broker.OrderMarket, Size: pos.Units,
 		})
 	})
+	if errors.Is(err, errUnresolved) {
+		// Do not keep retrying: if this close did execute, another close order
+		// would act on a position that no longer exists.
+		r.pendingExit = ""
+		return r.unresolved(ctx, order, err)
+	}
 	if err != nil {
 		_ = r.store.MarkOrderRejected(ctx, order.ClientOrderID, err.Error())
 		r.pendingExit = reason
