@@ -11,12 +11,18 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/moomoo-trading/bot/internal/config"
 	"github.com/moomoo-trading/bot/internal/jobs"
+	"github.com/moomoo-trading/bot/internal/trader"
+	"github.com/moomoo-trading/core/backtest"
+	"github.com/moomoo-trading/core/broker"
+	"github.com/moomoo-trading/core/broker/gmofx"
+	"github.com/moomoo-trading/core/broker/paper"
 	"github.com/moomoo-trading/core/marketdata"
 	"github.com/redis/go-redis/v9"
+	"github.com/shopspring/decimal"
 )
 
-// Worker runs the bot's background loops. Today: the backtest job consumer.
-// Live strategy execution is added in Phase 3.
+// Worker runs the bot's background loops: the backtest job consumer and the
+// trader (strategy execution on the paper broker).
 type Worker struct {
 	config *config.Config
 	db     *sql.DB
@@ -70,8 +76,50 @@ func (w *Worker) Start(ctx context.Context) error {
 			log.Printf("backtest consumer stopped: %v", err)
 		}
 	}()
-
 	log.Println("Worker started (backtest jobs)")
+
+	if w.config.Trader.Enabled {
+		if err := w.startTrader(runCtx); err != nil {
+			cancel()
+			return err
+		}
+	} else {
+		log.Println("Trader disabled (TRADER_ENABLED=false)")
+	}
+	return nil
+}
+
+// startTrader runs deployments on the paper broker, filled against real GMO
+// quotes. Real-money brokers are added in Phase 4.
+func (w *Worker) startTrader(ctx context.Context) error {
+	tc := w.config.Trader
+	source := gmofx.New(gmofx.Options{PublicURL: w.config.GMO.PublicURL, PublicWSURL: w.config.GMO.PublicWSURL})
+	initial := decimal.NewFromFloat(tc.PaperInitialBalance)
+	paperBroker := paper.New(source, paper.Options{
+		InitialBalance: initial,
+		FeeRate:        decimal.NewFromFloat(backtest.DefaultFeeRate),
+	})
+
+	store := &trader.MySQLStore{DB: w.db}
+	if err := trader.RestorePaper(ctx, store, paperBroker, initial); err != nil {
+		return err
+	}
+
+	manager := &trader.Manager{
+		Store:   store,
+		Brokers: map[string]broker.Broker{paper.BrokerName: paperBroker},
+		Config:  trader.Config{AccountLimits: tc.AccountLimits, GlobalLimits: tc.GlobalLimits},
+	}
+	quotes := trader.StreamQuotes(ctx, source, store, tc.PollInterval, log.Printf)
+
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		if err := manager.Run(ctx, tc.PollInterval, quotes); err != nil && ctx.Err() == nil {
+			log.Printf("trader stopped: %v", err)
+		}
+	}()
+	log.Printf("Trader started (paper, poll every %s, initial balance %.0f JPY)", tc.PollInterval, tc.PaperInitialBalance)
 	return nil
 }
 

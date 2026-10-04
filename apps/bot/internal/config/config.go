@@ -2,13 +2,28 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"strconv"
+	"time"
+
+	"github.com/moomoo-trading/core/risk"
 )
 
 type Config struct {
 	Database DatabaseConfig
 	Redis    RedisConfig
 	GMO      GMOConfig
+	Trader   TraderConfig
+}
+
+// TraderConfig controls live strategy execution (paper trading in Phase 3).
+type TraderConfig struct {
+	Enabled             bool
+	PollInterval        time.Duration
+	PaperInitialBalance float64
+	AccountLimits       risk.Limits
+	GlobalLimits        risk.Limits
 }
 
 type DatabaseConfig struct {
@@ -51,6 +66,23 @@ func Load() *Config {
 			PublicURL:   getEnv("GMO_PUBLIC_URL", ""),
 			PublicWSURL: getEnv("GMO_PUBLIC_WS_URL", ""),
 		},
+		Trader: TraderConfig{
+			Enabled:             getEnv("TRADER_ENABLED", "true") == "true",
+			PollInterval:        getDuration("TRADER_POLL_INTERVAL", 30*time.Second),
+			PaperInitialBalance: getFloat("PAPER_INITIAL_BALANCE", 30000),
+			// Defaults are deliberately small (Phase 6 starts at 100 units).
+			AccountLimits: risk.Limits{
+				MaxUnitsPerPosition: getFloat("RISK_ACCOUNT_MAX_UNITS", 1000),
+				MaxOpenPositions:    int(getFloat("RISK_ACCOUNT_MAX_POSITIONS", 1)),
+				MaxDailyLossJPY:     getFloat("RISK_ACCOUNT_MAX_DAILY_LOSS", 500),
+				MaxWeeklyLossJPY:    getFloat("RISK_ACCOUNT_MAX_WEEKLY_LOSS", 1500),
+			},
+			GlobalLimits: risk.Limits{
+				MaxOpenPositions: int(getFloat("RISK_GLOBAL_MAX_POSITIONS", 3)),
+				MaxDailyLossJPY:  getFloat("RISK_GLOBAL_MAX_DAILY_LOSS", 1000),
+				MaxWeeklyLossJPY: getFloat("RISK_GLOBAL_MAX_WEEKLY_LOSS", 3000),
+			},
+		},
 	}
 }
 
@@ -65,4 +97,31 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+// getFloat reads a number, falling back (with a warning) on bad input so a
+// typo cannot silently disable a risk limit by parsing to zero.
+func getFloat(key string, defaultValue float64) float64 {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return defaultValue
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || v < 0 {
+		log.Printf("config: invalid %s=%q, using default %v", key, raw, defaultValue)
+		return defaultValue
+	}
+	return v
+}
+
+func getDuration(key string, defaultValue time.Duration) time.Duration {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return defaultValue
+	}
+	v, err := time.ParseDuration(raw)
+	if err != nil || v <= 0 {
+		log.Printf("config: invalid %s=%q, using default %s", key, raw, defaultValue)
+		return defaultValue
+	}
+	return v
 }
