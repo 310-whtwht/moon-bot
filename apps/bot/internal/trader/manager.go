@@ -36,6 +36,8 @@ type Manager struct {
 	runners     map[string]*Runner
 	startedAt   time.Time
 	activeKills map[string]bool
+	killSeen    map[string]time.Time // last updated_at seen per scope
+	killsRead   bool                 // the switches have been read at least once
 	summaryDay  time.Time
 }
 
@@ -64,6 +66,7 @@ func (m *Manager) defaults() {
 	}
 	if m.activeKills == nil {
 		m.activeKills = map[string]bool{}
+		m.killSeen = map[string]time.Time{}
 	}
 	if m.startedAt.IsZero() {
 		m.startedAt = m.Now()
@@ -167,6 +170,28 @@ func (m *Manager) PollOnce(ctx context.Context) error {
 	return nil
 }
 
+// announceStart tells the operator that the bot is up and what it picked up.
+// It doubles as proof that notifications reach them, and makes an unexpected
+// restart visible.
+func (m *Manager) announceStart() {
+	m.mu.Lock()
+	enabled, holding := 0, 0
+	for _, r := range m.runners {
+		if r.dep.Enabled {
+			enabled++
+		}
+		if r.HasPosition() {
+			holding++
+		}
+	}
+	m.mu.Unlock()
+	m.Notifier.Notify(Event{
+		Kind:    "started",
+		Message: fmt.Sprintf("bot を起動しました（稼働中の割り当て %d 件、保有中の建玉 %d 件）", enabled, holding),
+		At:      m.Now(),
+	})
+}
+
 // applyKillSwitches reports switch changes and, for switches activated with
 // close_positions, closes the positions they cover. (New entries are blocked
 // separately, by the Guard, right before each order.)
@@ -182,7 +207,14 @@ func (m *Manager) applyKillSwitches(ctx context.Context, runners []*Runner) {
 
 	m.mu.Lock()
 	for _, k := range switches {
-		if k.Active != m.activeKills[k.Scope] {
+		// What is there at start-up is the baseline; a row that appears later is news.
+		seen, known := m.killSeen[k.Scope]
+		known = known || m.killsRead
+		m.killSeen[k.Scope] = k.UpdatedAt
+
+		msg := ""
+		switch {
+		case k.Active != m.activeKills[k.Scope]:
 			m.activeKills[k.Scope] = k.Active
 			state := "解除"
 			if k.Active {
@@ -191,14 +223,23 @@ func (m *Manager) applyKillSwitches(ctx context.Context, runners []*Runner) {
 					state += "（全決済）"
 				}
 			}
-			msg := fmt.Sprintf("Kill Switch %s: %s", k.Scope, state)
-			if k.Reason != "" {
-				msg += " — " + k.Reason
-			}
-			m.Logf("%s", msg)
-			m.Notifier.Notify(Event{Kind: "kill_switch", Message: msg, At: m.Now()})
+			msg = fmt.Sprintf("Kill Switch %s: %s", k.Scope, state)
+		case known && !k.Active && k.UpdatedAt.After(seen):
+			// Written while staying off: typically turned on and off again between
+			// two polls. The bot never saw it active, so nothing was blocked, but
+			// the operator should still hear back.
+			msg = fmt.Sprintf("Kill Switch %s: 操作がありました。現在は解除されています（bot が発動を確認する前に解除されたため、売買への影響はありません）", k.Scope)
 		}
+		if msg == "" {
+			continue
+		}
+		if k.Reason != "" {
+			msg += " — " + k.Reason
+		}
+		m.Logf("%s", msg)
+		m.Notifier.Notify(Event{Kind: "kill_switch", Message: msg, At: m.Now()})
 	}
+	m.killsRead = true
 	m.mu.Unlock()
 
 	for _, r := range runners {
@@ -330,6 +371,7 @@ func (m *Manager) Run(ctx context.Context, interval time.Duration, quotes <-chan
 	if err := m.PollOnce(ctx); err != nil {
 		m.Logf("trader: %v", err)
 	}
+	m.announceStart()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {

@@ -32,7 +32,8 @@ DB_PASSWORD=（任意の文字列）
 
 ### Slack 通知（任意だが推奨）
 
-Slack で Incoming Webhook を発行し、`.env` に追記します。約定・決済・エラー・Kill Switch・日次サマリ（朝6時）が届きます。
+Slack で Incoming Webhook を発行し、`.env` に追記します。bot の起動・約定・決済・エラー・Kill Switch・日次サマリ（朝6時）が届きます。
+設定後に `docker compose up -d bot` で再起動すると「起動」の通知が届くので、それで疎通を確認できます。
 
 ```
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXX/YYY/ZZZ

@@ -216,6 +216,7 @@ type memOps struct {
 	switches   []KillSwitch
 	killErr    error
 	heartbeats int
+	writes     int
 	lastRunner int
 	store      *memStore
 }
@@ -229,6 +230,9 @@ func (o *memOps) KillSwitches(context.Context) ([]KillSwitch, error) {
 func (o *memOps) set(k KillSwitch) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	// Like the database, every write moves updated_at forward.
+	o.writes++
+	k.UpdatedAt = t0.Add(time.Duration(o.writes) * time.Millisecond)
 	for i := range o.switches {
 		if o.switches[i].Scope == k.Scope {
 			o.switches[i] = k
