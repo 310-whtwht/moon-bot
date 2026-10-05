@@ -83,6 +83,39 @@ func TestKillSwitchBlocksEntryAndNotifiesOnChange(t *testing.T) {
 	assert.Contains(t, h.events[len(h.events)-1].Message, "解除")
 }
 
+func TestKillSwitchToggledBetweenPollsIsStillReported(t *testing.T) {
+	h := newHarness(t, Config{})
+	ops := withOps(h)
+	h.poll(10)
+	require.Empty(t, h.events, "the state at start-up is the baseline, not news")
+
+	// On and off again before the bot looks: it never sees the switch active.
+	ops.set(KillSwitch{Scope: GlobalScope, Active: true})
+	ops.set(KillSwitch{Scope: GlobalScope, Active: false})
+	h.poll(11)
+	require.Equal(t, []string{"kill_switch"}, h.kinds())
+	assert.Contains(t, h.events[0].Message, "現在は解除されています")
+
+	h.poll(12) // not repeated
+	assert.Len(t, h.events, 1)
+}
+
+func TestStartIsAnnouncedWithWhatWasPickedUp(t *testing.T) {
+	h := newHarness(t, Config{})
+	setScript(0, map[int]strategy.Signal{10: long(149)})
+	h.poll(10)
+	h.poll(11)
+	require.Len(t, h.openPositions(), 1)
+
+	h.newManager(Config{}) // restart
+	h.poll(12)
+	h.events = nil
+	h.mgr.announceStart()
+	require.Equal(t, []string{"started"}, h.kinds())
+	assert.Contains(t, h.events[0].Message, "稼働中の割り当て 1 件、保有中の建玉 1 件")
+	assert.Contains(t, FormatEvent(h.events[0]), "起動")
+}
+
 func TestKillSwitchWithClosePositions(t *testing.T) {
 	h := newHarness(t, Config{})
 	ops := withOps(h)

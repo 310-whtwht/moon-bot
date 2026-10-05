@@ -16,6 +16,7 @@ var eventLabels = map[string]string{
 	"error":         ":rotating_light: エラー",
 	"kill_switch":   ":octagonal_sign: Kill Switch",
 	"daily_summary": ":bar_chart: 日次サマリ",
+	"started":       ":arrow_forward: 起動",
 }
 
 // SlackNotifier sends events to a Slack webhook from a background goroutine,
