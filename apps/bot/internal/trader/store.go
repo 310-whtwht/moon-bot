@@ -114,6 +114,23 @@ type Store interface {
 	RealizedPnL(ctx context.Context, brokerName, accountID string) (decimal.Decimal, error)
 }
 
+// BarDecision is what the strategy decided on one closed bar.
+type BarDecision struct {
+	DeploymentID string
+	BarTime      time.Time
+	Close        decimal.Decimal
+	Action       string      // strategy.Action
+	Holding      broker.Side // side held when the bar was judged, or ""
+	Detail       string      // indicator values the strategy saw
+	DecidedAt    time.Time
+}
+
+// BarRecorder is optionally implemented by a Store to keep bar decisions for
+// the UI. Trading never depends on it: a failure is only logged.
+type BarRecorder interface {
+	RecordBar(ctx context.Context, d BarDecision) error
+}
+
 // Guard can block new entries (kill switch). Exits and stops are never blocked.
 type Guard interface {
 	EntriesAllowed(ctx context.Context, brokerName string) (allowed bool, reason string)

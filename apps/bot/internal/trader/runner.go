@@ -153,7 +153,7 @@ func (r *Runner) Poll(ctx context.Context) error {
 	for i, bar := range bars {
 		sig := r.strat.OnBar(toStrategyBar(bar), r.view())
 		r.lastBar = bar.OpenTime
-		r.logBar(bar, sig)
+		r.logBar(ctx, bar, sig)
 		if sig.Action == strategy.Hold {
 			continue
 		}
@@ -172,19 +172,31 @@ func (r *Runner) Poll(ctx context.Context) error {
 }
 
 // logBar records every bar the strategy has judged, including the ones with
-// no signal, so the log shows that bars are being processed and why nothing
-// was traded.
-func (r *Runner) logBar(bar market.Bar, sig strategy.Signal) {
+// no signal, so the log and the UI show that bars are being processed and why
+// nothing was traded.
+func (r *Runner) logBar(ctx context.Context, bar market.Bar, sig strategy.Signal) {
+	d := BarDecision{
+		DeploymentID: r.dep.ID, BarTime: bar.OpenTime, Close: bar.Close,
+		Action: string(sig.Action), DecidedAt: r.now(),
+	}
 	holding := "flat"
 	if r.pos != nil {
+		d.Holding = r.pos.Side
 		holding = "holding " + string(r.pos.Side)
 	}
 	seen := ""
 	if e, ok := r.strat.(strategy.Explainer); ok {
-		seen = " [" + e.Explain() + "]"
+		d.Detail = e.Explain()
+		seen = " [" + d.Detail + "]"
 	}
 	r.logf("%s: bar %s close %s -> %s (%s)%s",
 		r.dep.Name, bar.OpenTime.Format(time.RFC3339), bar.Close.String(), sig.Action, holding, seen)
+
+	if rec, ok := r.store.(BarRecorder); ok {
+		if err := rec.RecordBar(ctx, d); err != nil {
+			r.logf("%s: record bar decision: %v", r.dep.Name, err)
+		}
+	}
 }
 
 // retryPendingExit re-attempts an exit that failed or was deferred. The order

@@ -26,6 +26,19 @@ export interface ChartSignal {
   price: number;
 }
 
+/** What the strategy decided on one closed bar (recorded by the bot). */
+export interface BarDecision {
+  /** Open time of the bar, ISO (UTC). */
+  bar_time: string;
+  close: number;
+  action: 'HOLD' | 'ENTER_LONG' | 'ENTER_SHORT' | 'EXIT';
+  /** Side held when the bar was judged. */
+  holding: '' | 'BUY' | 'SELL';
+  /** Indicator values the strategy saw, e.g. "fast=1 slow=2 diff=-1 atr=0.1". */
+  detail: string;
+  decided_at: string;
+}
+
 export interface ChartData {
   symbol: string;
   timeframe: string;
@@ -35,6 +48,8 @@ export interface ChartData {
   strategy: DeployedStrategy | null;
   /** Null when no strategy trades this symbol and timeframe. */
   signals: ChartSignal[] | null;
+  /** Newest first. */
+  decisions: BarDecision[];
 }
 
 export interface Quote {

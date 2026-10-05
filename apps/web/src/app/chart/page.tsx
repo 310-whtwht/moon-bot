@@ -25,6 +25,7 @@ import {
   formatYenSigned,
 } from '@/lib/bot';
 import {
+  type BarDecision,
   type ChartData,
   TIMEFRAME_SECONDS,
   ema,
@@ -43,6 +44,53 @@ const TIMEFRAMES = [
 ];
 
 const SIGNAL_LABELS = { buy: '買', sell: '売', exit: '手仕舞', stop: '損切' };
+
+const ACTION_LABELS: Record<BarDecision['action'], string> = {
+  HOLD: '見送り（シグナルなし）',
+  ENTER_LONG: '買いシグナル',
+  ENTER_SHORT: '売りシグナル',
+  EXIT: '決済シグナル',
+};
+const HOLDING_LABELS: Record<BarDecision['holding'], string> = {
+  '': 'なし',
+  BUY: '買い保有中',
+  SELL: '売り保有中',
+};
+const DETAIL_LABELS: Record<string, string> = {
+  fast: '短期',
+  slow: '長期',
+  diff: '差',
+  atr: 'ATR',
+};
+
+/** "fast=1 slow=2" -> "短期 1 / 長期 2"; anything else is shown as it is. */
+function describeDetail(detail: string): string {
+  if (detail === 'warming up') {
+    return '指標の準備中';
+  }
+  const parts = detail.split(' ').map(part => part.split('='));
+  if (!detail || parts.some(part => part.length !== 2)) {
+    return detail || '—';
+  }
+  return parts
+    .map(([name, value]) => `${DETAIL_LABELS[name!] ?? name} ${value}`)
+    .join(' / ');
+}
+
+const hourMinute = (ms: number) =>
+  new Date(ms).toLocaleTimeString('ja-JP', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+/** The span of a bar in local time, e.g. "10/5 11:00〜12:00". */
+function barSpan(iso: string, seconds: number): string {
+  const start = Date.parse(iso);
+  const day = new Date(start).toLocaleDateString('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+  });
+  return `${day} ${hourMinute(start)}〜${hourMinute(start + seconds * 1000)}`;
+}
 
 const price = (v: number) => v.toFixed(3);
 const signed = (v: number, digits = 3) =>
@@ -295,6 +343,7 @@ export default function ChartPage() {
   const timeframes = TIMEFRAMES.some(t => t.value === timeframe)
     ? TIMEFRAMES
     : [...TIMEFRAMES, { value: timeframe, label: timeframe }];
+  const decisions = chart?.decisions ?? [];
   const recent = [...(positions ?? [])].reverse().slice(0, 20);
 
   return (
@@ -466,6 +515,61 @@ export default function ChartPage() {
           )}
         </CardContent>
       </Card>
+
+      {strategy && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">足ごとの判定</CardTitle>
+            <CardDescription>
+              bot
+              が確定足を見て出した判定の記録（新しい順、最大48件）。売買シグナルが出ても、リスク管理や
+              Kill Switch で発注を見送ることがあります
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {decisions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                まだ記録はありません。次の足が確定すると1行増えます
+              </p>
+            ) : (
+              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-left text-muted-foreground">
+                    <tr>
+                      <th className="py-2 pr-4">足</th>
+                      <th className="py-2 pr-4">終値</th>
+                      <th className="py-2 pr-4">判定</th>
+                      <th className="py-2 pr-4">建玉</th>
+                      <th className="py-2">戦略が見た値</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {decisions.map(d => (
+                      <tr key={d.bar_time} className="border-t tabular-nums">
+                        <td className="py-2 pr-4 whitespace-nowrap">
+                          {barSpan(d.bar_time, barSeconds)}
+                        </td>
+                        <td className="py-2 pr-4">{price(d.close)}</td>
+                        <td
+                          className={`py-2 pr-4 whitespace-nowrap ${d.action === 'HOLD' ? 'text-muted-foreground' : 'font-semibold'}`}
+                        >
+                          {ACTION_LABELS[d.action] ?? d.action}
+                        </td>
+                        <td className="py-2 pr-4 whitespace-nowrap">
+                          {HOLDING_LABELS[d.holding] ?? d.holding}
+                        </td>
+                        <td className="py-2 text-muted-foreground">
+                          {describeDetail(d.detail)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
