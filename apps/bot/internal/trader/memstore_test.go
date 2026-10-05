@@ -19,6 +19,7 @@ type memStore struct {
 	orders      map[string]*memOrder
 	orderSeq    []string
 	positions   []*memPosition
+	bars        []BarDecision
 }
 
 type memOrder struct {
@@ -262,5 +263,12 @@ func (o *memOps) ClosedSummary(_ context.Context, from, to time.Time) (int, floa
 // SetKillSwitch lets the manager halt a broker in tests.
 func (o *memOps) SetKillSwitch(_ context.Context, k KillSwitch) error {
 	o.set(k)
+	return nil
+}
+
+func (m *memStore) RecordBar(_ context.Context, d BarDecision) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bars = append(m.bars, d)
 	return nil
 }

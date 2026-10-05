@@ -272,3 +272,37 @@ ORDER BY d.enabled DESC, v.created_at DESC LIMIT 1`, symbol, timeframe).Scan(&ve
 	}
 	return &s, rows.Err()
 }
+
+// BarDecision is what the strategy decided on one closed bar.
+type BarDecision struct {
+	BarTime   time.Time `json:"bar_time"`
+	Close     float64   `json:"close"`
+	Action    string    `json:"action"`  // HOLD, ENTER_LONG, ENTER_SHORT or EXIT
+	Holding   string    `json:"holding"` // "", "BUY" or "SELL"
+	Detail    string    `json:"detail"`
+	DecidedAt time.Time `json:"decided_at"`
+}
+
+// BarDecisions returns the latest decisions of the deployments trading a
+// symbol on a timeframe, newest first.
+func (r *BotRepository) BarDecisions(ctx context.Context, symbol, timeframe string, limit int) ([]BarDecision, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT b.bar_time, b.close, b.action, b.holding, b.detail, b.decided_at
+FROM bar_decisions b JOIN deployments d ON d.id = b.deployment_id
+WHERE d.symbol = ? AND d.timeframe = ?
+ORDER BY b.bar_time DESC LIMIT ?`, symbol, timeframe, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []BarDecision{}
+	for rows.Next() {
+		var d BarDecision
+		if err := rows.Scan(&d.BarTime, &d.Close, &d.Action, &d.Holding, &d.Detail, &d.DecidedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}

@@ -40,6 +40,7 @@ func TestMySQLStore_EndToEnd(t *testing.T) {
 			`DELETE FROM trades WHERE account_id = '` + account + `'`,
 			`DELETE FROM orders WHERE account_id = '` + account + `'`,
 			`DELETE FROM positions WHERE account_id = '` + account + `'`,
+			`DELETE FROM bar_decisions WHERE deployment_id = '` + deployID + `'`,
 			`DELETE FROM deployments WHERE id = '` + deployID + `'`,
 			`DELETE FROM strategy_packages WHERE id = '` + strategyID + `'`, // cascades to versions and params
 		} {
@@ -98,6 +99,19 @@ VALUES (?, 'e2e', ?, 'paper', ?, 'USD_JPY', '1h', 100, TRUE)`, deployID, strateg
 	assert.Equal(t, "149", pos.StopPrice.String())
 	assert.Equal(t, versionID, pos.StrategyVersionID)
 	assert.Equal(t, time.UTC, pos.OpenedAt.Location())
+
+	// A bar decision is one row per bar: recording it again replaces it.
+	decision := BarDecision{DeploymentID: deployID, BarTime: t0, Close: d("150.001"), Action: "HOLD", Detail: "first", DecidedAt: t0.Add(time.Hour)}
+	require.NoError(t, store.RecordBar(ctx, decision))
+	decision.Action, decision.Holding, decision.Detail = "ENTER_LONG", broker.SideBuy, "second"
+	require.NoError(t, store.RecordBar(ctx, decision))
+	var kept int
+	var action, holding, detail string
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT COUNT(*), MAX(action), MAX(holding), MAX(detail) FROM bar_decisions WHERE deployment_id = ?`, deployID).
+		Scan(&kept, &action, &holding, &detail))
+	assert.Equal(t, 1, kept)
+	assert.Equal(t, []string{"ENTER_LONG", "BUY", "second"}, []string{action, holding, detail})
 
 	// The broker-side stop order ID round-trips (and can be cleared).
 	require.NoError(t, store.SetPositionStopOrder(ctx, pos.ID, "987654321"))

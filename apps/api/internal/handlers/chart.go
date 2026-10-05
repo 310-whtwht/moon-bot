@@ -226,6 +226,12 @@ func (h *ChartHandler) GetChart(c *gin.Context) {
 		return
 	}
 
+	decisions, err := h.repo.BarDecisions(ctx, symbol, string(tf), 48)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load bar decisions"})
+		return
+	}
+
 	var signals []chartSignal
 	if strategy != nil {
 		signals = replaySignals(strategy.Type, strategy.Params, bars)
@@ -233,6 +239,7 @@ func (h *ChartHandler) GetChart(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"signals":   signals,
+		"decisions": decisions,
 		"symbol":    symbol,
 		"timeframe": tf,
 		"bars":      out,

@@ -240,6 +240,15 @@ func TestEveryJudgedBarIsLogged(t *testing.T) {
 
 	h.poll(13)
 	assert.True(t, h.logged("test: bar 2026-10-05T12:00:00Z close 150 -> HOLD (holding BUY)"))
+
+	// The same decisions are kept for the UI.
+	require.Len(t, h.store.bars, 3)
+	assert.Equal(t, t0.Add(10*time.Hour), h.store.bars[0].BarTime)
+	assert.Equal(t, "HOLD", h.store.bars[0].Action)
+	assert.Equal(t, broker.Side(""), h.store.bars[0].Holding)
+	assert.Equal(t, "ENTER_LONG", h.store.bars[1].Action)
+	assert.Equal(t, broker.SideBuy, h.store.bars[2].Holding)
+	assert.Equal(t, "150", h.store.bars[2].Close.String())
 }
 
 func TestSameDecisionIsNeverSentTwice(t *testing.T) {
