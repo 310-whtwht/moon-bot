@@ -4,6 +4,7 @@ import './globals.css';
 import { NextAuthProvider } from '@/components/providers/NextAuthProvider';
 import Header from '@/components/layout/Header';
 import NavigationProgress from '@/components/layout/NavigationProgress';
+import { THEME_INIT_SCRIPT } from '@/components/layout/ThemeToggle';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -26,7 +27,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ja">
+    <html lang="ja" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

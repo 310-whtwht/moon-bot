@@ -15,6 +15,7 @@ import { User, LogOut, Settings, BarChart3 } from 'lucide-react';
 import Link from 'next/link';
 import Navigation from './Navigation';
 import { KillSwitchButton } from '@/components/bot/KillSwitchButton';
+import { ThemeToggle } from './ThemeToggle';
 
 export default function Header() {
   const { data: session } = useSession();
@@ -38,6 +39,7 @@ export default function Header() {
         <Navigation />
 
         <div className="ml-auto flex items-center space-x-4">
+          <ThemeToggle />
           <KillSwitchButton />
           {session ? (
             <DropdownMenu>
