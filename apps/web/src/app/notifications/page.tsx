@@ -1,6 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  AlertTriangle,
+  Bell,
+  CheckCircle,
+  Info,
+  RefreshCw,
+  XCircle,
+} from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -9,264 +18,211 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-
+import { Spinner } from '@/components/ui/spinner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  Bell,
-  Mail,
-  MessageSquare,
-  Settings,
-  Trash2,
-  CheckCircle,
-  AlertTriangle,
-  Info,
-  Zap,
-  Shield,
-  DollarSign,
-  BarChart3,
-} from 'lucide-react';
+  BOT_STATUS_CHANGED,
+  type BotStatus,
+  type Position,
+  SCOPE_LABELS,
+  fetchBotStatus,
+  formatYenSigned,
+} from '@/lib/bot';
 
-interface Notification {
+const REFRESH_MS = 15000;
+
+type Tone = 'success' | 'info' | 'warning' | 'error';
+
+interface Notice {
   id: string;
-  type: 'info' | 'warning' | 'error' | 'success';
+  tone: Tone;
+  category: '取引' | '安全装置' | 'システム';
   title: string;
   message: string;
-  category: 'system' | 'trading' | 'security' | 'performance';
-  timestamp: string;
-  read: boolean;
-  priority: 'low' | 'medium' | 'high';
+  /** ISO time, or null for a state that has no moment (shown first). */
+  time: string | null;
 }
 
-interface NotificationSettings {
-  email: boolean;
-  slack: boolean;
-  webhook: boolean;
-  categories: {
-    system: boolean;
-    trading: boolean;
-    security: boolean;
-    performance: boolean;
-  };
-  priorities: {
-    low: boolean;
-    medium: boolean;
-    high: boolean;
-  };
+const dateTime = (iso: string) =>
+  new Date(iso).toLocaleString('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+const price = (v: number) => v.toFixed(3);
+const pair = (symbol: string) => symbol.replace('_', '/');
+const sideLabel = (side: Position['side']) =>
+  side === 'buy' ? '買い' : '売り';
+
+/** Builds the list from what the bot has recorded: nothing here is sample data. */
+function buildNotices(status: BotStatus): Notice[] {
+  const notices: Notice[] = [];
+  const deployment = (id: string | null) =>
+    status.deployments.find(d => d.id === id)?.name;
+
+  if (!status.bot_alive) {
+    const lastSeen = status.heartbeats[0]?.last_seen_at ?? null;
+    notices.push({
+      id: 'bot-down',
+      tone: 'error',
+      category: 'システム',
+      title: 'Bot が停止しています',
+      message: lastSeen
+        ? `最後に動作を確認したのは ${dateTime(lastSeen)} です。売買と損切りの監視が止まっています。`
+        : 'まだ一度も起動していません。',
+      time: null,
+    });
+  }
+
+  status.kill_switches
+    .filter(k => k.active)
+    .forEach(k =>
+      notices.push({
+        id: `kill-${k.scope}`,
+        tone: 'warning',
+        category: '安全装置',
+        title: `Kill Switch が発動中です（${SCOPE_LABELS[k.scope] ?? k.scope}）`,
+        message: [
+          '新規の発注を停止しています。',
+          k.close_positions ? '保有中の建玉も成行で決済します。' : '',
+          k.reason ? `理由: ${k.reason}` : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+        time: k.updated_at,
+      })
+    );
+
+  [...status.open_positions, ...status.closed_positions].forEach(p => {
+    const name = deployment(p.deployment_id);
+    notices.push({
+      id: `open-${p.id}`,
+      tone: 'info',
+      category: '取引',
+      title: `新規約定: ${pair(p.symbol)} ${sideLabel(p.side)} ${p.quantity.toLocaleString()} 通貨`,
+      message: [
+        `建値 ${price(p.open_price)}`,
+        p.stop_price != null ? `損切り ${price(p.stop_price)}` : '',
+        name ? `（${name}）` : '',
+      ]
+        .filter(Boolean)
+        .join('、'),
+      time: p.opened_at,
+    });
+    if (p.status === 'closed' && p.closed_at) {
+      const pnl = p.realized_pnl ?? 0;
+      notices.push({
+        id: `close-${p.id}`,
+        tone: pnl >= 0 ? 'success' : 'warning',
+        category: '取引',
+        title: `決済: ${pair(p.symbol)} ${sideLabel(p.side)}の建玉、損益 ${formatYenSigned(pnl)}`,
+        message: `建値 ${price(p.open_price)} → 決済値 ${p.close_price != null ? price(p.close_price) : '—'}`,
+        time: p.closed_at,
+      });
+    }
+  });
+
+  return notices.sort((a, b) => {
+    if (a.time === null || b.time === null) {
+      return a.time === b.time ? 0 : a.time === null ? -1 : 1;
+    }
+    return Date.parse(b.time) - Date.parse(a.time);
+  });
+}
+
+const TONE_STYLES: Record<Tone, string> = {
+  success: 'border-green-200 bg-green-50',
+  info: '',
+  warning: 'border-yellow-200 bg-yellow-50',
+  error: 'border-red-200 bg-red-50',
+};
+
+function ToneIcon({ tone }: { tone: Tone }) {
+  switch (tone) {
+    case 'success':
+      return <CheckCircle className="w-4 h-4 mt-1 text-green-600" />;
+    case 'warning':
+      return <AlertTriangle className="w-4 h-4 mt-1 text-yellow-600" />;
+    case 'error':
+      return <XCircle className="w-4 h-4 mt-1 text-red-600" />;
+    default:
+      return <Info className="w-4 h-4 mt-1 text-blue-600" />;
+  }
 }
 
 export default function NotificationsPage() {
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [settings, setSettings] = useState<NotificationSettings>({
-    email: true,
-    slack: false,
-    webhook: false,
-    categories: {
-      system: true,
-      trading: true,
-      security: true,
-      performance: true,
-    },
-    priorities: {
-      low: true,
-      medium: true,
-      high: true,
-    },
-  });
+  const [status, setStatus] = useState<BotStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchNotifications();
-  }, []);
-
-  const fetchNotifications = async () => {
+  const refresh = useCallback(async () => {
     try {
-      setLoading(true);
-
-      // Mock notifications data
-      const mockNotifications: Notification[] = [
-        {
-          id: '1',
-          type: 'success',
-          title: 'Strategy Execution Successful',
-          message:
-            'EMA Cross strategy executed 5 trades successfully today with 80% win rate.',
-          category: 'trading',
-          timestamp: new Date(Date.now() - 300000).toISOString(),
-          read: false,
-          priority: 'medium',
-        },
-        {
-          id: '2',
-          type: 'warning',
-          title: 'High Volatility Detected',
-          message:
-            'Unusual volatility detected in AAPL. Consider reviewing position sizing.',
-          category: 'performance',
-          timestamp: new Date(Date.now() - 600000).toISOString(),
-          read: false,
-          priority: 'high',
-        },
-        {
-          id: '3',
-          type: 'error',
-          title: 'Connection Lost',
-          message: 'Connection to moomoo API lost. Attempting to reconnect...',
-          category: 'system',
-          timestamp: new Date(Date.now() - 900000).toISOString(),
-          read: true,
-          priority: 'high',
-        },
-        {
-          id: '4',
-          type: 'info',
-          title: 'Daily Summary',
-          message:
-            'Daily trading summary: 12 trades, $1,250 P&L, 75% win rate.',
-          category: 'performance',
-          timestamp: new Date(Date.now() - 3600000).toISOString(),
-          read: true,
-          priority: 'low',
-        },
-        {
-          id: '5',
-          type: 'warning',
-          title: 'Risk Limit Approaching',
-          message:
-            'Daily drawdown approaching 2% limit. Consider reducing position sizes.',
-          category: 'security',
-          timestamp: new Date(Date.now() - 7200000).toISOString(),
-          read: false,
-          priority: 'high',
-        },
-      ];
-
-      setNotifications(mockNotifications);
+      setStatus(await fetchBotStatus());
+      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : '取得できませんでした');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const markAsRead = async (id: string) => {
-    setNotifications(prev =>
-      prev.map(notification =>
-        notification.id === id ? { ...notification, read: true } : notification
-      )
-    );
-  };
-
-  const deleteNotification = async (id: string) => {
-    setNotifications(prev =>
-      prev.filter(notification => notification.id !== id)
-    );
-  };
-
-  const markAllAsRead = async () => {
-    setNotifications(prev =>
-      prev.map(notification => ({ ...notification, read: true }))
-    );
-  };
-
-  const getNotificationIcon = (type: string) => {
-    switch (type) {
-      case 'success':
-        return <CheckCircle className="w-4 h-4 text-green-600" />;
-      case 'warning':
-        return <AlertTriangle className="w-4 h-4 text-yellow-600" />;
-      case 'error':
-        return <AlertTriangle className="w-4 h-4 text-red-600" />;
-      case 'info':
-        return <Info className="w-4 h-4 text-blue-600" />;
-      default:
-        return <Bell className="w-4 h-4" />;
-    }
-  };
-
-  const getCategoryIcon = (category: string) => {
-    switch (category) {
-      case 'system':
-        return <Zap className="w-4 h-4" />;
-      case 'trading':
-        return <DollarSign className="w-4 h-4" />;
-      case 'security':
-        return <Shield className="w-4 h-4" />;
-      case 'performance':
-        return <BarChart3 className="w-4 h-4" />;
-      default:
-        return <Bell className="w-4 h-4" />;
-    }
-  };
-
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case 'high':
-        return 'bg-red-100 text-red-800';
-      case 'medium':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'low':
-        return 'bg-green-100 text-green-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const unreadCount = notifications.filter(n => !n.read).length;
+  useEffect(() => {
+    refresh();
+    const timer = setInterval(refresh, REFRESH_MS);
+    window.addEventListener(BOT_STATUS_CHANGED, refresh);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener(BOT_STATUS_CHANGED, refresh);
+    };
+  }, [refresh]);
 
   if (loading) {
     return (
       <div className="container mx-auto p-6">
-        <div className="flex items-center justify-center h-64">
-          <div className="text-lg">Loading notifications...</div>
-        </div>
+        <Spinner className="h-64" />
       </div>
     );
   }
 
-  if (error) {
-    return (
-      <div className="container mx-auto p-6">
-        <div className="flex items-center justify-center h-64">
-          <div className="text-red-500">Error: {error}</div>
-        </div>
-      </div>
-    );
-  }
+  const notices = status ? buildNotices(status) : [];
+  const alerts = notices.filter(
+    n => n.tone === 'error' || n.category === '安全装置'
+  ).length;
 
   return (
-    <div className="container mx-auto p-6">
-      <div className="flex justify-between items-center mb-6">
+    <div className="container mx-auto p-6 space-y-6">
+      <div className="flex justify-between items-start">
         <div>
           <h1 className="text-3xl font-bold">通知</h1>
-          <p className="text-muted-foreground">
-            通知設定を管理し、アラートを確認します
+          <p className="text-muted-foreground mt-1">
+            bot が記録した約定・決済と、注意が必要な状態（15秒ごとに更新）
           </p>
         </div>
-        <div className="flex gap-2">
-          {unreadCount > 0 && (
-              <Button variant="outline" onClick={markAllAsRead}>
-                すべて既読にする
-              </Button>
-          )}
-        </div>
+        <Button variant="outline" size="sm" onClick={refresh}>
+          <RefreshCw className="w-4 h-4 mr-2" />
+          更新
+        </Button>
       </div>
+
+      {error && (
+        <div className="p-3 bg-red-50 border border-red-200 rounded-md text-red-700 text-sm">
+          通知を取得できませんでした: {error}
+        </div>
+      )}
 
       <Tabs defaultValue="notifications" className="w-full">
         <TabsList>
-            <TabsTrigger value="notifications">
-              通知
-            {unreadCount > 0 && (
+          <TabsTrigger value="notifications">
+            通知
+            {alerts > 0 && (
               <Badge variant="destructive" className="ml-2">
-                {unreadCount}
+                {alerts}
               </Badge>
             )}
           </TabsTrigger>
-            <TabsTrigger value="settings">設定</TabsTrigger>
+          <TabsTrigger value="delivery">受け取り方</TabsTrigger>
         </TabsList>
 
         <TabsContent value="notifications" className="mt-6">
@@ -274,89 +230,40 @@ export default function NotificationsPage() {
             <CardHeader>
               <CardTitle>最近の通知</CardTitle>
               <CardDescription>
-                {unreadCount > 0
-                  ? `${unreadCount} 件の未読通知`
-                  : 'すべての通知は既読です'}
+                保有中の建玉と直近10件の決済、現在の Bot・Kill Switch
+                の状態から作っています
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {notifications.length === 0 ? (
+              {notices.length === 0 ? (
                 <div className="text-center py-8">
                   <Bell className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold mb-2">
-                      通知はありません
-                    </h3>
-                    <p className="text-muted-foreground">
-                      すべての通知を確認しました
-                    </p>
+                  <h3 className="text-lg font-semibold mb-2">
+                    通知はありません
+                  </h3>
+                  <p className="text-muted-foreground">
+                    まだ約定はなく、Bot は正常に動いています
+                  </p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {notifications.map(notification => (
+                <div className="space-y-3">
+                  {notices.map(notice => (
                     <div
-                      key={notification.id}
-                      className={`p-4 border rounded-lg ${!notification.read ? 'bg-blue-50 border-blue-200' : ''}`}
+                      key={notice.id}
+                      className={`flex items-start gap-3 p-4 border rounded-lg ${TONE_STYLES[notice.tone]}`}
                     >
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-start gap-3 flex-1">
-                          {getNotificationIcon(notification.type)}
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <h4 className="font-medium">
-                                {notification.title}
-                              </h4>
-                              <Badge
-                                className={getPriorityColor(
-                                  notification.priority
-                                )}
-                              >
-                                {notification.priority}
-                              </Badge>
-                              <Badge
-                                variant="outline"
-                                className="flex items-center gap-1"
-                              >
-                                {getCategoryIcon(notification.category)}
-                                {notification.category}
-                              </Badge>
-                              {!notification.read && (
-                                <Badge
-                                  variant="default"
-                                  className="bg-blue-600"
-                                >
-                                  新着
-                                </Badge>
-                              )}
-                            </div>
-                            <p className="text-sm text-muted-foreground mb-2">
-                              {notification.message}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {new Date(
-                                notification.timestamp
-                              ).toLocaleString()}
-                            </p>
-                          </div>
+                      <ToneIcon tone={notice.tone} />
+                      <div className="flex-1">
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <h4 className="font-medium">{notice.title}</h4>
+                          <Badge variant="outline">{notice.category}</Badge>
                         </div>
-                        <div className="flex gap-2">
-                          {!notification.read && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => markAsRead(notification.id)}
-                            >
-                                既読にする
-                            </Button>
-                          )}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => deleteNotification(notification.id)}
-                            className="text-red-600 hover:text-red-700"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          {notice.message}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {notice.time ? dateTime(notice.time) : '現在'}
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -366,233 +273,33 @@ export default function NotificationsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="settings" className="mt-6">
-          <div className="grid gap-6 md:grid-cols-2">
-              {/* Notification Channels */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>通知チャネル</CardTitle>
-                  <CardDescription>
-                    通知の受け取り方法を選択してください
-                  </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Mail className="w-4 h-4" />
-                      <Label htmlFor="email">メール通知</Label>
-                  </div>
-                  <Switch
-                    id="email"
-                    checked={settings.email}
-                    onCheckedChange={(checked: boolean) =>
-                      setSettings(prev => ({ ...prev, email: checked }))
-                    }
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <MessageSquare className="w-4 h-4" />
-                      <Label htmlFor="slack">Slack通知</Label>
-                  </div>
-                  <Switch
-                    id="slack"
-                    checked={settings.slack}
-                    onCheckedChange={(checked: boolean) =>
-                      setSettings(prev => ({ ...prev, slack: checked }))
-                    }
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Settings className="w-4 h-4" />
-                      <Label htmlFor="webhook">Webhook通知</Label>
-                  </div>
-                  <Switch
-                    id="webhook"
-                    checked={settings.webhook}
-                    onCheckedChange={(checked: boolean) =>
-                      setSettings(prev => ({ ...prev, webhook: checked }))
-                    }
-                  />
-                </div>
-              </CardContent>
-            </Card>
-
-              {/* Notification Categories */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>通知カテゴリ</CardTitle>
-                  <CardDescription>
-                    受け取る通知の種類を選択してください
-                  </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Zap className="w-4 h-4" />
-                      <Label htmlFor="system">システム通知</Label>
-                  </div>
-                  <Switch
-                    id="system"
-                    checked={settings.categories.system}
-                    onCheckedChange={(checked: boolean) =>
-                      setSettings(prev => ({
-                        ...prev,
-                        categories: { ...prev.categories, system: checked },
-                      }))
-                    }
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <DollarSign className="w-4 h-4" />
-                      <Label htmlFor="trading">取引通知</Label>
-                  </div>
-                  <Switch
-                    id="trading"
-                    checked={settings.categories.trading}
-                    onCheckedChange={(checked: boolean) =>
-                      setSettings(prev => ({
-                        ...prev,
-                        categories: { ...prev.categories, trading: checked },
-                      }))
-                    }
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Shield className="w-4 h-4" />
-                      <Label htmlFor="security">セキュリティ通知</Label>
-                  </div>
-                  <Switch
-                    id="security"
-                    checked={settings.categories.security}
-                    onCheckedChange={(checked: boolean) =>
-                      setSettings(prev => ({
-                        ...prev,
-                        categories: { ...prev.categories, security: checked },
-                      }))
-                    }
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <BarChart3 className="w-4 h-4" />
-                      <Label htmlFor="performance">
-                        パフォーマンス通知
-                      </Label>
-                  </div>
-                  <Switch
-                    id="performance"
-                    checked={settings.categories.performance}
-                    onCheckedChange={(checked: boolean) =>
-                      setSettings(prev => ({
-                        ...prev,
-                        categories: {
-                          ...prev.categories,
-                          performance: checked,
-                        },
-                      }))
-                    }
-                  />
-                </div>
-              </CardContent>
-            </Card>
-
-              {/* Priority Levels */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>優先度</CardTitle>
-                  <CardDescription>
-                    受け取る優先度を選択してください
-                  </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                      <Badge className="bg-red-100 text-red-800">高</Badge>
-                      <Label htmlFor="high">高優先度</Label>
-                  </div>
-                  <Switch
-                    id="high"
-                    checked={settings.priorities.high}
-                    onCheckedChange={(checked: boolean) =>
-                      setSettings(prev => ({
-                        ...prev,
-                        priorities: { ...prev.priorities, high: checked },
-                      }))
-                    }
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                      <Badge className="bg-yellow-100 text-yellow-800">
-                        中
-                      </Badge>
-                      <Label htmlFor="medium">中優先度</Label>
-                  </div>
-                  <Switch
-                    id="medium"
-                    checked={settings.priorities.medium}
-                    onCheckedChange={(checked: boolean) =>
-                      setSettings(prev => ({
-                        ...prev,
-                        priorities: { ...prev.priorities, medium: checked },
-                      }))
-                    }
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                      <Badge className="bg-green-100 text-green-800">低</Badge>
-                      <Label htmlFor="low">低優先度</Label>
-                  </div>
-                  <Switch
-                    id="low"
-                    checked={settings.priorities.low}
-                    onCheckedChange={(checked: boolean) =>
-                      setSettings(prev => ({
-                        ...prev,
-                        priorities: { ...prev.priorities, low: checked },
-                      }))
-                    }
-                  />
-                </div>
-              </CardContent>
-            </Card>
-
-              {/* Webhook Configuration */}
-              {settings.webhook && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Webhook設定</CardTitle>
-                    <CardDescription>
-                      通知用のWebhookエンドポイントを設定します
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div>
-                    <Label htmlFor="webhook-url">Webhook URL</Label>
-                    <Input
-                      id="webhook-url"
-                      placeholder="https://your-webhook-endpoint.com/notifications"
-                    />
-                  </div>
-                  <div>
-                      <Label htmlFor="webhook-secret">
-                        シークレットキー（任意）
-                      </Label>
-                    <Input
-                      id="webhook-secret"
-                      type="password"
-                        placeholder="Webhook認証用のシークレットキーを入力してください"
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-          </div>
+        <TabsContent value="delivery" className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Slack で受け取る</CardTitle>
+              <CardDescription>
+                画面を開いていなくても、その場で気づけるようにします
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <p>
+                Slack で Incoming Webhook を発行し、bot を動かしている環境の{' '}
+                <code className="px-1 rounded bg-muted">.env</code> に{' '}
+                <code className="px-1 rounded bg-muted">SLACK_WEBHOOK_URL</code>{' '}
+                を設定して bot を再起動すると、次の内容が届きます。
+              </p>
+              <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+                <li>新規約定と決済（価格・損切り・損益）</li>
+                <li>発注の失敗や拒否、照合で見つかった食い違い</li>
+                <li>Kill Switch の発動と解除</li>
+                <li>日次サマリ（毎朝6時）</li>
+              </ul>
+              <p className="text-muted-foreground">
+                設定されているかどうかは、この画面からは確認できません。メールと
+                Webhook での通知には対応していません。
+              </p>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>

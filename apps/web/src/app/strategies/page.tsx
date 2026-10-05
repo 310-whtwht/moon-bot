@@ -1,5 +1,6 @@
 'use client';
 
+import { Spinner } from '@/components/ui/spinner';
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import {
@@ -69,9 +70,7 @@ export default function StrategiesPage() {
   if (loading) {
     return (
       <div className="container mx-auto p-6">
-        <div className="flex items-center justify-center h-64">
-          <div className="text-lg">戦略を読み込み中...</div>
-        </div>
+        <Spinner className="h-64" />
       </div>
     );
   }

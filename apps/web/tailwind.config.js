@@ -58,6 +58,10 @@ module.exports = {
         sm: 'calc(var(--radius) - 4px)',
       },
       keyframes: {
+        'nav-progress': {
+          from: { transform: 'translateX(-100%)' },
+          to: { transform: 'translateX(300%)' },
+        },
         'accordion-down': {
           from: { height: '0' },
           to: { height: 'var(--radix-accordion-content-height)' },
@@ -68,6 +72,7 @@ module.exports = {
         },
       },
       animation: {
+        'nav-progress': 'nav-progress 1.1s ease-in-out infinite',
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
       },

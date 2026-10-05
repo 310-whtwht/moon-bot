@@ -1,5 +1,6 @@
 'use client';
 
+import { Spinner } from '@/components/ui/spinner';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -423,9 +424,11 @@ export default function ChartPage() {
             />
           ) : (
             <div className="flex items-center justify-center h-[480px] text-muted-foreground">
-              {error
-                ? '表示できません'
-                : '読み込み中...（初回は数秒かかります）'}
+              {error ? (
+                '表示できません'
+              ) : (
+                <Spinner label="読み込み中...（初回は数秒かかります）" />
+              )}
             </div>
           )}
         </CardContent>

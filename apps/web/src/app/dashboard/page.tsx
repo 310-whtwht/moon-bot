@@ -1,5 +1,6 @@
 'use client';
 
+import { Spinner } from '@/components/ui/spinner';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Activity, RefreshCw } from 'lucide-react';
@@ -109,9 +110,7 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="container mx-auto p-6">
-        <div className="flex items-center justify-center h-64">
-          読み込み中...
-        </div>
+        <Spinner className="h-64" />
       </div>
     );
   }
