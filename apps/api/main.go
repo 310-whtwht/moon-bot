@@ -12,6 +12,7 @@ import (
 	"github.com/moomoo-trading/api/internal/handlers"
 	"github.com/moomoo-trading/api/internal/middleware"
 	"github.com/moomoo-trading/api/internal/redis"
+	"github.com/moomoo-trading/core/broker/gmofx"
 )
 
 func main() {
@@ -65,7 +66,10 @@ func main() {
 	universeHandler := handlers.NewUniverseHandler(universeRepo)
 	streamManager := redis.NewStreamManager(redisClient)
 	backtestHandler := handlers.NewBacktestHandler(backtestRepo, strategyRepo, streamManager)
-	botHandler := handlers.NewBotHandler(database.NewBotRepository(db))
+	botRepo := database.NewBotRepository(db)
+	botHandler := handlers.NewBotHandler(botRepo)
+	// The chart reads bars from GMO's public API (no key needed).
+	chartHandler := handlers.NewChartHandler(botRepo, gmofx.New(gmofx.Options{}))
 	auditHandler := handlers.NewAuditHandler(audit.NewTraceManager(gormDB, redisClient))
 
 	// Initialize Redis Streams
@@ -121,6 +125,7 @@ func main() {
 		api.GET("/bot/status", botHandler.GetStatus)
 		api.PUT("/kill-switch/:scope", botHandler.SetKillSwitch)
 		api.PUT("/deployments/:id", botHandler.SetDeploymentEnabled)
+		api.GET("/chart", chartHandler.GetChart)
 
 		// Strategy types (registered in packages/core/strategy)
 		api.GET("/strategy-types", handlers.GetStrategyTypes)

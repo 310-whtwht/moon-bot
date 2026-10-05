@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
   BarChart3,
+  CandlestickChart,
   Bell,
   Globe,
   Home,
@@ -16,6 +17,7 @@ import {
 // Only link to pages that exist under src/app.
 const navigation = [
   { name: 'ダッシュボード', href: '/dashboard', icon: Home },
+  { name: 'チャート', href: '/chart', icon: CandlestickChart },
   { name: '戦略管理', href: '/strategies', icon: TrendingUp },
   { name: 'バックテスト', href: '/backtests', icon: BarChart3 },
   { name: '注文', href: '/orders', icon: ListOrdered },

@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"strconv"
 	"time"
 )
 
@@ -196,4 +197,78 @@ func (r *BotRepository) RealizedPnL(ctx context.Context, since time.Time) (pnl f
 		`SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*) FROM positions WHERE status = 'closed' AND closed_at >= ?`,
 		since.UTC()).Scan(&pnl, &closed)
 	return pnl, closed, err
+}
+
+// ChartPositions returns a symbol's open positions and those closed since
+// `since`, oldest first, for drawing on a price chart.
+func (r *BotRepository) ChartPositions(ctx context.Context, symbol string, since time.Time) ([]Position, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, deployment_id, broker, account_id, symbol, side, quantity, open_price, stop_price, stop_order_id, close_price,
+  realized_pnl, fees, status, opened_at, closed_at
+FROM positions WHERE symbol = ? AND (status = 'open' OR closed_at >= ?) ORDER BY opened_at LIMIT 500`, symbol, since.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []Position{}
+	for rows.Next() {
+		var p Position
+		if err := rows.Scan(&p.ID, &p.DeploymentID, &p.Broker, &p.AccountID, &p.Symbol, &p.Side, &p.Quantity,
+			&p.OpenPrice, &p.StopPrice, &p.StopOrderID, &p.ClosePrice, &p.RealizedPnL, &p.Fees, &p.Status, &p.OpenedAt, &p.ClosedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// DeployedStrategy is the strategy a deployment currently trades with.
+type DeployedStrategy struct {
+	Type    string             `json:"type"`
+	Version string             `json:"version"`
+	Enabled bool               `json:"enabled"`
+	Params  map[string]float64 `json:"params"`
+}
+
+// DeployedStrategy returns the active strategy version deployed on a symbol
+// and timeframe (an enabled deployment first), or nil when there is none.
+func (r *BotRepository) DeployedStrategy(ctx context.Context, symbol, timeframe string) (*DeployedStrategy, error) {
+	var (
+		s         DeployedStrategy
+		versionID string
+	)
+	err := r.db.QueryRowContext(ctx, `
+SELECT v.id, v.code, v.version, d.enabled
+FROM deployments d JOIN strategy_versions v ON v.package_id = d.strategy_id AND v.is_active = TRUE
+WHERE d.symbol = ? AND d.timeframe = ?
+ORDER BY d.enabled DESC, v.created_at DESC LIMIT 1`, symbol, timeframe).Scan(&versionID, &s.Type, &s.Version, &s.Enabled)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT param_name, default_value FROM strategy_params WHERE version_id = ?`, versionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	s.Params = map[string]float64{}
+	for rows.Next() {
+		var (
+			name  string
+			value sql.NullString
+		)
+		if err := rows.Scan(&name, &value); err != nil {
+			return nil, err
+		}
+		if v, err := strconv.ParseFloat(value.String, 64); err == nil {
+			s.Params[name] = v
+		}
+	}
+	return &s, rows.Err()
 }
