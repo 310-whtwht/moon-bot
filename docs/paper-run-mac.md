@@ -93,6 +93,7 @@ docker compose run --rm bot backfill -from 2023-10-28 -min-interval 400ms
 |---|---|
 | bot が生きているか | ダッシュボードの「Bot」／Slack の日次サマリ |
 | 建玉・決済・損益 | ダッシュボード |
+| レートと約定をチャートで見る | http://localhost:3001/chart（実レートをリアルタイム表示。約定の位置・建値・損切りを重ねて表示） |
 | 注文の履歴（見送り・拒否の理由も） | http://localhost:3001/orders |
 | エラー | Slack、`docker compose logs --since 24h bot \| grep -iE "error\|failed\|rejected"` |
 
