@@ -18,6 +18,14 @@ export interface DeployedStrategy {
   params: Record<string, number>;
 }
 
+/** Where the deployed strategy would have traded: a replay, not a fill. */
+export interface ChartSignal {
+  /** Open time of the bar it acts on, Unix seconds (UTC). */
+  time: number;
+  kind: 'buy' | 'sell' | 'exit' | 'stop';
+  price: number;
+}
+
 export interface ChartData {
   symbol: string;
   timeframe: string;
@@ -25,6 +33,8 @@ export interface ChartData {
   positions: Position[];
   /** The strategy trading this symbol on this timeframe, if any. */
   strategy: DeployedStrategy | null;
+  /** Null when no strategy trades this symbol and timeframe. */
+  signals: ChartSignal[] | null;
 }
 
 export interface Quote {
