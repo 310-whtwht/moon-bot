@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import { NextAuthProvider } from '@/components/providers/NextAuthProvider';
 import Header from '@/components/layout/Header';
+import NavigationProgress from '@/components/layout/NavigationProgress';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -31,6 +32,7 @@ export default function RootLayout({
       >
         <NextAuthProvider>
           <Header />
+          <NavigationProgress />
           <main>{children}</main>
         </NextAuthProvider>
       </body>
