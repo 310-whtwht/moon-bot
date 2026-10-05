@@ -58,6 +58,12 @@ type Strategy interface {
 	OnBar(bar Bar, pos *Position) Signal
 }
 
+// Explainer is optionally implemented by strategies that can describe what
+// they saw on the last bar (indicator values), for logs.
+type Explainer interface {
+	Explain() string
+}
+
 // ParamSpec describes one numeric parameter, used for validation and UI forms.
 type ParamSpec struct {
 	Name        string  `json:"name"`

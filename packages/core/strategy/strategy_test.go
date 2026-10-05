@@ -113,3 +113,18 @@ func TestEMACross_HoldsDuringWarmup(t *testing.T) {
 		assert.Equal(t, Hold, sig.Action)
 	}
 }
+
+func TestEMACross_ExplainsWhatItSaw(t *testing.T) {
+	d, _ := Lookup("ema_cross")
+	s, _, err := d.New(Params{"fast_period": 2, "slow_period": 3, "atr_period": 2})
+	require.NoError(t, err)
+	e, ok := s.(Explainer)
+	require.True(t, ok)
+
+	feed(s, []float64{100, 100})
+	assert.Equal(t, "warming up", e.Explain())
+
+	feed(s, []float64{100, 103})
+	// fast: 100 -> 102, slow: 100 -> 101.5
+	assert.Contains(t, e.Explain(), "fast=102.000 slow=101.500 diff=+0.500")
+}

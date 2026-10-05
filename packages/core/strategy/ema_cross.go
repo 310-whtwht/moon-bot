@@ -36,7 +36,11 @@ type emaCross struct {
 	allowShort  bool
 	prevDiff    float64
 	hasPrevDiff bool
+	// state is what the last bar looked like, for Explain.
+	state string
 }
+
+func (s *emaCross) Explain() string { return s.state }
 
 func newEMACross(p Params) Strategy {
 	return &emaCross{
@@ -53,10 +57,12 @@ func (s *emaCross) OnBar(bar Bar, pos *Position) Signal {
 	slow, slowOK := s.slow.Update(bar.Close)
 	atr, atrOK := s.atr.Update(bar.High, bar.Low, bar.Close)
 	if !fastOK || !slowOK || !atrOK {
+		s.state = "warming up"
 		return Signal{Action: Hold}
 	}
 
 	diff := fast - slow
+	s.state = fmt.Sprintf("fast=%.3f slow=%.3f diff=%+.3f atr=%.3f", fast, slow, diff, atr)
 	prev, hadPrev := s.prevDiff, s.hasPrevDiff
 	s.prevDiff, s.hasPrevDiff = diff, true
 	if !hadPrev {

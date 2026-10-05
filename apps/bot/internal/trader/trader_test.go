@@ -225,6 +225,23 @@ func TestWarmupDoesNotTrade_ThenFreshSignalOpens(t *testing.T) {
 	assert.Equal(t, []string{"open:filled"}, h.store.statuses())
 }
 
+func TestEveryJudgedBarIsLogged(t *testing.T) {
+	h := newHarness(t, Config{})
+	setScript(0, map[int]strategy.Signal{11: long(149)})
+
+	h.poll(10)
+	assert.False(t, h.logged("-> HOLD"), "warmup bars are not logged one by one")
+
+	h.poll(11) // bar 10 closed: no signal
+	assert.True(t, h.logged("test: bar 2026-10-05T10:00:00Z close 150 -> HOLD (flat)"))
+
+	h.poll(12) // bar 11 closed: entry
+	assert.True(t, h.logged("test: bar 2026-10-05T11:00:00Z close 150 -> ENTER_LONG (flat)"))
+
+	h.poll(13)
+	assert.True(t, h.logged("test: bar 2026-10-05T12:00:00Z close 150 -> HOLD (holding BUY)"))
+}
+
 func TestSameDecisionIsNeverSentTwice(t *testing.T) {
 	h := newHarness(t, Config{})
 	setScript(0, map[int]strategy.Signal{10: long(149)})
