@@ -11,8 +11,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/moomoo-trading/api/internal/database"
+	"github.com/moomoo-trading/core/backtest"
 	"github.com/moomoo-trading/core/broker"
 	"github.com/moomoo-trading/core/market"
+	"github.com/moomoo-trading/core/strategy"
 )
 
 const (
@@ -118,6 +120,59 @@ type chartBar struct {
 	Close float64 `json:"close"`
 }
 
+// chartSignal is where the deployed strategy would have traded on the bars
+// shown. It is a replay, not a record: real fills come from positions.
+type chartSignal struct {
+	Time  int64   `json:"time"` // open time of the bar it acts on, Unix seconds (UTC)
+	Kind  string  `json:"kind"` // buy, sell, exit or stop
+	Price float64 `json:"price"`
+}
+
+// replaySignals runs the strategy over the bars with the backtest engine, so
+// entries, reversals and stop-outs follow the same rules as a backtest. Only
+// BID bars are at hand: the spread and fees are ignored, which is fine for
+// showing where signals fall but not for judging profit.
+func replaySignals(typ string, params map[string]float64, bars []market.Bar) []chartSignal {
+	def, err := strategy.Lookup(typ)
+	if err != nil || len(bars) == 0 {
+		return nil
+	}
+	candles := make([]backtest.Candle, 0, len(bars))
+	for _, b := range bars {
+		ohlc := backtest.OHLC{
+			Open: b.Open.InexactFloat64(), High: b.High.InexactFloat64(),
+			Low: b.Low.InexactFloat64(), Close: b.Close.InexactFloat64(),
+		}
+		candles = append(candles, backtest.Candle{Time: b.OpenTime, Bid: ohlc, Ask: ohlc})
+	}
+	// One unit against a balance that never runs out: only the timing matters.
+	result, err := backtest.Run(candles, backtest.Config{
+		Strategy: def, Params: strategy.Params(params), Units: 1, InitialBalance: 1e12,
+	})
+	if err != nil {
+		return nil
+	}
+
+	signals := []chartSignal{}
+	for i, t := range result.Trades {
+		kind := "buy"
+		if t.Side == strategy.Short {
+			kind = "sell"
+		}
+		signals = append(signals, chartSignal{Time: t.EntryTime.Unix(), Kind: kind, Price: t.EntryPrice})
+
+		reversed := i+1 < len(result.Trades) && result.Trades[i+1].EntryTime.Equal(t.ExitTime)
+		switch {
+		case t.ExitReason == "stop":
+			signals = append(signals, chartSignal{Time: t.ExitTime.Unix(), Kind: "stop", Price: t.ExitPrice})
+		case t.ExitReason == "signal" && !reversed:
+			signals = append(signals, chartSignal{Time: t.ExitTime.Unix(), Kind: "exit", Price: t.ExitPrice})
+		}
+		// "end" means the position would still be open: nothing to mark.
+	}
+	return signals
+}
+
 // GetChart returns BID bars (the price type the bot's strategies see).
 func (h *ChartHandler) GetChart(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -171,7 +226,13 @@ func (h *ChartHandler) GetChart(c *gin.Context) {
 		return
 	}
 
+	var signals []chartSignal
+	if strategy != nil {
+		signals = replaySignals(strategy.Type, strategy.Params, bars)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"signals":   signals,
 		"symbol":    symbol,
 		"timeframe": tf,
 		"bars":      out,

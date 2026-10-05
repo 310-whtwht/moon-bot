@@ -16,6 +16,7 @@ import {
   type ChartLine,
   type ChartMarker,
   LiveChart,
+  SIGNAL_COLOR,
 } from '@/components/chart/LiveChart';
 import {
   type Deployment,
@@ -40,6 +41,8 @@ const TIMEFRAMES = [
   { value: '30m', label: '30分' },
   { value: '1h', label: '1時間' },
 ];
+
+const SIGNAL_LABELS = { buy: '買', sell: '売', exit: '手仕舞', stop: '損切' };
 
 const price = (v: number) => v.toFixed(3);
 const signed = (v: number, digits = 3) =>
@@ -104,6 +107,7 @@ export default function ChartPage() {
   );
   const [error, setError] = useState<string | null>(null);
   const [fills, setFills] = useState<string[]>([]);
+  const [showSignals, setShowSignals] = useState(true);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const seen = useRef<Set<string> | null>(null);
   const { quote, state } = useGmoTicker(symbol);
@@ -199,28 +203,39 @@ export default function ChartPage() {
   }, [bars, fastPeriod, slowPeriod]);
 
   const positions = chart?.positions;
-  const markers = useMemo<ChartMarker[]>(
-    () =>
-      (positions ?? []).flatMap(p => {
-        const entry: ChartMarker = {
-          time: unix(p.opened_at),
-          kind: p.side,
-          text: `${sideLabel(p.side)} ${price(p.open_price)}`,
-        };
-        if (p.status !== 'closed' || !p.closed_at) {
-          return [entry];
-        }
-        return [
-          entry,
-          {
-            time: unix(p.closed_at),
-            kind: 'exit' as const,
-            text: `決済 ${formatYenSigned(p.realized_pnl ?? 0)}`,
-          },
-        ];
-      }),
-    [positions]
-  );
+  const signals = chart?.signals;
+  const markers = useMemo<ChartMarker[]>(() => {
+    const fills = (positions ?? []).flatMap(p => {
+      const entry: ChartMarker = {
+        time: unix(p.opened_at),
+        kind: p.side,
+        text: `${sideLabel(p.side)} ${price(p.open_price)}`,
+      };
+      if (p.status !== 'closed' || !p.closed_at) {
+        return [entry];
+      }
+      return [
+        entry,
+        {
+          time: unix(p.closed_at),
+          kind: 'exit' as const,
+          text: `決済 ${formatYenSigned(p.realized_pnl ?? 0)}`,
+        },
+      ];
+    });
+    const replayed = (showSignals ? (signals ?? []) : []).map(
+      (signal): ChartMarker => ({
+        time: signal.time,
+        kind:
+          signal.kind === 'buy' || signal.kind === 'sell'
+            ? signal.kind
+            : 'exit',
+        text: SIGNAL_LABELS[signal.kind],
+        hypothetical: true,
+      })
+    );
+    return [...replayed, ...fills];
+  }, [positions, signals, showSignals]);
   const open = useMemo(
     () => (positions ?? []).filter(p => p.status === 'open'),
     [positions]
@@ -409,8 +424,26 @@ export default function ChartPage() {
             ))}
           </CardTitle>
           <CardDescription>
-            時刻は日本時間。▲ 買い・▼ 売り・● 決済。青線は建値、赤の破線は損切り
+            時刻は日本時間。▲ 買い・▼ 売り・●
+            決済（実際の約定）。青線は建値、赤の破線は損切り
           </CardDescription>
+          {signals && (
+            <div className="flex flex-wrap items-center gap-3 pt-1 text-sm">
+              <Button
+                size="sm"
+                variant={showSignals ? 'default' : 'outline'}
+                onClick={() => setShowSignals(v => !v)}
+              >
+                過去のシグナル {showSignals ? '表示中' : '非表示'}
+              </Button>
+              <span className="text-muted-foreground">
+                <span style={{ color: SIGNAL_COLOR }}>紫の印</span>
+                は「今の設定で動いていたら売買していた位置」の再現です（
+                {signals.length}{' '}
+                件）。実際の約定ではなく、スプレッドと手数料は含みません
+              </span>
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           {chart ? (

@@ -89,3 +89,34 @@ func TestBarCache_ReloadsWhenMoreHistoryIsAsked(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, bars, 300)
 }
+
+func TestReplaySignals_MarksCrossesOnTheNextBar(t *testing.T) {
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	// Flat, then a steady rise (golden cross), then a steady fall (dead cross).
+	price := 150.0
+	var bars []market.Bar
+	for i := 0; i < 160; i++ {
+		switch {
+		case i >= 40 && i < 100:
+			price += 0.05
+		case i >= 100:
+			price -= 0.05
+		}
+		p := decimal.NewFromFloat(price)
+		bars = append(bars, market.Bar{
+			OpenTime: start.Add(time.Duration(i) * time.Hour),
+			Open:     p, High: p.Add(decimal.NewFromFloat(0.02)), Low: p.Sub(decimal.NewFromFloat(0.02)), Close: p,
+		})
+	}
+	params := map[string]float64{"fast_period": 5, "slow_period": 10, "atr_period": 5, "stop_atr_mult": 10, "allow_short": 1}
+
+	signals := replaySignals("ema_cross", params, bars)
+	require.Len(t, signals, 2, "a reversal is one marker, and the open position at the end is not an exit")
+	assert.Equal(t, "buy", signals[0].Kind)
+	assert.Equal(t, "sell", signals[1].Kind)
+	// The rise starts on bar 40: the cross is seen when that bar closes and acted on at bar 41's open.
+	assert.Equal(t, start.Add(41*time.Hour).Unix(), signals[0].Time)
+	assert.Greater(t, signals[1].Time, start.Add(100*time.Hour).Unix())
+
+	assert.Nil(t, replaySignals("no_such_strategy", params, bars))
+}

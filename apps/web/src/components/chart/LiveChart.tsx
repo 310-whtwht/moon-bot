@@ -29,6 +29,8 @@ export interface ChartMarker {
   time: number;
   kind: 'buy' | 'sell' | 'exit';
   text: string;
+  /** A replayed signal rather than a real fill: drawn smaller, in its own colour. */
+  hypothetical?: boolean;
 }
 
 export interface ChartLevel {
@@ -55,6 +57,9 @@ const at = (unix: number) => (unix + JST_OFFSET) as UTCTimestamp;
 
 const UP = '#16a34a';
 const DOWN = '#dc2626';
+/** Replayed signals, so they cannot be mistaken for real fills. */
+export const SIGNAL_COLOR = '#7c3aed';
+const SIGNAL = SIGNAL_COLOR;
 
 const candle = (b: ChartBar) => ({
   time: at(b.time),
@@ -197,13 +202,15 @@ export function LiveChart({
       .filter(m => m.time >= first)
       .map(m => {
         const time = at(Math.floor(m.time / barSeconds) * barSeconds);
+        const size = m.hypothetical ? 1 : 1.4;
         if (m.kind === 'buy') {
           return {
             time,
             position: 'belowBar' as const,
             shape: 'arrowUp' as const,
-            color: UP,
+            color: m.hypothetical ? SIGNAL : UP,
             text: m.text,
+            size,
           };
         }
         if (m.kind === 'sell') {
@@ -211,16 +218,18 @@ export function LiveChart({
             time,
             position: 'aboveBar' as const,
             shape: 'arrowDown' as const,
-            color: DOWN,
+            color: m.hypothetical ? SIGNAL : DOWN,
             text: m.text,
+            size,
           };
         }
         return {
           time,
           position: 'aboveBar' as const,
-          shape: 'circle' as const,
-          color: '#6b7280',
+          shape: m.hypothetical ? ('square' as const) : ('circle' as const),
+          color: m.hypothetical ? SIGNAL : '#6b7280',
           text: m.text,
+          size,
         };
       })
       .sort((a, b) => (a.time as number) - (b.time as number));
