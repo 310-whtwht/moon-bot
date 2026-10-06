@@ -114,12 +114,12 @@ func Load() *Config {
 			// Defaults are deliberately small (Phase 6 starts at 100 units).
 			AccountLimits: risk.Limits{
 				MaxUnitsPerPosition: getFloat("RISK_ACCOUNT_MAX_UNITS", 1000),
-				MaxOpenPositions:    int(getFloat("RISK_ACCOUNT_MAX_POSITIONS", 1)),
+				MaxOpenPositions:    int(getFloat("RISK_ACCOUNT_MAX_POSITIONS", 3)),
 				MaxDailyLossJPY:     getFloat("RISK_ACCOUNT_MAX_DAILY_LOSS", 500),
 				MaxWeeklyLossJPY:    getFloat("RISK_ACCOUNT_MAX_WEEKLY_LOSS", 1500),
 			},
 			GlobalLimits: risk.Limits{
-				MaxOpenPositions: int(getFloat("RISK_GLOBAL_MAX_POSITIONS", 3)),
+				MaxOpenPositions: int(getFloat("RISK_GLOBAL_MAX_POSITIONS", 5)),
 				MaxDailyLossJPY:  getFloat("RISK_GLOBAL_MAX_DAILY_LOSS", 1000),
 				MaxWeeklyLossJPY: getFloat("RISK_GLOBAL_MAX_WEEKLY_LOSS", 3000),
 			},

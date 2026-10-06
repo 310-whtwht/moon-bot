@@ -124,7 +124,7 @@ VALUES (?, 'e2e', ?, 'paper', ?, 'USD_JPY', '1h', 100, TRUE)`, deployID, strateg
 	assert.Empty(t, pos.StopOrderID)
 
 	// The same decision cannot be recorded twice.
-	created, err := store.CreateOrder(ctx, Order{ClientOrderID: fmt.Sprintf("e2e00000-%d-open", t0.Add(10*time.Hour).Unix()), Broker: "paper",
+	created, err := store.CreateOrder(ctx, Order{ClientOrderID: fmt.Sprintf("%s-%d-open", deploymentKey(deployID), t0.Add(10*time.Hour).Unix()), Broker: "paper",
 		AccountID: account, Symbol: "USD_JPY", Side: broker.SideBuy, SettleType: "open", Units: d("100")})
 	require.NoError(t, err)
 	assert.False(t, created)

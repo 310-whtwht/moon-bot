@@ -67,9 +67,10 @@ func main() {
 	streamManager := redis.NewStreamManager(redisClient)
 	backtestHandler := handlers.NewBacktestHandler(backtestRepo, strategyRepo, streamManager)
 	botRepo := database.NewBotRepository(db)
-	botHandler := handlers.NewBotHandler(botRepo)
-	// The chart reads bars from GMO's public API (no key needed).
-	chartHandler := handlers.NewChartHandler(botRepo, gmofx.New(gmofx.Options{}))
+	// Bars and the instrument list come from GMO's public API (no key needed).
+	gmoPublic := gmofx.New(gmofx.Options{})
+	botHandler := handlers.NewBotHandler(botRepo, gmoPublic)
+	chartHandler := handlers.NewChartHandler(botRepo, gmoPublic)
 	auditHandler := handlers.NewAuditHandler(audit.NewTraceManager(gormDB, redisClient))
 
 	// Initialize Redis Streams
@@ -124,7 +125,10 @@ func main() {
 		// Bot state and controls
 		api.GET("/bot/status", botHandler.GetStatus)
 		api.PUT("/kill-switch/:scope", botHandler.SetKillSwitch)
-		api.PUT("/deployments/:id", botHandler.SetDeploymentEnabled)
+		api.GET("/instruments", botHandler.GetInstruments)
+		api.POST("/deployments", botHandler.CreateDeployment)
+		api.PUT("/deployments/:id", botHandler.UpdateDeployment)
+		api.DELETE("/deployments/:id", botHandler.DeleteDeployment)
 		api.GET("/chart", chartHandler.GetChart)
 
 		// Strategy types (registered in packages/core/strategy)

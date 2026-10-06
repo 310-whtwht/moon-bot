@@ -3,8 +3,11 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strconv"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // BotRepository reads and controls the trading bot's state: heartbeats, kill
@@ -129,19 +132,6 @@ ORDER BY d.created_at, d.id`)
 		out = append(out, d)
 	}
 	return out, rows.Err()
-}
-
-// SetDeploymentEnabled returns false when the deployment does not exist.
-func (r *BotRepository) SetDeploymentEnabled(ctx context.Context, id string, enabled bool) (bool, error) {
-	var exists int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments WHERE id = ?`, id).Scan(&exists); err != nil {
-		return false, err
-	}
-	if exists == 0 {
-		return false, nil
-	}
-	_, err := r.db.ExecContext(ctx, `UPDATE deployments SET enabled = ? WHERE id = ?`, enabled, id)
-	return true, err
 }
 
 type Position struct {
@@ -305,4 +295,100 @@ ORDER BY b.bar_time DESC LIMIT ?`, symbol, timeframe, limit)
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// ErrDeploymentTaken means the account already trades that symbol.
+var ErrDeploymentTaken = errors.New("a deployment for this account and symbol already exists")
+
+// ErrDeploymentInUse means the deployment still has an open position.
+var ErrDeploymentInUse = errors.New("the deployment has an open position")
+
+// NewDeployment is what a deployment is created from. It starts disabled.
+type NewDeployment struct {
+	Name       string
+	StrategyID string
+	Broker     string
+	AccountID  string
+	Symbol     string
+	Timeframe  string
+	Units      float64
+}
+
+// StrategyExists reports whether a strategy package exists.
+func (r *BotRepository) StrategyExists(ctx context.Context, id string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM strategy_packages WHERE id = ?`, id).Scan(&n)
+	return n > 0, err
+}
+
+// CreateDeployment adds a disabled deployment and returns its ID.
+func (r *BotRepository) CreateDeployment(ctx context.Context, d NewDeployment) (string, error) {
+	var taken int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM deployments WHERE broker = ? AND account_id = ? AND symbol = ?`,
+		d.Broker, d.AccountID, d.Symbol).Scan(&taken); err != nil {
+		return "", err
+	}
+	if taken > 0 {
+		return "", ErrDeploymentTaken
+	}
+	id := uuid.NewString()
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO deployments (id, name, strategy_id, broker, account_id, symbol, timeframe, units, enabled)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, FALSE)`,
+		id, d.Name, d.StrategyID, d.Broker, d.AccountID, d.Symbol, d.Timeframe, d.Units)
+	return id, err
+}
+
+// DeploymentPatch changes a deployment; nil fields are left as they are.
+// The instrument, timeframe and strategy are fixed: the bot's state (warm-up,
+// open position, order IDs) is tied to them, so those need a new deployment.
+type DeploymentPatch struct {
+	Name    *string
+	Units   *float64
+	Enabled *bool
+}
+
+// UpdateDeployment returns false when the deployment does not exist.
+func (r *BotRepository) UpdateDeployment(ctx context.Context, id string, p DeploymentPatch) (bool, error) {
+	var exists int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments WHERE id = ?`, id).Scan(&exists); err != nil {
+		return false, err
+	}
+	if exists == 0 {
+		return false, nil
+	}
+	_, err := r.db.ExecContext(ctx, `
+UPDATE deployments SET name = COALESCE(?, name), units = COALESCE(?, units), enabled = COALESCE(?, enabled)
+WHERE id = ?`, p.Name, p.Units, p.Enabled, id)
+	return true, err
+}
+
+// DeploymentSymbol returns the symbol a deployment trades ("" when it does not exist).
+func (r *BotRepository) DeploymentSymbol(ctx context.Context, id string) (string, error) {
+	var symbol string
+	err := r.db.QueryRowContext(ctx, `SELECT symbol FROM deployments WHERE id = ?`, id).Scan(&symbol)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return symbol, err
+}
+
+// DeleteDeployment removes a deployment that holds no position. Its past
+// positions and orders are kept. Returns false when it does not exist.
+func (r *BotRepository) DeleteDeployment(ctx context.Context, id string) (bool, error) {
+	var open int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM positions WHERE deployment_id = ? AND status = 'open'`, id).Scan(&open); err != nil {
+		return false, err
+	}
+	if open > 0 {
+		return false, ErrDeploymentInUse
+	}
+	res, err := r.db.ExecContext(ctx, `DELETE FROM deployments WHERE id = ?`, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }

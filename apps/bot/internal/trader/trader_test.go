@@ -100,7 +100,14 @@ func (f *feed) Status(context.Context) (market.MarketStatus, error) { return f.s
 func (f *feed) Instruments(context.Context) ([]market.Instrument, error) {
 	return nil, nil
 }
-func (f *feed) Ticks(context.Context) ([]market.Tick, error) { return []market.Tick{f.tick()}, nil }
+
+// Ticks quotes every symbol the tests deploy at the same price.
+func (f *feed) Ticks(context.Context) ([]market.Tick, error) {
+	usd := f.tick()
+	gbp := usd
+	gbp.Key.Symbol = "GBP_JPY"
+	return []market.Tick{usd, gbp}, nil
+}
 func (f *feed) SubscribeTicks(context.Context, []string) (<-chan market.Tick, error) {
 	return nil, nil
 }
@@ -249,6 +256,41 @@ func TestEveryJudgedBarIsLogged(t *testing.T) {
 	assert.Equal(t, "ENTER_LONG", h.store.bars[1].Action)
 	assert.Equal(t, broker.SideBuy, h.store.bars[2].Holding)
 	assert.Equal(t, "150", h.store.bars[2].Close.String())
+}
+
+func TestTwoDeploymentsTradeSideBySide(t *testing.T) {
+	second := dep()
+	second.ID, second.Name, second.Symbol = "dep-00000002", "test gbp", "GBP_JPY"
+
+	// With room for two positions, both deployments open on the same bar.
+	h := newHarness(t, Config{AccountLimits: risk.Limits{MaxOpenPositions: 2}})
+	h.store.deployments = append(h.store.deployments, second)
+	setScript(0, map[int]strategy.Signal{10: long(149)})
+	h.poll(10)
+	h.poll(11)
+	pos := h.openPositions()
+	require.Len(t, pos, 2)
+	assert.ElementsMatch(t, []string{"USD_JPY", "GBP_JPY"}, []string{pos[0].Symbol, pos[1].Symbol})
+	assert.ElementsMatch(t, []string{"dep-00000001", "dep-00000002"}, []string{pos[0].DeploymentID, pos[1].DeploymentID})
+
+	// With room for one, the second entry is refused by the account limit.
+	h = newHarness(t, Config{AccountLimits: risk.Limits{MaxOpenPositions: 1}})
+	h.store.deployments = append(h.store.deployments, second)
+	setScript(0, map[int]strategy.Signal{10: long(149)})
+	h.poll(10)
+	h.poll(11)
+	require.Len(t, h.openPositions(), 1)
+	assert.Contains(t, h.kinds(), "rejected")
+	assert.Contains(t, h.events[len(h.events)-1].Message, "max_open_positions")
+}
+
+func TestDeploymentKeyDiffersForIDsSharingAPrefix(t *testing.T) {
+	// The two seeded deployments differ only in their last character.
+	a := deploymentKey("dddddddd-dddd-dddd-dddd-dddddddddddd")
+	b := deploymentKey("dddddddd-dddd-dddd-dddd-ddddddddddd2")
+	assert.NotEqual(t, a, b)
+	assert.Len(t, a, 8)
+	assert.Equal(t, a, deploymentKey("dddddddd-dddd-dddd-dddd-dddddddddddd"), "stable")
 }
 
 func TestSameDecisionIsNeverSentTwice(t *testing.T) {

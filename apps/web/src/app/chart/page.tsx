@@ -362,7 +362,14 @@ export default function ChartPage() {
                 key={s}
                 size="sm"
                 variant={s === symbol ? 'default' : 'outline'}
-                onClick={() => setSymbol(s)}
+                onClick={() => {
+                  setSymbol(s);
+                  // Jump to the timeframe that symbol is traded on.
+                  const traded = deployments.find(d => d.symbol === s);
+                  if (traded) {
+                    setTimeframe(traded.timeframe);
+                  }
+                }}
               >
                 {s.replace('_', '/')}
               </Button>

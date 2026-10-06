@@ -2,6 +2,8 @@ package trader
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
@@ -364,14 +366,19 @@ func (r *Runner) quote(ctx context.Context) (market.Tick, error) {
 	return market.Tick{}, fmt.Errorf("quote: no tick for %s", r.dep.Symbol)
 }
 
+// deploymentKey is a short, stable stand-in for a deployment ID in order IDs.
+// It is a hash of the whole ID rather than its first characters: deployment
+// IDs can share a prefix (the seeded ones do), and two deployments acting on
+// the same bar must never produce the same order ID.
+func deploymentKey(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:4])
+}
+
 // clientOrderID is deterministic per deployment, bar and action, so retrying
 // the same decision can never place a second order.
 func (r *Runner) clientOrderID(tag, action string) string {
-	id := r.dep.ID
-	if len(id) > 8 {
-		id = id[:8]
-	}
-	return fmt.Sprintf("%s-%s-%s", id, tag, action)
+	return fmt.Sprintf("%s-%s-%s", deploymentKey(r.dep.ID), tag, action)
 }
 
 func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDistance float64, reason string) error {

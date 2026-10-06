@@ -11,12 +11,13 @@ import (
 
 // BotHandler serves the bot's state and its controls (kill switch, deployments).
 type BotHandler struct {
-	repo *database.BotRepository
-	now  func() time.Time
+	repo        *database.BotRepository
+	instruments *instrumentCache
+	now         func() time.Time
 }
 
-func NewBotHandler(repo *database.BotRepository) *BotHandler {
-	return &BotHandler{repo: repo, now: time.Now}
+func NewBotHandler(repo *database.BotRepository, instruments instrumentSource) *BotHandler {
+	return &BotHandler{repo: repo, instruments: &instrumentCache{src: instruments, now: time.Now}, now: time.Now}
 }
 
 // killScopes are the scopes a kill switch may have: everything, or one broker.
@@ -121,27 +122,4 @@ func (h *BotHandler) SetKillSwitch(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": switches})
-}
-
-// SetDeploymentEnabled enables or disables a deployment. Disabling does not
-// close an open position: the bot keeps managing its exit and stop-loss.
-func (h *BotHandler) SetDeploymentEnabled(c *gin.Context) {
-	var req struct {
-		Enabled *bool `json:"enabled" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: enabled is required"})
-		return
-	}
-
-	found, err := h.repo.SetDeploymentEnabled(c.Request.Context(), c.Param("id"), *req.Enabled)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update deployment"})
-		return
-	}
-	if !found {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment not found"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": c.Param("id"), "enabled": *req.Enabled}})
 }
