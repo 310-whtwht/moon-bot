@@ -23,6 +23,8 @@ const (
 type JobSpec struct {
 	StrategyVersionID string           `json:"strategy_version_id"`
 	StrategyType      string           `json:"strategy_type"`
+	// StrategyScript is the source for strategy type "script" (empty otherwise).
+	StrategyScript string `json:"strategy_script,omitempty"`
 	StrategyParams    strategy.Params  `json:"strategy_params"`
 	Broker            string           `json:"broker"`
 	Symbol            string           `json:"symbol"`
@@ -34,7 +36,7 @@ type JobSpec struct {
 // Resolve validates the spec, applies strategy parameter defaults and returns
 // the strategy definition to run.
 func (s *JobSpec) Resolve() (strategy.Definition, error) {
-	def, err := strategy.Lookup(s.StrategyType)
+	def, err := strategy.Define(s.StrategyType, s.StrategyScript)
 	if err != nil {
 		return strategy.Definition{}, err
 	}

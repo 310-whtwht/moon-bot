@@ -15,6 +15,8 @@ export interface StrategyType {
   name: string;
   description: string;
   params: ParamSpec[];
+  /** The rules (and the parameters) come from a script. */
+  scripted: boolean;
 }
 
 export interface StrategyVersion {
@@ -22,6 +24,8 @@ export interface StrategyVersion {
   package_id: string;
   version: string;
   code: string;
+  /** Source of a script strategy. */
+  script?: string | null;
   description?: string | null;
   is_active: boolean;
   created_at: string;

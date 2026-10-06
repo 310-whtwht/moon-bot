@@ -34,6 +34,8 @@ type Version struct {
 	ID     string
 	Type   string
 	Params strategy.Params
+	// Script is the source of a `script` strategy (empty for built-in types).
+	Script string
 }
 
 // Position is an open position owned by a deployment.

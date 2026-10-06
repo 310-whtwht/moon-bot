@@ -84,6 +84,8 @@ type Definition struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
 	Params      []ParamSpec `json:"params"`
+	// Scripted types take their rules, and their parameters, from a script.
+	Scripted bool `json:"scripted"`
 	// Validate checks cross-parameter rules after defaults are applied (optional).
 	Validate func(Params) error    `json:"-"`
 	Factory  func(Params) Strategy `json:"-"`

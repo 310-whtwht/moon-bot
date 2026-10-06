@@ -130,6 +130,7 @@ func (h *BacktestHandler) CreateBacktest(c *gin.Context) {
 	spec := backtest.JobSpec{
 		StrategyVersionID: version.ID,
 		StrategyType:      version.Code,
+		StrategyScript:    derefString(version.Script),
 		StrategyParams:    params,
 		Broker:            gmofx.BrokerName,
 		Symbol:            req.Symbols[0],
@@ -294,4 +295,10 @@ func (h *BacktestHandler) CancelBacktest(c *gin.Context) {
 		"message": "Backtest cancelled successfully",
 		"data": gin.H{"id": id, "status": "cancelled"},
 	})
+}
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

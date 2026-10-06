@@ -219,6 +219,8 @@ type DeployedStrategy struct {
 	Version string             `json:"version"`
 	Enabled bool               `json:"enabled"`
 	Params  map[string]float64 `json:"params"`
+	// Script is the source of a `script` strategy (not sent to the chart).
+	Script string `json:"-"`
 }
 
 // DeployedStrategy returns the active strategy version deployed on a symbol
@@ -229,10 +231,10 @@ func (r *BotRepository) DeployedStrategy(ctx context.Context, symbol, timeframe 
 		versionID string
 	)
 	err := r.db.QueryRowContext(ctx, `
-SELECT v.id, v.code, v.version, d.enabled
+SELECT v.id, v.code, COALESCE(v.script, ''), v.version, d.enabled
 FROM deployments d JOIN strategy_versions v ON v.package_id = d.strategy_id AND v.is_active = TRUE
 WHERE d.symbol = ? AND d.timeframe = ?
-ORDER BY d.enabled DESC, v.created_at DESC LIMIT 1`, symbol, timeframe).Scan(&versionID, &s.Type, &s.Version, &s.Enabled)
+ORDER BY d.enabled DESC, v.created_at DESC LIMIT 1`, symbol, timeframe).Scan(&versionID, &s.Type, &s.Script, &s.Version, &s.Enabled)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

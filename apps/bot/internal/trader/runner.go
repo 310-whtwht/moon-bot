@@ -95,6 +95,8 @@ type Runner struct {
 	loaded  bool
 	// pendingExit is the reason of an exit that could not be executed yet
 	// (market closed, broker error). It is retried on every poll and tick.
+	// strategyErr is the last strategy failure reported, so it is reported once.
+	strategyErr string
 	pendingExit string
 
 	lastReconcile time.Time
@@ -156,6 +158,15 @@ func (r *Runner) Poll(ctx context.Context) error {
 		sig := r.strat.OnBar(toStrategyBar(bar), r.view())
 		r.lastBar = bar.OpenTime
 		r.logBar(ctx, bar, sig)
+		if f, ok := r.strat.(strategy.Failer); ok && f.Err() != nil {
+			// The strategy has stopped deciding (it only holds from here on):
+			// say so once, loudly. An open position keeps its stop-loss.
+			if msg := f.Err().Error(); msg != r.strategyErr {
+				r.strategyErr = msg
+				r.notify("error", "strategy stopped: "+msg)
+			}
+			continue
+		}
 		if sig.Action == strategy.Hold {
 			continue
 		}
@@ -226,7 +237,7 @@ func (r *Runner) ensureStrategy(ctx context.Context) error {
 		return nil
 	}
 
-	def, err := strategy.Lookup(want.Type)
+	def, err := strategy.Define(want.Type, want.Script)
 	if err != nil {
 		return fmt.Errorf("version %s: %w", want.ID, err)
 	}
@@ -258,6 +269,15 @@ func (r *Runner) ensureStrategy(ctx context.Context) error {
 		r.logf("%s: switched strategy version %s -> %s", r.dep.Name, r.version.ID, want.ID)
 	}
 	r.strat, r.version = strat, want
+	// A script that failed on history is kept (it only holds) rather than
+	// retried on every poll: it will not run on live bars either. Activating a
+	// fixed version replaces it.
+	r.strategyErr = ""
+	if f, ok := strat.(strategy.Failer); ok && f.Err() != nil {
+		r.strategyErr = f.Err().Error()
+		r.logf("%s: strategy stopped during warm-up: %s", r.dep.Name, r.strategyErr)
+		r.notify("error", "strategy stopped: "+r.strategyErr)
+	}
 	r.logf("%s: strategy %s ready (version %s, %d warmup bars, last bar %s)",
 		r.dep.Name, want.Type, want.ID, len(bars), r.lastBar.Format(time.RFC3339))
 	return nil

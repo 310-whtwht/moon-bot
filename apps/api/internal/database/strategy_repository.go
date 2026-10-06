@@ -110,25 +110,25 @@ func (r *StrategyRepository) CreateVersion(ctx context.Context, version *Strateg
 	version.UpdatedAt = time.Now()
 
 	query := `
-		INSERT INTO strategy_versions (id, package_id, version, code, description, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO strategy_versions (id, package_id, version, code, script, description, is_active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := r.db.ExecContext(ctx, query,
-		version.ID, version.PackageID, version.Version, version.Code, version.Description, version.IsActive, version.CreatedAt, version.UpdatedAt)
+		version.ID, version.PackageID, version.Version, version.Code, version.Script, version.Description, version.IsActive, version.CreatedAt, version.UpdatedAt)
 	return err
 }
 
 // GetVersionByID retrieves a strategy version by ID
 func (r *StrategyRepository) GetVersionByID(ctx context.Context, id string) (*StrategyVersion, error) {
 	query := `
-		SELECT id, package_id, version, code, description, is_active, created_at, updated_at
+		SELECT id, package_id, version, code, script, description, is_active, created_at, updated_at
 		FROM strategy_versions WHERE id = ?
 	`
 
 	var version StrategyVersion
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
-		&version.ID, &version.PackageID, &version.Version, &version.Code, &version.Description, &version.IsActive, &version.CreatedAt, &version.UpdatedAt)
+		&version.ID, &version.PackageID, &version.Version, &version.Code, &version.Script, &version.Description, &version.IsActive, &version.CreatedAt, &version.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -139,13 +139,13 @@ func (r *StrategyRepository) GetVersionByID(ctx context.Context, id string) (*St
 // GetActiveVersionByPackageID retrieves the active version of a package
 func (r *StrategyRepository) GetActiveVersionByPackageID(ctx context.Context, packageID string) (*StrategyVersion, error) {
 	query := `
-		SELECT id, package_id, version, code, description, is_active, created_at, updated_at
+		SELECT id, package_id, version, code, script, description, is_active, created_at, updated_at
 		FROM strategy_versions WHERE package_id = ? AND is_active = true
 	`
 
 	var version StrategyVersion
 	err := r.db.QueryRowContext(ctx, query, packageID).Scan(
-		&version.ID, &version.PackageID, &version.Version, &version.Code, &version.Description, &version.IsActive, &version.CreatedAt, &version.UpdatedAt)
+		&version.ID, &version.PackageID, &version.Version, &version.Code, &version.Script, &version.Description, &version.IsActive, &version.CreatedAt, &version.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +156,7 @@ func (r *StrategyRepository) GetActiveVersionByPackageID(ctx context.Context, pa
 // ListVersionsByPackageID retrieves all versions of a package
 func (r *StrategyRepository) ListVersionsByPackageID(ctx context.Context, packageID string) ([]*StrategyVersion, error) {
 	query := `
-		SELECT id, package_id, version, code, description, is_active, created_at, updated_at
+		SELECT id, package_id, version, code, script, description, is_active, created_at, updated_at
 		FROM strategy_versions WHERE package_id = ?
 		ORDER BY created_at DESC
 	`
@@ -170,7 +170,7 @@ func (r *StrategyRepository) ListVersionsByPackageID(ctx context.Context, packag
 	var versions []*StrategyVersion
 	for rows.Next() {
 		var version StrategyVersion
-		err := rows.Scan(&version.ID, &version.PackageID, &version.Version, &version.Code, &version.Description, &version.IsActive, &version.CreatedAt, &version.UpdatedAt)
+		err := rows.Scan(&version.ID, &version.PackageID, &version.Version, &version.Code, &version.Script, &version.Description, &version.IsActive, &version.CreatedAt, &version.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -267,9 +267,9 @@ func (r *StrategyRepository) CreateVersionWithParams(ctx context.Context, versio
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO strategy_versions (id, package_id, version, code, description, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		version.ID, version.PackageID, version.Version, version.Code, version.Description, version.IsActive,
+		INSERT INTO strategy_versions (id, package_id, version, code, script, description, is_active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		version.ID, version.PackageID, version.Version, version.Code, version.Script, version.Description, version.IsActive,
 		version.CreatedAt, version.UpdatedAt); err != nil {
 		return fmt.Errorf("insert version: %w", err)
 	}
