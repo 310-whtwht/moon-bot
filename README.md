@@ -290,9 +290,9 @@ UPDATE deployments SET enabled = TRUE WHERE id = 'dddddddd-dddd-dddd-dddd-dddddd
 | `TRADER_POLL_INTERVAL` | `30s` | 足の確定と損切りを確認する間隔 |
 | `PAPER_INITIAL_BALANCE` | `30000` | Paper 口座の初期資金（円） |
 | `RISK_ACCOUNT_MAX_UNITS` | `1000` | 1建玉の最大数量 |
-| `RISK_ACCOUNT_MAX_POSITIONS` | `1` | 口座あたりの同時建玉数 |
+| `RISK_ACCOUNT_MAX_POSITIONS` | `3` | 口座あたりの同時建玉数 |
 | `RISK_ACCOUNT_MAX_DAILY_LOSS` / `_WEEKLY_LOSS` | `500` / `1500` | 口座の日次・週次の損失上限（円） |
-| `RISK_GLOBAL_MAX_POSITIONS` | `3` | 全口座合計の同時建玉数 |
+| `RISK_GLOBAL_MAX_POSITIONS` | `5` | 全口座合計の同時建玉数 |
 | `RISK_GLOBAL_MAX_DAILY_LOSS` / `_WEEKLY_LOSS` | `1000` / `3000` | 全体の日次・週次の損失上限（円） |
 
 損失の集計は取引日（06:00 JST 区切り）・取引週（月曜 06:00 JST 始まり）単位です。発注には利用可能な証拠金の 50% までしか使いません。

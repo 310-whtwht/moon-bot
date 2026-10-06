@@ -3,7 +3,7 @@
 import { Spinner } from '@/components/ui/spinner';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Activity, RefreshCw } from 'lucide-react';
+import { Activity, RefreshCw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -22,8 +22,10 @@ import {
   fetchBotStatus,
   formatYenSigned,
   killActive,
+  deleteDeployment,
   setDeploymentEnabled,
 } from '@/lib/bot';
+import { NewDeploymentForm } from '@/components/bot/NewDeploymentForm';
 import { TIMEFRAMES } from '@/lib/backtest';
 
 const REFRESH_MS = 15000;
@@ -107,6 +109,25 @@ export default function DashboardPage() {
     }
   };
 
+  const removeDeployment = async (id: string, name: string) => {
+    if (
+      !window.confirm(
+        `「${name}」を削除しますか？過去の建玉と注文の記録は残ります。`
+      )
+    ) {
+      return;
+    }
+    setPending(id);
+    try {
+      await deleteDeployment(id);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '削除できませんでした');
+    } finally {
+      setPending(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="container mx-auto p-6">
@@ -131,7 +152,9 @@ export default function DashboardPage() {
   const deploymentName = (id: string | null) =>
     status.deployments.find(d => d.id === id)?.name ?? '—';
   const timeframeLabel = (tf: string) =>
-    TIMEFRAMES.find(t => t.value === tf)?.label ?? tf;
+    TIMEFRAMES.find(t => t.value === tf)?.label ??
+    { '1m': '1分足', '5m': '5分足' }[tf] ??
+    tf;
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -240,18 +263,42 @@ export default function DashboardPage() {
                         : '（有効なバージョンなし）'}
                     </p>
                   </div>
-                  <Switch
-                    checked={d.enabled}
-                    disabled={pending === d.id}
-                    onCheckedChange={(checked: boolean) =>
-                      toggleDeployment(d.id, checked)
-                    }
-                    aria-label={`${d.name} を有効にする`}
-                  />
+                  <div className="flex items-center gap-3 shrink-0">
+                    <Switch
+                      checked={d.enabled}
+                      disabled={pending === d.id}
+                      onCheckedChange={(checked: boolean) =>
+                        toggleDeployment(d.id, checked)
+                      }
+                      aria-label={`${d.name} を有効にする`}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      disabled={pending === d.id || d.enabled}
+                      onClick={() => removeDeployment(d.id, d.name)}
+                      title={
+                        d.enabled
+                          ? '削除するには先に無効にしてください'
+                          : '削除'
+                      }
+                      aria-label={`${d.name} を削除`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
           )}
+          <div className="mt-4">
+            <NewDeploymentForm
+              takenSymbols={status.deployments
+                .filter(d => d.broker === 'paper')
+                .map(d => d.symbol)}
+              onCreated={refresh}
+            />
+          </div>
         </CardContent>
       </Card>
 
