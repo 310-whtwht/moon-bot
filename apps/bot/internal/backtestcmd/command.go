@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
 type options struct {
 	strategy  string
+	script    string // source of a script strategy
 	params    strategy.Params
 	sweeps    map[string][]float64
 	symbol    string
@@ -47,6 +49,7 @@ func parseFlags(args []string, now time.Time, stderr io.Writer) (options, error)
 	fs := flag.NewFlagSet("backtest", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	strat := fs.String("strategy", "ema_cross", "strategy type")
+	script := fs.String("script", "", "path to a strategy script (uses strategy type \"script\")")
 	var params, sweeps multiFlag
 	fs.Var(&params, "param", "strategy parameter name=value (repeatable)")
 	fs.Var(&sweeps, "sweep", "parameter grid name=v1,v2,... (repeatable)")
@@ -69,6 +72,13 @@ func parseFlags(args []string, now time.Time, stderr io.Writer) (options, error)
 	}
 	if _, err := opts.timeframe.Duration(); err != nil {
 		return options{}, err
+	}
+	if *script != "" {
+		src, err := os.ReadFile(*script)
+		if err != nil {
+			return options{}, fmt.Errorf("read -script: %w", err)
+		}
+		opts.strategy, opts.script = strategy.ScriptType, string(src)
 	}
 	for _, p := range params {
 		name, value, ok := strings.Cut(p, "=")
@@ -143,7 +153,7 @@ func Run(ctx context.Context, cfg *config.Config, args []string, out io.Writer) 
 	if err != nil {
 		return err
 	}
-	def, err := strategy.Lookup(opts.strategy)
+	def, err := strategy.Define(opts.strategy, opts.script)
 	if err != nil {
 		return err
 	}

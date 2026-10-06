@@ -200,7 +200,7 @@ func (h *StrategyHandler) GetStrategyVersions(c *gin.Context) {
 }
 
 // CreateStrategyVersion creates a strategy version from a registered strategy
-// type and its parameters. Parameters are validated and stored with defaults
+// type (or a script) and its parameters. Parameters are validated and stored with defaults
 // applied, so the version fully describes what will run.
 func (h *StrategyHandler) CreateStrategyVersion(c *gin.Context) {
 	id := c.Param("id")
@@ -213,6 +213,7 @@ func (h *StrategyHandler) CreateStrategyVersion(c *gin.Context) {
 		Version      string             `json:"version" binding:"required"`
 		StrategyType string             `json:"strategy_type" binding:"required"`
 		Params       map[string]float64 `json:"params"`
+		Script       string             `json:"script"` // for strategy_type "script"
 		Description  *string            `json:"description"`
 		IsActive     bool               `json:"is_active"`
 	}
@@ -222,7 +223,7 @@ func (h *StrategyHandler) CreateStrategyVersion(c *gin.Context) {
 		return
 	}
 
-	def, err := strategy.Lookup(req.StrategyType)
+	def, err := strategy.Define(req.StrategyType, req.Script)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -250,6 +251,9 @@ func (h *StrategyHandler) CreateStrategyVersion(c *gin.Context) {
 		IsActive:     req.IsActive,
 		StrategyType: def.Type,
 	}
+	if def.Scripted {
+		version.Script = &req.Script
+	}
 
 	if err := h.repo.CreateVersionWithParams(c.Request.Context(), version, params); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create strategy version"})
@@ -257,4 +261,22 @@ func (h *StrategyHandler) CreateStrategyVersion(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"data": version})
+}
+
+// ValidateScript compiles a strategy script without saving it and returns the
+// parameters it declares, so the UI can show errors and build the form.
+func (h *StrategyHandler) ValidateScript(c *gin.Context) {
+	var req struct {
+		Script string `json:"script"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+	def, err := strategy.Define(strategy.ScriptType, req.Script)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"params": def.Params}})
 }

@@ -49,8 +49,8 @@ func (s *MySQLStore) Deployments(ctx context.Context) ([]Deployment, error) {
 func (s *MySQLStore) ActiveVersion(ctx context.Context, strategyID string) (Version, error) {
 	var v Version
 	err := s.DB.QueryRowContext(ctx,
-		`SELECT id, code FROM strategy_versions WHERE package_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1`,
-		strategyID).Scan(&v.ID, &v.Type)
+		`SELECT id, code, COALESCE(script, '') FROM strategy_versions WHERE package_id = ? AND is_active = TRUE ORDER BY created_at DESC LIMIT 1`,
+		strategyID).Scan(&v.ID, &v.Type, &v.Script)
 	if err != nil {
 		return Version{}, fmt.Errorf("active version of %s: %w", strategyID, err)
 	}
@@ -59,7 +59,7 @@ func (s *MySQLStore) ActiveVersion(ctx context.Context, strategyID string) (Vers
 
 func (s *MySQLStore) Version(ctx context.Context, versionID string) (Version, error) {
 	v := Version{ID: versionID}
-	err := s.DB.QueryRowContext(ctx, `SELECT code FROM strategy_versions WHERE id = ?`, versionID).Scan(&v.Type)
+	err := s.DB.QueryRowContext(ctx, `SELECT code, COALESCE(script, '') FROM strategy_versions WHERE id = ?`, versionID).Scan(&v.Type, &v.Script)
 	if err != nil {
 		return Version{}, fmt.Errorf("version %s: %w", versionID, err)
 	}

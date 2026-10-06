@@ -139,6 +139,7 @@ func main() {
 		{
 			strategies.GET("", strategyHandler.GetStrategies)
 			strategies.POST("", strategyHandler.CreateStrategy)
+			strategies.POST("/validate-script", strategyHandler.ValidateScript)
 			strategies.GET("/:id", strategyHandler.GetStrategy)
 			strategies.PUT("/:id", strategyHandler.UpdateStrategy)
 			strategies.DELETE("/:id", strategyHandler.DeleteStrategy)

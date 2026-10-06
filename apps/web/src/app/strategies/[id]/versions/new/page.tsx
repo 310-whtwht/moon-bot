@@ -14,9 +14,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { ArrowLeft, Save } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Save } from 'lucide-react';
 import Link from 'next/link';
-import type { StrategyType } from '@/lib/backtest';
+import type { ParamSpec, StrategyType } from '@/lib/backtest';
+import { SCRIPT_TEMPLATE } from '@/lib/scriptTemplate';
 
 const selectClass =
   'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm';
@@ -29,6 +30,10 @@ export default function NewVersionPage() {
   const [types, setTypes] = useState<StrategyType[]>([]);
   const [typeName, setTypeName] = useState('');
   const [values, setValues] = useState<Record<string, string>>({});
+  const [script, setScript] = useState(SCRIPT_TEMPLATE);
+  // Parameters declared by the script, known once it has been checked.
+  const [scriptParams, setScriptParams] = useState<ParamSpec[] | null>(null);
+  const [checking, setChecking] = useState(false);
   const [version, setVersion] = useState('1.0.0');
   const [description, setDescription] = useState('');
   const [isActive, setIsActive] = useState(true);
@@ -56,9 +61,46 @@ export default function NewVersionPage() {
   };
 
   const current = types.find(t => t.type === typeName);
+  const scripted = current?.scripted ?? false;
+  const paramSpecs = scripted ? (scriptParams ?? []) : (current?.params ?? []);
+
+  /** Compiles the script on the server and loads the parameters it declares. */
+  const checkScript = async (): Promise<boolean> => {
+    setChecking(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/v1/strategies/validate-script', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'スクリプトを確認できませんでした');
+      }
+      const specs = data.data.params as ParamSpec[];
+      setScriptParams(specs);
+      // Keep what was typed for parameters that still exist.
+      setValues(prev =>
+        Object.fromEntries(
+          specs.map(p => [p.name, prev[p.name] ?? String(p.default)])
+        )
+      );
+      return true;
+    } catch (err) {
+      setScriptParams(null);
+      setError(err instanceof Error ? err.message : 'エラーが発生しました');
+      return false;
+    } finally {
+      setChecking(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (scripted && scriptParams === null && !(await checkScript())) {
+      return;
+    }
     setSaving(true);
     setError(null);
 
@@ -75,6 +117,7 @@ export default function NewVersionPage() {
             version,
             strategy_type: typeName,
             params: numeric,
+            script: scripted ? script : undefined,
             description: description || null,
             is_active: isActive,
           }),
@@ -139,16 +182,57 @@ export default function NewVersionPage() {
               )}
             </div>
 
-            {current && (
+            {scripted && (
+              <div className="space-y-2">
+                <Label htmlFor="script">スクリプト</Label>
+                <Textarea
+                  id="script"
+                  value={script}
+                  onChange={e => {
+                    setScript(e.target.value);
+                    setScriptParams(null);
+                  }}
+                  rows={22}
+                  spellCheck={false}
+                  className="font-mono text-xs leading-relaxed"
+                />
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={checkScript}
+                    disabled={checking}
+                  >
+                    <CheckCircle className="w-4 h-4 mr-2" />
+                    {checking ? '確認中...' : 'スクリプトを確認'}
+                  </Button>
+                  <span className="text-sm text-muted-foreground">
+                    {scriptParams === null
+                      ? '確認すると、文法エラーの有無とパラメータが分かります'
+                      : `問題ありません（パラメータ ${scriptParams.length} 個）`}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  使える関数: ema / sma / rsi / atr / highest / lowest（期間,
+                  ago=何本前）、close / open / high / low（ago=）、buy / sell
+                  （stop=損切り価格）、exit、hold、explain、num、state。bar には
+                  time / open / high / low / close / hour / minute /
+                  weekday（日本時間、月曜=0）があります。作成したら、有効にする前にバックテストで確かめてください。
+                </p>
+              </div>
+            )}
+
+            {current && paramSpecs.length > 0 && (
               <div className="grid gap-4 md:grid-cols-2">
-                {current.params.map(p => (
+                {paramSpecs.map(p => (
                   <div key={p.name} className="space-y-2">
                     <Label htmlFor={p.name}>{p.label}</Label>
                     <Input
                       id={p.name}
                       type="number"
-                      min={p.min}
-                      max={p.max}
+                      min={scripted ? undefined : p.min}
+                      max={scripted ? undefined : p.max}
                       step={p.integer ? 1 : 'any'}
                       value={values[p.name] ?? ''}
                       onChange={e =>
@@ -160,7 +244,9 @@ export default function NewVersionPage() {
                       required
                     />
                     <p className="text-xs text-muted-foreground">
-                      {p.name}（{p.min}〜{p.max}、既定 {p.default}）
+                      {scripted
+                        ? `既定 ${p.default}`
+                        : `${p.name}（${p.min}〜${p.max}、既定 ${p.default}）`}
                     </p>
                   </div>
                 ))}

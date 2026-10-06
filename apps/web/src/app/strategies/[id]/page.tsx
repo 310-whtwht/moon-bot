@@ -259,7 +259,7 @@ export default function StrategyDetailPage() {
                           key={version.id}
                           className="flex items-center justify-between p-4 border rounded-lg"
                         >
-                          <div>
+                          <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               <h4 className="font-medium">{version.version}</h4>
                               {version.is_active && (
@@ -274,6 +274,16 @@ export default function StrategyDetailPage() {
                             <p className="text-sm text-muted-foreground mt-1">
                               {version.description || 'メモなし'}
                             </p>
+                            {version.script && (
+                              <details className="mt-2">
+                                <summary className="text-sm cursor-pointer text-muted-foreground">
+                                  スクリプトを表示
+                                </summary>
+                                <pre className="mt-2 p-3 rounded-md bg-muted text-xs overflow-x-auto max-w-3xl">
+                                  {version.script}
+                                </pre>
+                              </details>
+                            )}
                             <p className="text-xs text-muted-foreground mt-1">
                               Created{' '}
                               {new Date(

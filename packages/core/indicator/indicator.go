@@ -77,3 +77,86 @@ func (a *ATR) Update(high, low, close float64) (float64, bool) {
 func (a *ATR) Value() (float64, bool) {
 	return a.value, a.count >= a.period
 }
+
+// SMA is a simple moving average over the last Period values.
+type SMA struct {
+	period int
+	window []float64
+	next   int
+	sum    float64
+}
+
+func NewSMA(period int) *SMA {
+	return &SMA{period: period, window: make([]float64, 0, period)}
+}
+
+// Update adds a value and returns the current SMA and whether it is ready.
+func (s *SMA) Update(v float64) (float64, bool) {
+	if len(s.window) < s.period {
+		s.window = append(s.window, v)
+		s.sum += v
+	} else {
+		s.sum += v - s.window[s.next]
+		s.window[s.next] = v
+		s.next = (s.next + 1) % s.period
+	}
+	if len(s.window) < s.period {
+		return 0, false
+	}
+	return s.sum / float64(s.period), true
+}
+
+// RSI is the relative strength index with Wilder's smoothing, seeded with the
+// simple average of the first Period gains and losses.
+type RSI struct {
+	period   int
+	count    int // changes seen
+	prev     float64
+	hasPrev  bool
+	avgGain  float64
+	avgLoss  float64
+	sumGain  float64
+	sumLoss  float64
+	lastRSI  float64
+	hasValue bool
+}
+
+func NewRSI(period int) *RSI {
+	return &RSI{period: period}
+}
+
+// Update adds a close and returns the current RSI (0-100) and whether it is ready.
+func (r *RSI) Update(close float64) (float64, bool) {
+	if !r.hasPrev {
+		r.prev, r.hasPrev = close, true
+		return 0, false
+	}
+	change := close - r.prev
+	r.prev = close
+	gain, loss := math.Max(change, 0), math.Max(-change, 0)
+
+	r.count++
+	if r.count <= r.period {
+		r.sumGain += gain
+		r.sumLoss += loss
+		if r.count < r.period {
+			return 0, false
+		}
+		r.avgGain, r.avgLoss = r.sumGain/float64(r.period), r.sumLoss/float64(r.period)
+	} else {
+		n := float64(r.period)
+		r.avgGain = (r.avgGain*(n-1) + gain) / n
+		r.avgLoss = (r.avgLoss*(n-1) + loss) / n
+	}
+
+	switch {
+	case r.avgLoss == 0 && r.avgGain == 0:
+		r.lastRSI = 50
+	case r.avgLoss == 0:
+		r.lastRSI = 100
+	default:
+		r.lastRSI = 100 - 100/(1+r.avgGain/r.avgLoss)
+	}
+	r.hasValue = true
+	return r.lastRSI, true
+}

@@ -21,7 +21,9 @@ type StrategyVersion struct {
 	ID          string    `json:"id" db:"id"`
 	PackageID   string    `json:"package_id" db:"package_id"`
 	Version     string    `json:"version" db:"version"`
-	Code        string    `json:"code" db:"code"`
+	Code string `json:"code" db:"code"`
+	// Script is the Starlark source of a version of type `script`.
+	Script      *string   `json:"script" db:"script"`
 	Description *string   `json:"description" db:"description"`
 	IsActive    bool      `json:"is_active" db:"is_active"`
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`

@@ -142,6 +142,9 @@ func Run(candles []Candle, cfg Config) (*Result, error) {
 		}
 
 		sig := strat.OnBar(strategy.Bar{Time: c.Time, Open: c.Bid.Open, High: c.Bid.High, Low: c.Bid.Low, Close: c.Bid.Close}, r.view())
+		if f, ok := strat.(strategy.Failer); ok && f.Err() != nil {
+			return nil, fmt.Errorf("backtest: strategy failed at %s: %w", c.Time.Format(time.RFC3339), f.Err())
+		}
 		if sig.Action != strategy.Hold {
 			pending, pendingRef = &sig, c.Bid.Close
 		}

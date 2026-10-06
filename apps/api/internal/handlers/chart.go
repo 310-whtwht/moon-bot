@@ -132,8 +132,8 @@ type chartSignal struct {
 // entries, reversals and stop-outs follow the same rules as a backtest. Only
 // BID bars are at hand: the spread and fees are ignored, which is fine for
 // showing where signals fall but not for judging profit.
-func replaySignals(typ string, params map[string]float64, bars []market.Bar) []chartSignal {
-	def, err := strategy.Lookup(typ)
+func replaySignals(typ, script string, params map[string]float64, bars []market.Bar) []chartSignal {
+	def, err := strategy.Define(typ, script)
 	if err != nil || len(bars) == 0 {
 		return nil
 	}
@@ -234,7 +234,7 @@ func (h *ChartHandler) GetChart(c *gin.Context) {
 
 	var signals []chartSignal
 	if strategy != nil {
-		signals = replaySignals(strategy.Type, strategy.Params, bars)
+		signals = replaySignals(strategy.Type, strategy.Script, strategy.Params, bars)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{

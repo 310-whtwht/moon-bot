@@ -293,6 +293,47 @@ func TestDeploymentKeyDiffersForIDsSharingAPrefix(t *testing.T) {
 	assert.Equal(t, a, deploymentKey("dddddddd-dddd-dddd-dddd-dddddddddddd"), "stable")
 }
 
+func TestScriptStrategyTradesAndABrokenOneOnlyHolds(t *testing.T) {
+	// Buys on the bar that opens at 11:00 JST... i.e. bar index 11 from t0 (09:00 JST).
+	h := newHarness(t, Config{})
+	h.store.versions["v1"] = Version{ID: "v1", Type: strategy.ScriptType, Script: `
+def on_bar(bar, pos):
+    explain("hour " + str(bar.hour))
+    if bar.hour == 20 and pos == None:
+        return buy(stop=bar.close - 1, reason="eight pm")
+    return hold()
+`}
+	h.poll(11) // warm-up on bars 0..10 (09:00..19:00 JST)
+	assert.Empty(t, h.store.statuses())
+	h.poll(12) // bar 11 (20:00 JST) closed
+	require.Len(t, h.openPositions(), 1)
+	assert.Equal(t, "149", h.openPositions()[0].StopPrice.String())
+	assert.True(t, h.logged("-> ENTER_LONG (flat) [hour 20]"))
+
+	// A script that fails at run time stops deciding and says so once.
+	h = newHarness(t, Config{})
+	h.store.versions["v1"] = Version{ID: "v1", Type: strategy.ScriptType, Script: `
+def on_bar(bar, pos):
+    if bar.hour == 20:
+        return buy(stop=-1)
+    return hold()
+`}
+	h.poll(11)
+	h.poll(12)
+	h.poll(13)
+	h.poll(14)
+	assert.Empty(t, h.openPositions())
+	require.Equal(t, []string{"error"}, h.kinds(), "reported once, not on every bar")
+	assert.Contains(t, h.events[0].Message, "stop must be a positive price")
+
+	// One that cannot even compile is a poll error, as with an unknown type.
+	h = newHarness(t, Config{})
+	h.store.versions["v1"] = Version{ID: "v1", Type: strategy.ScriptType, Script: "def on_bar(bar):\n    pass"}
+	h.feed.at(11)
+	require.NoError(t, h.mgr.PollOnce(context.Background()))
+	assert.True(t, h.logged("on_bar must take 2 arguments"))
+}
+
 func TestSameDecisionIsNeverSentTwice(t *testing.T) {
 	h := newHarness(t, Config{})
 	setScript(0, map[int]strategy.Signal{10: long(149)})
