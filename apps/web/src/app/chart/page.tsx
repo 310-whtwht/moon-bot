@@ -27,6 +27,7 @@ import {
 import {
   type BarDecision,
   type ChartData,
+  describeResult,
   TIMEFRAME_SECONDS,
   ema,
   fetchChart,
@@ -46,7 +47,7 @@ const TIMEFRAMES = [
 const SIGNAL_LABELS = { buy: '買', sell: '売', exit: '手仕舞', stop: '損切' };
 
 const ACTION_LABELS: Record<BarDecision['action'], string> = {
-  HOLD: '見送り（シグナルなし）',
+  HOLD: 'シグナルなし',
   ENTER_LONG: '買いシグナル',
   ENTER_SHORT: '売りシグナル',
   EXIT: '決済シグナル',
@@ -529,8 +530,7 @@ export default function ChartPage() {
             <CardTitle className="text-base">足ごとの判定</CardTitle>
             <CardDescription>
               bot
-              が確定足を見て出した判定の記録（新しい順、最大48件）。売買シグナルが出ても、リスク管理や
-              Kill Switch で発注を見送ることがあります
+              が確定足を見て出した判定の記録（新しい順、最大48件）。「シグナルなし」は売買の条件を満たさなかった足で、正常な待機です。シグナルが出たのに発注しなかった場合は、「結果」に理由が出ます
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -547,6 +547,7 @@ export default function ChartPage() {
                       <th className="py-2 pr-4">終値</th>
                       <th className="py-2 pr-4">判定</th>
                       <th className="py-2 pr-4">建玉</th>
+                      <th className="py-2 pr-4">結果</th>
                       <th className="py-2">戦略が見た値</th>
                     </tr>
                   </thead>
@@ -564,6 +565,24 @@ export default function ChartPage() {
                         </td>
                         <td className="py-2 pr-4 whitespace-nowrap">
                           {HOLDING_LABELS[d.holding] ?? d.holding}
+                        </td>
+                        <td className="py-2 pr-4">
+                          {describeResult(d.result).map(line => (
+                            <div
+                              key={line}
+                              className={
+                                line.startsWith('発注せず') ||
+                                line.startsWith('エラー')
+                                  ? 'text-yellow-700 font-medium'
+                                  : ''
+                              }
+                            >
+                              {line}
+                            </div>
+                          ))}
+                          {!d.result && (
+                            <span className="text-muted-foreground">—</span>
+                          )}
                         </td>
                         <td className="py-2 text-muted-foreground">
                           {describeDetail(d.detail)}

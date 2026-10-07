@@ -254,6 +254,8 @@ func TestEveryJudgedBarIsLogged(t *testing.T) {
 	assert.Equal(t, "HOLD", h.store.bars[0].Action)
 	assert.Equal(t, broker.Side(""), h.store.bars[0].Holding)
 	assert.Equal(t, "ENTER_LONG", h.store.bars[1].Action)
+	assert.Equal(t, "", h.store.bars[0].Result, "no signal, nothing to report")
+	assert.Equal(t, "opened: BUY 100 USD_JPY @ 150.01, stop 149.000 (test long)", h.store.bars[1].Result)
 	assert.Equal(t, broker.SideBuy, h.store.bars[2].Holding)
 	assert.Equal(t, "150", h.store.bars[2].Close.String())
 }
@@ -332,6 +334,43 @@ def on_bar(bar, pos):
 	h.feed.at(11)
 	require.NoError(t, h.mgr.PollOnce(context.Background()))
 	assert.True(t, h.logged("on_bar must take 2 arguments"))
+}
+
+func TestDecisionRecordsWhyASignalWasNotActedOn(t *testing.T) {
+	// The daily loss limit is already used up: the entry is refused.
+	h := newHarness(t, Config{AccountLimits: risk.Limits{MaxDailyLossJPY: 50}})
+	h.store.positions = append(h.store.positions, &memPosition{
+		Position: Position{ID: "old-loss", DeploymentID: "dep-00000001", Broker: paper.BrokerName, AccountID: "default", Symbol: "USD_JPY"},
+		Closed:   true, ClosedAt: t0.Add(time.Hour), RealizedPnL: d("-52"),
+	})
+	setScript(0, map[int]strategy.Signal{10: long(149)})
+	h.poll(10)
+	h.poll(11)
+	require.Empty(t, h.openPositions())
+	require.Len(t, h.store.bars, 1)
+	assert.Equal(t, "ENTER_LONG", h.store.bars[0].Action)
+	assert.Contains(t, h.store.bars[0].Result, "rejected: risk: account daily_loss: lost 52 JPY today, limit 50")
+
+	// A signal from a bar that closed long ago is not traded, and says so.
+	h = newHarness(t, Config{})
+	setScript(0, map[int]strategy.Signal{10: long(149)})
+	h.poll(10)
+	h.feed.at(11)
+	h.feed.mu.Lock()
+	h.feed.now = h.feed.now.Add(20 * time.Minute)
+	h.feed.mu.Unlock()
+	require.NoError(t, h.mgr.PollOnce(context.Background()))
+	require.Empty(t, h.openPositions())
+	assert.Contains(t, h.store.bars[0].Result, "skipped: stale signal")
+
+	// A reversal records both halves.
+	h = newHarness(t, Config{})
+	setScript(0, map[int]strategy.Signal{10: long(149), 11: short(151)})
+	h.poll(10)
+	h.poll(11)
+	h.poll(12)
+	require.Len(t, h.store.bars, 2)
+	assert.Regexp(t, `^closed: .* / opened: SELL 100 USD_JPY`, h.store.bars[1].Result)
 }
 
 func TestSameDecisionIsNeverSentTwice(t *testing.T) {
