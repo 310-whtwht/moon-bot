@@ -5,7 +5,17 @@ import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { type Instrument, createDeployment, fetchInstruments } from '@/lib/bot';
+import {
+  DEFAULT_ENTRY,
+  type Instrument,
+  createDeployment,
+  fetchInstruments,
+} from '@/lib/bot';
+import {
+  EntrySettingsFields,
+  fromEntryForm,
+  toEntryForm,
+} from './EntrySettingsFields';
 
 const TIMEFRAMES = [
   { value: '1m', label: '1分足' },
@@ -42,6 +52,7 @@ export function NewDeploymentForm({
   const [timeframe, setTimeframe] = useState('15m');
   const [units, setUnits] = useState('');
   const [name, setName] = useState('');
+  const [entry, setEntry] = useState(toEntryForm(DEFAULT_ENTRY));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -91,6 +102,7 @@ export function NewDeploymentForm({
         symbol: chosen.symbol,
         timeframe,
         units: Number(units || chosen.min_units),
+        ...fromEntryForm(entry),
       });
       setOpen(false);
       setName('');
@@ -177,6 +189,7 @@ export function NewDeploymentForm({
           />
         </div>
       </div>
+      <EntrySettingsFields idPrefix="new" value={entry} onChange={setEntry} />
       <div className="space-y-1">
         <Label htmlFor="deployment-name">名前（空欄なら自動）</Label>
         <Input

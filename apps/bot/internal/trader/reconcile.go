@@ -43,6 +43,10 @@ func (r *Runner) reconcileWith(ctx context.Context, maintainStop bool) error {
 	}
 
 	if r.pos == nil {
+		if r.working != nil {
+			// A position here would be the waiting entry filling: checkWorking picks it up.
+			return nil
+		}
 		if len(positions) > 0 {
 			r.mismatch(ctx, fmt.Sprintf("ブローカーに bot の知らない %s の建玉が %d 件あります", r.dep.Symbol, len(positions)))
 		} else {

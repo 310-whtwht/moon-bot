@@ -96,6 +96,11 @@ type Runner struct {
 	loaded  bool
 	// pendingExit is the reason of an exit that could not be executed yet
 	// (market closed, broker error). It is retried on every poll and tick.
+	// working is a limit entry waiting for its fill (nil when there is none).
+	working *workingEntry
+	// decision is the bar decision being acted on, so a limit entry resolved
+	// later can add its outcome to the same record.
+	decision *BarDecision
 	// outcomes collects what happened while acting on the current bar's signal.
 	outcomes []string
 	// strategyErr is the last strategy failure reported, so it is reported once.
@@ -113,6 +118,14 @@ func (r *Runner) SetDeployment(d Deployment) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.dep = d
+}
+
+// Busy reports whether the runner holds a position or has an entry waiting at
+// the broker: either way it must keep running.
+func (r *Runner) Busy() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pos != nil || r.working != nil
 }
 
 // HasPosition reports whether the runner currently holds a position.
@@ -133,6 +146,10 @@ func (r *Runner) Poll(ctx context.Context) error {
 			return fmt.Errorf("load position: %w", err)
 		}
 		r.pos, r.loaded = pos, true
+		r.withdrawLeftoverOrders(ctx)
+	}
+	if err := r.checkWorking(ctx, false); err != nil {
+		return err
 	}
 	if r.now().Sub(r.lastReconcile) >= r.cfg.ReconcileInterval {
 		// Not fatal: a failed check is logged and tried again on the next poll.
@@ -162,6 +179,7 @@ func (r *Runner) Poll(ctx context.Context) error {
 		r.lastBar = bar.OpenTime
 		decision := r.logBar(ctx, bar, sig)
 		r.outcomes = nil
+		r.decision = &decision
 		if f, ok := r.strat.(strategy.Failer); ok && f.Err() != nil {
 			// The strategy has stopped deciding (it only holds from here on):
 			// say so once, loudly. An open position keeps its stop-loss.
@@ -182,9 +200,17 @@ func (r *Runner) Poll(ctx context.Context) error {
 			r.recordResult(ctx, decision)
 			continue
 		}
+		// A new signal replaces an entry that is still waiting for its price.
+		if err := r.checkWorking(ctx, true); err != nil {
+			return err
+		}
 		err := r.act(ctx, sig, bar)
 		if err != nil {
 			r.notify("error", err.Error())
+		}
+		if r.working != nil {
+			// What follows (fill, cancel) is added to this bar's record later.
+			r.working.notes = append([]string(nil), r.outcomes...)
 		}
 		r.recordResult(ctx, decision)
 		if err != nil {
@@ -270,6 +296,11 @@ func (r *Runner) ensureStrategy(ctx context.Context) error {
 		return err
 	}
 	if r.strat != nil && want.ID == r.version.ID {
+		return nil
+	}
+	if r.strat != nil && r.working != nil {
+		// An entry is waiting at the broker: the position it may become
+		// belongs to the version that asked for it, so the switch waits.
 		return nil
 	}
 
@@ -404,7 +435,7 @@ func (r *Runner) act(ctx context.Context, sig strategy.Signal, bar market.Bar) e
 		if side == broker.SideSell {
 			stopDistance = sig.StopLoss - bar.Close.InexactFloat64()
 		}
-		return r.open(ctx, tag, side, stopDistance, sig.Reason)
+		return r.open(ctx, tag, side, stopDistance, sig.Reason, false)
 	}
 	return nil
 }
@@ -437,7 +468,9 @@ func (r *Runner) clientOrderID(tag, action string) string {
 	return fmt.Sprintf("%s-%s-%s", deploymentKey(r.dep.ID), tag, action)
 }
 
-func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDistance float64, reason string) error {
+// open sends an entry. atMarket forces a market order whatever the deployment
+// says (the fallback after a limit entry was not filled).
+func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDistance float64, reason string, atMarket bool) error {
 	if !r.dep.Enabled {
 		r.logf("%s: entry skipped (deployment disabled)", r.dep.Name)
 		r.note("skipped", "deployment disabled")
@@ -464,6 +497,10 @@ func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDis
 	if tick.Status != market.StatusOpen {
 		r.logf("%s: entry skipped (market %s)", r.dep.Name, tick.Status)
 		r.note("skipped", fmt.Sprintf("market %s", tick.Status))
+		return nil
+	}
+	if spread := tick.Ask.Sub(tick.Bid); r.dep.MaxSpread.IsPositive() && spread.GreaterThan(r.dep.MaxSpread) {
+		r.notify("skipped", fmt.Sprintf("spread %s is wider than the limit %s", spread.String(), r.dep.MaxSpread.String()))
 		return nil
 	}
 	price := tick.Ask
@@ -497,6 +534,10 @@ func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDis
 		return err
 	}
 
+	if r.dep.EntryOrder == EntryLimit && !atMarket {
+		return r.placeLimit(ctx, tag, order, tick, stopDistance, reason)
+	}
+
 	fill, err := r.send(ctx, order, func() (broker.OrderAck, error) {
 		return r.broker.PlaceOpen(ctx, broker.OpenOrder{
 			ClientOrderID: order.ClientOrderID, Symbol: order.Symbol, Side: side,
@@ -514,6 +555,11 @@ func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDis
 		return fmt.Errorf("record fill: %w", err)
 	}
 
+	return r.enter(ctx, fill, side, tick, stopDistance, reason)
+}
+
+// enter records the position a filled entry created and protects it.
+func (r *Runner) enter(ctx context.Context, fill Fill, side broker.Side, tick market.Tick, stopDistance float64, reason string) error {
 	// Keep the stop distance the strategy chose, anchored at the price the
 	// position can actually be closed at.
 	dist := decimal.NewFromFloat(stopDistance)
@@ -585,7 +631,11 @@ func (r *Runner) send(ctx context.Context, order Order, place func() (broker.Ord
 		}
 	}
 
-	// Size-weighted average price across partial fills.
+	return fillOf(execs), nil
+}
+
+// fillOf sums executions into one fill at the size-weighted average price.
+func fillOf(execs []broker.Execution) Fill {
 	fill := Fill{BrokerOrderID: execs[0].OrderID, BrokerPositionID: execs[0].PositionID, At: execs[len(execs)-1].ExecutedAt}
 	notional := decimal.Zero
 	for _, e := range execs {
@@ -594,7 +644,7 @@ func (r *Runner) send(ctx context.Context, order Order, place func() (broker.Ord
 		fill.Fee = fill.Fee.Add(e.Fee)
 	}
 	fill.Price = notional.Div(fill.Size)
-	return fill, nil
+	return fill
 }
 
 func (r *Runner) pause(ctx context.Context) error {
@@ -768,6 +818,10 @@ func (r *Runner) close(ctx context.Context, tag, reason string) error {
 func (r *Runner) ForceClose(ctx context.Context, reason string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Getting flat includes not leaving an entry waiting at the broker.
+	if err := r.checkWorking(ctx, true); err != nil {
+		return err
+	}
 	if r.pos == nil {
 		return nil
 	}
@@ -781,7 +835,14 @@ func (r *Runner) OnTick(ctx context.Context, tick market.Tick) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.pos == nil || tick.Key.Symbol != r.dep.Symbol || tick.Status != market.StatusOpen {
+	if tick.Key.Symbol != r.dep.Symbol {
+		return nil
+	}
+	if r.working != nil {
+		// Quotes drive the wait: a fill or the deadline is noticed within a second.
+		return r.checkWorking(ctx, false)
+	}
+	if r.pos == nil || tick.Status != market.StatusOpen {
 		return nil
 	}
 	if r.pendingExit != "" {

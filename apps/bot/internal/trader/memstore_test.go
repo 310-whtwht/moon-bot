@@ -24,9 +24,12 @@ type memStore struct {
 
 type memOrder struct {
 	Order
-	Status string
-	Reason string
-	Fill   Fill
+	Status        string
+	Reason        string
+	Fill          Fill
+	Working       bool // an accepted limit order waiting for its fill
+	BrokerOrderID string
+	Limit, Stop   decimal.Decimal
 }
 
 type memPosition struct {
@@ -106,6 +109,7 @@ func (s *memStore) MarkOrderFilled(_ context.Context, o Order, f Fill) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.orders[o.ClientOrderID].Status = "filled"
+	s.orders[o.ClientOrderID].Working = false
 	s.orders[o.ClientOrderID].Fill = f
 	return nil
 }
@@ -179,6 +183,14 @@ func (s *memStore) Exposure(_ context.Context, brokerName, accountID string, day
 			global.DailyPnLJPY += pnl
 			if mine {
 				account.DailyPnLJPY += pnl
+			}
+		}
+	}
+	for _, o := range s.orders {
+		if o.Working {
+			global.OpenPositions++
+			if o.Broker == brokerName && o.AccountID == accountID {
+				account.OpenPositions++
 			}
 		}
 	}
@@ -282,4 +294,32 @@ func (m *memStore) RecordBar(_ context.Context, d BarDecision) error {
 	}
 	m.bars = append(m.bars, d)
 	return nil
+}
+
+func (s *memStore) MarkOrderWorking(_ context.Context, id, brokerOrderID string, limit, stop decimal.Decimal) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o := s.orders[id]
+	o.Status, o.Working, o.BrokerOrderID, o.Limit, o.Stop = "submitted", true, brokerOrderID, limit, stop
+	return nil
+}
+
+func (s *memStore) MarkOrderCancelled(_ context.Context, id, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o := s.orders[id]
+	o.Status, o.Working, o.Reason = "cancelled", false, reason
+	return nil
+}
+
+func (s *memStore) WorkingOrders(_ context.Context, deploymentID string) ([]WorkingOrder, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []WorkingOrder
+	for _, id := range s.orderSeq {
+		if o := s.orders[id]; o.Working && o.DeploymentID == deploymentID {
+			out = append(out, WorkingOrder{ClientOrderID: id, BrokerOrderID: o.BrokerOrderID})
+		}
+	}
+	return out, nil
 }

@@ -167,3 +167,79 @@ func TestRestoreAndSubscribe(t *testing.T) {
 		t.Fatal("no execution event")
 	}
 }
+
+func limitOpen(side broker.Side, price string) broker.OpenOrder {
+	p := d(price)
+	return broker.OpenOrder{ClientOrderID: "l1", Symbol: "USD_JPY", Side: side, Type: broker.OrderLimit, Size: d("100"), Price: &p}
+}
+
+func TestLimitOrderWaitsForItsPrice(t *testing.T) {
+	ctx := context.Background()
+	q := &quotes{bid: "150.000", ask: "150.010", status: market.StatusOpen}
+	b := newBroker(q, "30000")
+
+	// A buy resting at the BID is not filled while the ASK is above it.
+	ack, err := b.PlaceOpen(ctx, limitOpen(broker.SideBuy, "150.000"))
+	require.NoError(t, err)
+	assert.Equal(t, "ORDERED", ack.Status)
+	execs, err := b.Executions(ctx, ack.OrderID)
+	require.NoError(t, err)
+	assert.Empty(t, execs)
+	positions, _ := b.OpenPositions(ctx, "")
+	assert.Empty(t, positions)
+
+	// The ASK comes down to the limit: filled at the limit price, not better.
+	q.bid, q.ask = "149.985", "149.995"
+	execs, err = b.Executions(ctx, ack.OrderID)
+	require.NoError(t, err)
+	require.Len(t, execs, 1)
+	assert.Equal(t, "150", execs[0].Price.String())
+	assert.Equal(t, "0.3", execs[0].Fee.String())
+	positions, _ = b.OpenPositions(ctx, "")
+	require.Len(t, positions, 1)
+	assert.Error(t, b.Cancel(ctx, ack.OrderID), "a filled order cannot be cancelled")
+
+	// Reading again does not fill twice.
+	execs, _ = b.Executions(ctx, ack.OrderID)
+	assert.Len(t, execs, 1)
+}
+
+func TestLimitOrderCancelledAndSellSide(t *testing.T) {
+	ctx := context.Background()
+	q := &quotes{bid: "150.000", ask: "150.010", status: market.StatusOpen}
+	b := newBroker(q, "30000")
+
+	// A sell resting at the ASK waits for the BID to rise to it.
+	ack, err := b.PlaceOpen(ctx, limitOpen(broker.SideSell, "150.010"))
+	require.NoError(t, err)
+	require.NoError(t, b.Cancel(ctx, ack.OrderID))
+	q.bid, q.ask = "150.020", "150.030" // would have filled
+	execs, _ := b.Executions(ctx, ack.OrderID)
+	assert.Empty(t, execs, "cancelled orders never fill")
+	assert.Error(t, b.Cancel(ctx, ack.OrderID))
+
+	ack, err = b.PlaceOpen(ctx, limitOpen(broker.SideSell, "150.025"))
+	require.NoError(t, err)
+	assert.Equal(t, "ORDERED", ack.Status)
+	q.bid, q.ask = "150.030", "150.040"
+	execs, _ = b.Executions(ctx, ack.OrderID)
+	require.Len(t, execs, 1)
+	assert.Equal(t, "150.025", execs[0].Price.String())
+
+	// A limit that is already marketable fills at once, at its own price.
+	ack, err = b.PlaceOpen(ctx, limitOpen(broker.SideBuy, "150.100"))
+	require.NoError(t, err)
+	assert.Equal(t, "EXECUTED", ack.Status)
+
+	// The market closing does not lose a working order.
+	ack, err = b.PlaceOpen(ctx, limitOpen(broker.SideBuy, "149.000"))
+	require.NoError(t, err)
+	q.status = market.StatusClosed
+	execs, err = b.Executions(ctx, ack.OrderID)
+	require.NoError(t, err)
+	assert.Empty(t, execs)
+	require.NoError(t, b.Cancel(ctx, ack.OrderID))
+
+	_, err = b.PlaceOpen(ctx, broker.OpenOrder{Symbol: "USD_JPY", Side: broker.SideBuy, Type: broker.OrderLimit, Size: d("100")})
+	assert.ErrorContains(t, err, "needs a price")
+}

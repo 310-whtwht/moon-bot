@@ -100,6 +100,44 @@ VALUES (?, 'e2e', ?, 'paper', ?, 'USD_JPY', '1h', 100, TRUE)`, deployID, strateg
 	assert.Equal(t, versionID, pos.StrategyVersionID)
 	assert.Equal(t, time.UTC, pos.OpenedAt.Location())
 
+	// A limit entry waiting for its fill: listed as working, counted as a
+	// position slot, and gone from both once it is cancelled.
+	working := Order{ClientOrderID: "e2e-limit-1", DeploymentID: deployID, Broker: "paper", AccountID: account,
+		StrategyID: strategyID, StrategyVersionID: versionID, Symbol: "USD_JPY", Side: broker.SideBuy, SettleType: "open", Units: d("100")}
+	created, err := store.CreateOrder(ctx, working)
+	require.NoError(t, err)
+	require.True(t, created)
+	before, _, err := store.Exposure(ctx, "paper", account, t0, t0)
+	require.NoError(t, err)
+	require.NoError(t, store.MarkOrderWorking(ctx, working.ClientOrderID, "po-123", d("150.000"), d("149.000")))
+	list, err := store.WorkingOrders(ctx, deployID)
+	require.NoError(t, err)
+	assert.Equal(t, []WorkingOrder{{ClientOrderID: "e2e-limit-1", BrokerOrderID: "po-123"}}, list)
+	during, _, err := store.Exposure(ctx, "paper", account, t0, t0)
+	require.NoError(t, err)
+	assert.Equal(t, before.OpenPositions+1, during.OpenPositions)
+	require.NoError(t, store.MarkOrderCancelled(ctx, working.ClientOrderID, "not filled"))
+	list, err = store.WorkingOrders(ctx, deployID)
+	require.NoError(t, err)
+	assert.Empty(t, list)
+	after, _, err := store.Exposure(ctx, "paper", account, t0, t0)
+	require.NoError(t, err)
+	assert.Equal(t, before.OpenPositions, after.OpenPositions)
+	exec(`DELETE FROM orders WHERE client_order_id = ?`, working.ClientOrderID) // keep the checks below to the trader's own orders
+
+	// The entry settings of a deployment round-trip.
+	exec(`UPDATE deployments SET entry_order = 'limit', limit_wait_seconds = 45, limit_fallback = 'market', max_spread = 0.02 WHERE id = ?`, deployID)
+	deployments, err = store.Deployments(ctx)
+	require.NoError(t, err)
+	for _, dp := range deployments {
+		if dp.ID == deployID {
+			assert.Equal(t, EntryLimit, dp.EntryOrder)
+			assert.Equal(t, 45*time.Second, dp.LimitWait)
+			assert.Equal(t, FallbackMarket, dp.LimitFallback)
+			assert.Equal(t, "0.02", dp.MaxSpread.String())
+		}
+	}
+
 	// A bar decision is one row per bar: recording it again replaces it.
 	decision := BarDecision{DeploymentID: deployID, BarTime: t0, Close: d("150.001"), Action: "HOLD", Detail: "first", DecidedAt: t0.Add(time.Hour)}
 	require.NoError(t, store.RecordBar(ctx, decision))
@@ -124,7 +162,7 @@ VALUES (?, 'e2e', ?, 'paper', ?, 'USD_JPY', '1h', 100, TRUE)`, deployID, strateg
 	assert.Empty(t, pos.StopOrderID)
 
 	// The same decision cannot be recorded twice.
-	created, err := store.CreateOrder(ctx, Order{ClientOrderID: fmt.Sprintf("%s-%d-open", deploymentKey(deployID), t0.Add(10*time.Hour).Unix()), Broker: "paper",
+	created, err = store.CreateOrder(ctx, Order{ClientOrderID: fmt.Sprintf("%s-%d-open", deploymentKey(deployID), t0.Add(10*time.Hour).Unix()), Broker: "paper",
 		AccountID: account, Symbol: "USD_JPY", Side: broker.SideBuy, SettleType: "open", Units: d("100")})
 	require.NoError(t, err)
 	assert.False(t, created)

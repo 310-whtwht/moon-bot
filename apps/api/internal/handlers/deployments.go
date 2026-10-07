@@ -93,6 +93,51 @@ func (h *BotHandler) tradable(ctx context.Context, symbol string) (tradable, boo
 	return tradable{}, false, nil
 }
 
+// entryRequest is how a deployment sends its entries, as the UI submits it.
+type entryRequest struct {
+	Order       string   `json:"entry_order"`
+	WaitSeconds *int     `json:"limit_wait_seconds"`
+	Fallback    string   `json:"limit_fallback"`
+	MaxSpread   *float64 `json:"max_spread"`
+}
+
+const (
+	minLimitWait = 5
+	maxLimitWait = 300
+)
+
+// settings validates the request and fills in the defaults.
+func (e entryRequest) settings() (database.EntrySettings, error) {
+	out := database.EntrySettings{Order: e.Order, Fallback: e.Fallback, WaitSeconds: 30}
+	if out.Order == "" {
+		out.Order = "market"
+	}
+	if out.Fallback == "" {
+		out.Fallback = "skip"
+	}
+	if out.Order != "market" && out.Order != "limit" {
+		return out, errors.New("発注方法は market か limit で指定してください")
+	}
+	if out.Fallback != "skip" && out.Fallback != "market" {
+		return out, errors.New("指値が約定しなかったときの動作は skip か market で指定してください")
+	}
+	if e.WaitSeconds != nil {
+		out.WaitSeconds = *e.WaitSeconds
+	}
+	if out.WaitSeconds < minLimitWait || out.WaitSeconds > maxLimitWait {
+		return out, fmt.Errorf("指値の待ち時間は %d〜%d 秒で指定してください", minLimitWait, maxLimitWait)
+	}
+	if e.MaxSpread != nil {
+		if *e.MaxSpread < 0 || math.IsNaN(*e.MaxSpread) {
+			return out, errors.New("スプレッドの上限は 0 以上で指定してください")
+		}
+		if *e.MaxSpread > 0 { // 0 means no limit
+			out.MaxSpread = e.MaxSpread
+		}
+	}
+	return out, nil
+}
+
 // GetInstruments lists the instruments a deployment may trade.
 func (h *BotHandler) GetInstruments(c *gin.Context) {
 	list, err := h.instruments.list(c.Request.Context())
@@ -113,9 +158,15 @@ func (h *BotHandler) CreateDeployment(c *gin.Context) {
 		Symbol     string  `json:"symbol"`
 		Timeframe  string  `json:"timeframe"`
 		Units      float64 `json:"units"`
+		entryRequest
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "リクエストの形式が正しくありません"})
+		return
+	}
+	entry, err := req.entryRequest.settings()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -150,7 +201,7 @@ func (h *BotHandler) CreateDeployment(c *gin.Context) {
 
 	id, err := h.repo.CreateDeployment(ctx, database.NewDeployment{
 		Name: req.Name, StrategyID: req.StrategyID, Broker: "paper", AccountID: "default",
-		Symbol: req.Symbol, Timeframe: req.Timeframe, Units: req.Units,
+		Symbol: req.Symbol, Timeframe: req.Timeframe, Units: req.Units, Entry: entry,
 	})
 	if errors.Is(err, database.ErrDeploymentTaken) {
 		c.JSON(http.StatusConflict, gin.H{"error": "この銘柄の割り当ては既にあります（1口座につき1銘柄1つ）"})
@@ -163,7 +214,7 @@ func (h *BotHandler) CreateDeployment(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{"id": id}})
 }
 
-// UpdateDeployment changes a deployment's name, size or enabled state.
+// UpdateDeployment changes a deployment's name, size, enabled state or entry settings.
 // Disabling does not close an open position: the bot keeps managing its exit
 // and stop-loss. A new size applies from the next entry.
 func (h *BotHandler) UpdateDeployment(c *gin.Context) {
@@ -173,10 +224,22 @@ func (h *BotHandler) UpdateDeployment(c *gin.Context) {
 		Name    *string  `json:"name"`
 		Units   *float64 `json:"units"`
 		Enabled *bool    `json:"enabled"`
+		// Entry settings are replaced together, when entry_order is given.
+		entryRequest
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || (req.Name == nil && req.Units == nil && req.Enabled == nil) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name・units・enabled のいずれかを指定してください"})
+	if err := c.ShouldBindJSON(&req); err != nil ||
+		(req.Name == nil && req.Units == nil && req.Enabled == nil && req.entryRequest.Order == "") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name・units・enabled・entry_order のいずれかを指定してください"})
 		return
+	}
+	var entry *database.EntrySettings
+	if req.entryRequest.Order != "" {
+		settings, err := req.entryRequest.settings()
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		entry = &settings
 	}
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
@@ -207,7 +270,7 @@ func (h *BotHandler) UpdateDeployment(c *gin.Context) {
 		}
 	}
 
-	found, err := h.repo.UpdateDeployment(ctx, id, database.DeploymentPatch{Name: req.Name, Units: req.Units, Enabled: req.Enabled})
+	found, err := h.repo.UpdateDeployment(ctx, id, database.DeploymentPatch{Name: req.Name, Units: req.Units, Enabled: req.Enabled, Entry: entry})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "割り当てを更新できませんでした"})
 		return
@@ -223,7 +286,7 @@ func (h *BotHandler) UpdateDeployment(c *gin.Context) {
 func (h *BotHandler) DeleteDeployment(c *gin.Context) {
 	found, err := h.repo.DeleteDeployment(c.Request.Context(), c.Param("id"))
 	if errors.Is(err, database.ErrDeploymentInUse) {
-		c.JSON(http.StatusConflict, gin.H{"error": "建玉を保有中のため削除できません。無効にして、決済されてから削除してください"})
+		c.JSON(http.StatusConflict, gin.H{"error": "建玉を保有中、または指値が待機中のため削除できません。無効にして、決済（または取消）されてから削除してください"})
 		return
 	}
 	if err != nil {
