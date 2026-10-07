@@ -108,13 +108,19 @@ type Deployment struct {
 	Timeframe     string  `json:"timeframe"`
 	Units         float64 `json:"units"`
 	Enabled       bool    `json:"enabled"`
+	// How entries are sent: see migration 016.
+	EntryOrder       string   `json:"entry_order"`
+	LimitWaitSeconds int      `json:"limit_wait_seconds"`
+	LimitFallback    string   `json:"limit_fallback"`
+	MaxSpread        *float64 `json:"max_spread"`
 }
 
 func (r *BotRepository) Deployments(ctx context.Context) ([]Deployment, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT d.id, d.name, d.strategy_id, p.name,
   (SELECT v.version FROM strategy_versions v WHERE v.package_id = d.strategy_id AND v.is_active = TRUE ORDER BY v.created_at DESC LIMIT 1),
-  d.broker, d.account_id, d.symbol, d.timeframe, d.units, d.enabled
+  d.broker, d.account_id, d.symbol, d.timeframe, d.units, d.enabled,
+  d.entry_order, d.limit_wait_seconds, d.limit_fallback, d.max_spread
 FROM deployments d JOIN strategy_packages p ON p.id = d.strategy_id
 ORDER BY d.created_at, d.id`)
 	if err != nil {
@@ -126,7 +132,8 @@ ORDER BY d.created_at, d.id`)
 	for rows.Next() {
 		var d Deployment
 		if err := rows.Scan(&d.ID, &d.Name, &d.StrategyID, &d.StrategyName, &d.ActiveVersion,
-			&d.Broker, &d.AccountID, &d.Symbol, &d.Timeframe, &d.Units, &d.Enabled); err != nil {
+			&d.Broker, &d.AccountID, &d.Symbol, &d.Timeframe, &d.Units, &d.Enabled,
+			&d.EntryOrder, &d.LimitWaitSeconds, &d.LimitFallback, &d.MaxSpread); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -305,7 +312,8 @@ ORDER BY b.bar_time DESC LIMIT ?`, symbol, timeframe, limit)
 // ErrDeploymentTaken means the account already trades that symbol.
 var ErrDeploymentTaken = errors.New("a deployment for this account and symbol already exists")
 
-// ErrDeploymentInUse means the deployment still has an open position.
+// ErrDeploymentInUse means the deployment still has an open position or a
+// limit entry waiting for its fill.
 var ErrDeploymentInUse = errors.New("the deployment has an open position")
 
 // NewDeployment is what a deployment is created from. It starts disabled.
@@ -317,6 +325,15 @@ type NewDeployment struct {
 	Symbol     string
 	Timeframe  string
 	Units      float64
+	Entry      EntrySettings
+}
+
+// EntrySettings is how a deployment sends its entries (migration 016).
+type EntrySettings struct {
+	Order       string   // market or limit
+	WaitSeconds int      // how long a limit entry may wait
+	Fallback    string   // skip or market
+	MaxSpread   *float64 // nil = no limit
 }
 
 // StrategyExists reports whether a strategy package exists.
@@ -339,9 +356,11 @@ func (r *BotRepository) CreateDeployment(ctx context.Context, d NewDeployment) (
 	}
 	id := uuid.NewString()
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO deployments (id, name, strategy_id, broker, account_id, symbol, timeframe, units, enabled)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, FALSE)`,
-		id, d.Name, d.StrategyID, d.Broker, d.AccountID, d.Symbol, d.Timeframe, d.Units)
+INSERT INTO deployments (id, name, strategy_id, broker, account_id, symbol, timeframe, units, enabled,
+  entry_order, limit_wait_seconds, limit_fallback, max_spread)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?)`,
+		id, d.Name, d.StrategyID, d.Broker, d.AccountID, d.Symbol, d.Timeframe, d.Units,
+		d.Entry.Order, d.Entry.WaitSeconds, d.Entry.Fallback, d.Entry.MaxSpread)
 	return id, err
 }
 
@@ -352,6 +371,8 @@ type DeploymentPatch struct {
 	Name    *string
 	Units   *float64
 	Enabled *bool
+	// Entry replaces all entry settings at once when set.
+	Entry *EntrySettings
 }
 
 // UpdateDeployment returns false when the deployment does not exist.
@@ -363,10 +384,20 @@ func (r *BotRepository) UpdateDeployment(ctx context.Context, id string, p Deplo
 	if exists == 0 {
 		return false, nil
 	}
-	_, err := r.db.ExecContext(ctx, `
+	if _, err := r.db.ExecContext(ctx, `
 UPDATE deployments SET name = COALESCE(?, name), units = COALESCE(?, units), enabled = COALESCE(?, enabled)
-WHERE id = ?`, p.Name, p.Units, p.Enabled, id)
-	return true, err
+WHERE id = ?`, p.Name, p.Units, p.Enabled, id); err != nil {
+		return true, err
+	}
+	if p.Entry != nil {
+		// max_spread is set as given: NULL removes the limit.
+		if _, err := r.db.ExecContext(ctx, `
+UPDATE deployments SET entry_order = ?, limit_wait_seconds = ?, limit_fallback = ?, max_spread = ? WHERE id = ?`,
+			p.Entry.Order, p.Entry.WaitSeconds, p.Entry.Fallback, p.Entry.MaxSpread, id); err != nil {
+			return true, err
+		}
+	}
+	return true, nil
 }
 
 // DeploymentSymbol returns the symbol a deployment trades ("" when it does not exist).
@@ -388,6 +419,16 @@ func (r *BotRepository) DeleteDeployment(ctx context.Context, id string) (bool, 
 		return false, err
 	}
 	if open > 0 {
+		return false, ErrDeploymentInUse
+	}
+	// A limit entry still waiting at the broker would become a position nobody manages.
+	var working int
+	if err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM orders
+WHERE deployment_id = ? AND status = 'submitted' AND order_type = 'limit' AND error_message IS NULL`, id).Scan(&working); err != nil {
+		return false, err
+	}
+	if working > 0 {
 		return false, ErrDeploymentInUse
 	}
 	res, err := r.db.ExecContext(ctx, `DELETE FROM deployments WHERE id = ?`, id)

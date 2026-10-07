@@ -41,6 +41,7 @@ type Broker struct {
 	balance    decimal.Decimal
 	positions  map[string]broker.Position
 	executions map[string][]broker.Execution // by order ID
+	working    map[string]broker.OpenOrder   // limit orders waiting for their price, by order ID
 	seq        int64
 	subs       []chan broker.Execution
 }
@@ -64,6 +65,7 @@ func New(source broker.MarketData, opts Options) *Broker {
 		balance:    opts.InitialBalance,
 		positions:  map[string]broker.Position{},
 		executions: map[string][]broker.Execution{},
+		working:    map[string]broker.OpenOrder{},
 	}
 }
 
@@ -142,33 +144,73 @@ func (b *Broker) OpenPositions(ctx context.Context, symbol string) ([]broker.Pos
 	return out, nil
 }
 
-// PlaceOpen fills a market order immediately: buys at ASK, sells at BID.
+// PlaceOpen opens a position.
+//
+// A market order fills immediately: buys at ASK, sells at BID.
+//
+// A limit order fills when the market reaches its price: a buy when the ASK
+// is at or below the limit, a sell when the BID is at or above it. That is
+// the conservative reading of a quote-driven market: a buy resting at the
+// BID is only filled once the ASK comes down to it. Until then the order is
+// working and can be cancelled; it is checked whenever its executions are read.
 func (b *Broker) PlaceOpen(ctx context.Context, order broker.OpenOrder) (broker.OrderAck, error) {
-	if order.Type != broker.OrderMarket {
-		return broker.OrderAck{}, fmt.Errorf("paper: only market orders are supported (got %s)", order.Type)
+	if order.Type != broker.OrderMarket && order.Type != broker.OrderLimit {
+		return broker.OrderAck{}, fmt.Errorf("paper: only market and limit orders are supported (got %s)", order.Type)
 	}
 	if !order.Size.IsPositive() {
 		return broker.OrderAck{}, errors.New("paper: size must be positive")
+	}
+	if order.Type == broker.OrderLimit && (order.Price == nil || !order.Price.IsPositive()) {
+		return broker.OrderAck{}, errors.New("paper: limit order needs a price")
 	}
 	tick, err := b.quote(ctx, order.Symbol)
 	if err != nil {
 		return broker.OrderAck{}, err
 	}
-	price := tick.Ask
-	if order.Side == broker.SideSell {
-		price = tick.Bid
-	}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	now := b.opts.Now().UTC()
+	orderID := b.nextID("po")
+	price, fillable := fillPrice(order, tick)
+	if !fillable {
+		b.working[orderID] = order
+		return broker.OrderAck{OrderID: orderID, ClientOrderID: order.ClientOrderID, Status: "ORDERED", AcceptedAt: now}, nil
+	}
+	if err := b.fillOpen(orderID, order, price, now); err != nil {
+		return broker.OrderAck{}, err
+	}
+	return broker.OrderAck{OrderID: orderID, ClientOrderID: order.ClientOrderID, Status: "EXECUTED", AcceptedAt: now}, nil
+}
+
+// fillPrice returns the price an opening order fills at on this quote, and
+// whether it fills at all.
+func fillPrice(order broker.OpenOrder, tick market.Tick) (decimal.Decimal, bool) {
+	touch := tick.Ask
+	if order.Side == broker.SideSell {
+		touch = tick.Bid
+	}
+	if order.Type == broker.OrderMarket {
+		return touch, true
+	}
+	limit := *order.Price
+	if order.Side == broker.SideBuy && touch.LessThanOrEqual(limit) {
+		return limit, true
+	}
+	if order.Side == broker.SideSell && touch.GreaterThanOrEqual(limit) {
+		return limit, true
+	}
+	return decimal.Zero, false
+}
+
+// fillOpen books the position and its execution. Caller holds the lock.
+func (b *Broker) fillOpen(orderID string, order broker.OpenOrder, price decimal.Decimal, now time.Time) error {
 	required := price.Mul(order.Size).Div(b.opts.Leverage)
 	if available := b.balance.Sub(b.usedMargin()); required.GreaterThan(available) {
-		return broker.OrderAck{}, fmt.Errorf("paper: insufficient margin (need %s, have %s)", required.StringFixed(0), available.StringFixed(0))
+		return fmt.Errorf("paper: insufficient margin (need %s, have %s)", required.StringFixed(0), available.StringFixed(0))
 	}
-
-	now := b.opts.Now().UTC()
-	orderID, positionID := b.nextID("po"), b.nextID("pp")
+	positionID := b.nextID("pp")
 	fee := price.Mul(order.Size).Mul(b.opts.FeeRate)
 	b.balance = b.balance.Sub(fee)
 	b.positions[positionID] = broker.Position{
@@ -180,7 +222,7 @@ func (b *Broker) PlaceOpen(ctx context.Context, order broker.OpenOrder) (broker.
 		Symbol: order.Symbol, Side: order.Side, SettleType: "OPEN",
 		Size: order.Size, Price: price, Fee: fee, ExecutedAt: now,
 	})
-	return broker.OrderAck{OrderID: orderID, ClientOrderID: order.ClientOrderID, Status: "EXECUTED", AcceptedAt: now}, nil
+	return nil
 }
 
 // PlaceClose closes a whole position at market: longs sell at BID, shorts buy at ASK.
@@ -235,12 +277,39 @@ func (b *Broker) record(e broker.Execution) {
 	}
 }
 
-// Cancel is a no-op: market orders fill immediately, so nothing is ever pending.
+// Cancel withdraws a working limit order. Filled orders cannot be cancelled.
 func (b *Broker) Cancel(ctx context.Context, orderID string) error {
-	return fmt.Errorf("paper: order %s is not cancellable", orderID)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.working[orderID]; !ok {
+		return fmt.Errorf("paper: order %s is not working", orderID)
+	}
+	delete(b.working, orderID)
+	return nil
 }
 
+// Executions returns an order's fills. Reading a working limit order checks
+// it against the current quote first, filling it if the market got there.
 func (b *Broker) Executions(ctx context.Context, orderID string) ([]broker.Execution, error) {
+	b.mu.Lock()
+	order, working := b.working[orderID]
+	b.mu.Unlock()
+
+	if working {
+		// No quote (market closed, feed down): the order just keeps waiting.
+		if tick, err := b.quote(ctx, order.Symbol); err == nil {
+			b.mu.Lock()
+			if _, still := b.working[orderID]; still {
+				if price, ok := fillPrice(order, tick); ok {
+					delete(b.working, orderID)
+					// Without margin at fill time the order is dropped, as a broker would reject it.
+					_ = b.fillOpen(orderID, order, price, b.opts.Now().UTC())
+				}
+			}
+			b.mu.Unlock()
+		}
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]broker.Execution(nil), b.executions[orderID]...), nil

@@ -62,3 +62,37 @@ func TestTradable_CheckUnits(t *testing.T) {
 	assert.Error(t, usd.checkUnits(150), "not a multiple of the step")
 	assert.Error(t, tradable{Symbol: "TRY_JPY", MinUnits: 10000, Step: 10000}.checkUnits(100))
 }
+
+func TestEntryRequest_Settings(t *testing.T) {
+	// Nothing given: a market order, no spread limit.
+	got, err := entryRequest{}.settings()
+	require.NoError(t, err)
+	assert.Equal(t, "market", got.Order)
+	assert.Equal(t, "skip", got.Fallback)
+	assert.Equal(t, 30, got.WaitSeconds)
+	assert.Nil(t, got.MaxSpread)
+
+	wait, spread, zero := 60, 0.02, 0.0
+	got, err = entryRequest{Order: "limit", WaitSeconds: &wait, Fallback: "market", MaxSpread: &spread}.settings()
+	require.NoError(t, err)
+	assert.Equal(t, "limit", got.Order)
+	assert.Equal(t, "market", got.Fallback)
+	assert.Equal(t, 60, got.WaitSeconds)
+	assert.Equal(t, 0.02, *got.MaxSpread)
+
+	got, err = entryRequest{Order: "market", MaxSpread: &zero}.settings()
+	require.NoError(t, err)
+	assert.Nil(t, got.MaxSpread, "0 removes the limit")
+
+	tooShort, tooLong, negative := 1, 3600, -0.01
+	for _, bad := range []entryRequest{
+		{Order: "stop"},
+		{Order: "limit", Fallback: "retry"},
+		{Order: "limit", WaitSeconds: &tooShort},
+		{Order: "limit", WaitSeconds: &tooLong},
+		{Order: "market", MaxSpread: &negative},
+	} {
+		_, err := bad.settings()
+		assert.Error(t, err, "%+v", bad)
+	}
+}

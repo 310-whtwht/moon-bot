@@ -27,6 +27,29 @@ type Deployment struct {
 	Timeframe  market.Timeframe
 	Units      decimal.Decimal
 	Enabled    bool
+
+	// EntryOrder is how entries are sent: EntryMarket (default) or EntryLimit.
+	EntryOrder string
+	// LimitWait is how long a limit entry may wait for a fill before it is cancelled.
+	LimitWait time.Duration
+	// LimitFallback is what follows an unfilled limit entry: FallbackSkip or FallbackMarket.
+	LimitFallback string
+	// MaxSpread skips entries while ASK - BID is wider than this; zero means no limit.
+	MaxSpread decimal.Decimal
+}
+
+const (
+	EntryMarket = "market"
+	EntryLimit  = "limit"
+
+	FallbackSkip   = "skip"
+	FallbackMarket = "market"
+)
+
+// WorkingOrder is a limit entry that was sent and may still be at the broker.
+type WorkingOrder struct {
+	ClientOrderID string
+	BrokerOrderID string
 }
 
 // Version is a strategy version: a registered type plus resolved parameters.
@@ -100,6 +123,14 @@ type Store interface {
 	CreateOrder(ctx context.Context, o Order) (created bool, err error)
 	MarkOrderFilled(ctx context.Context, o Order, f Fill) error
 	MarkOrderRejected(ctx context.Context, clientOrderID, reason string) error
+	// MarkOrderWorking records that a limit order was accepted and is waiting
+	// for a fill, with its price and the stop planned for the position.
+	MarkOrderWorking(ctx context.Context, clientOrderID, brokerOrderID string, limit, stop decimal.Decimal) error
+	// MarkOrderCancelled records that a working order was withdrawn unfilled.
+	MarkOrderCancelled(ctx context.Context, clientOrderID, reason string) error
+	// WorkingOrders returns a deployment's limit entries that were left
+	// working (the bot stopped before they were filled or cancelled).
+	WorkingOrders(ctx context.Context, deploymentID string) ([]WorkingOrder, error)
 	// MarkOrderUnknown records that the order was sent but its outcome could
 	// not be determined; it needs a human (or reconciliation) to resolve.
 	MarkOrderUnknown(ctx context.Context, clientOrderID, reason string) error

@@ -27,7 +27,9 @@ var _ Store = (*MySQLStore)(nil)
 
 func (s *MySQLStore) Deployments(ctx context.Context) ([]Deployment, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, name, strategy_id, broker, account_id, symbol, timeframe, units, enabled FROM deployments ORDER BY id`)
+		`SELECT id, name, strategy_id, broker, account_id, symbol, timeframe, units, enabled,
+  entry_order, limit_wait_seconds, limit_fallback, max_spread
+FROM deployments ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -37,10 +39,15 @@ func (s *MySQLStore) Deployments(ctx context.Context) ([]Deployment, error) {
 	for rows.Next() {
 		var d Deployment
 		var tf string
-		if err := rows.Scan(&d.ID, &d.Name, &d.StrategyID, &d.Broker, &d.AccountID, &d.Symbol, &tf, &d.Units, &d.Enabled); err != nil {
+		var waitSeconds int
+		var maxSpread decimal.NullDecimal
+		if err := rows.Scan(&d.ID, &d.Name, &d.StrategyID, &d.Broker, &d.AccountID, &d.Symbol, &tf, &d.Units, &d.Enabled,
+			&d.EntryOrder, &waitSeconds, &d.LimitFallback, &maxSpread); err != nil {
 			return nil, err
 		}
 		d.Timeframe = market.Timeframe(tf)
+		d.LimitWait = time.Duration(waitSeconds) * time.Second
+		d.MaxSpread = maxSpread.Decimal
 		out = append(out, d)
 	}
 	return out, rows.Err()
@@ -217,6 +224,45 @@ func (s *MySQLStore) MarkOrderRejected(ctx context.Context, clientOrderID, reaso
 	return err
 }
 
+// MarkOrderWorking marks the order as an accepted limit order waiting for a fill.
+func (s *MySQLStore) MarkOrderWorking(ctx context.Context, clientOrderID, brokerOrderID string, limit, stop decimal.Decimal) error {
+	_, err := s.DB.ExecContext(ctx, `
+UPDATE orders SET status = 'submitted', order_type = 'limit', broker_order_id = ?, price = ?, stop_price = ?, updated_at = ?
+WHERE client_order_id = ?`,
+		brokerOrderID, limit.String(), stop.String(), time.Now().UTC(), clientOrderID)
+	return err
+}
+
+func (s *MySQLStore) MarkOrderCancelled(ctx context.Context, clientOrderID, reason string) error {
+	_, err := s.DB.ExecContext(ctx,
+		`UPDATE orders SET status = 'cancelled', error_message = ?, updated_at = ? WHERE client_order_id = ?`,
+		reason, time.Now().UTC(), clientOrderID)
+	return err
+}
+
+// WorkingOrders returns limit entries still marked as waiting. Orders whose
+// outcome is unknown carry an error message and are left to a human.
+func (s *MySQLStore) WorkingOrders(ctx context.Context, deploymentID string) ([]WorkingOrder, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT client_order_id, broker_order_id FROM orders
+WHERE deployment_id = ? AND status = 'submitted' AND order_type = 'limit'
+  AND broker_order_id IS NOT NULL AND error_message IS NULL`, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []WorkingOrder
+	for rows.Next() {
+		var w WorkingOrder
+		if err := rows.Scan(&w.ClientOrderID, &w.BrokerOrderID); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 // MarkOrderUnknown keeps the order as 'submitted' (sent, outcome unknown) with the reason.
 func (s *MySQLStore) MarkOrderUnknown(ctx context.Context, clientOrderID, reason string) error {
 	_, err := s.DB.ExecContext(ctx,
@@ -277,6 +323,19 @@ WHERE status = 'open' OR closed_at >= ?`,
 	if err != nil {
 		return risk.Exposure{}, risk.Exposure{}, err
 	}
+
+	// A limit entry that is waiting for its fill will become a position: it
+	// takes a slot now, so two waiting orders cannot both slip past the limit.
+	var mine, all int
+	err = s.DB.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(broker = ? AND account_id = ?), 0), COUNT(*) FROM orders
+WHERE status = 'submitted' AND order_type = 'limit' AND settle_type = 'open'
+  AND broker_order_id IS NOT NULL AND error_message IS NULL`, brokerName, accountID).Scan(&mine, &all)
+	if err != nil {
+		return risk.Exposure{}, risk.Exposure{}, err
+	}
+	account.OpenPositions += mine
+	global.OpenPositions += all
 	return account, global, nil
 }
 

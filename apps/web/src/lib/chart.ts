@@ -151,6 +151,9 @@ const RESULT_KINDS: Record<string, string> = {
   closed: '決済',
   skipped: '発注せず',
   rejected: '発注せず',
+  pending: '指値で待機',
+  cancelled: '指値を取消',
+  partial: '一部約定',
   error: 'エラー',
 };
 
@@ -173,6 +176,26 @@ const RESULT_REASONS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/max_units: /, () => '1建玉の数量上限を超えています'],
   [/margin: /, () => '証拠金が足りません'],
   [/entry blocked: /, () => 'Kill Switch で新規の発注を止めています'],
+  [
+    /spread ([\d.]+) is wider than the limit ([\d.]+)/,
+    m => `スプレッドが広すぎます（${m[1]} / 上限 ${m[2]}）`,
+  ],
+  [
+    /limit (BUY|SELL) [\d.]+ \S+ @ ([\d.]+), waiting up to (\S+)/,
+    m => `${m[1] === 'BUY' ? '買い' : '売り'} ${m[2]} で最大 ${m[3]} 待ちます`,
+  ],
+  [
+    /@ ([\d.]+): not filled within (\S+)/,
+    m => `${m[1]} に届かず、${m[2]} で取り消しました`,
+  ],
+  [
+    /@ ([\d.]+): withdrawn before it filled/,
+    m => `${m[1]} の注文を、約定前に取り下げました`,
+  ],
+  [
+    /filled ([\d.]+) of ([\d.]+)/,
+    m => `${m[2]} のうち ${m[1]} だけ約定しました`,
+  ],
   [
     /stale signal/,
     () => '足の確定から時間が経ちすぎています（bot の停止やデータの遅れ）',

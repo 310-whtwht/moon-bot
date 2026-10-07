@@ -120,7 +120,13 @@ func (m *Manager) sync(ctx context.Context) ([]*Runner, error) {
 	var active []*Runner
 	for id, r := range m.runners {
 		r.mu.Lock()
-		drop := !seen[id] || (!r.dep.Enabled && r.loaded && r.pos == nil)
+		drop := !seen[id] || (!r.dep.Enabled && r.loaded && r.pos == nil && r.working == nil)
+		if drop {
+			// A deleted deployment must not leave an entry waiting at the broker.
+			if err := r.checkWorking(ctx, true); err != nil {
+				m.Logf("%s: withdraw waiting entry: %v", r.dep.Name, err)
+			}
+		}
 		r.mu.Unlock()
 		if drop {
 			delete(m.runners, id)
@@ -244,7 +250,7 @@ func (m *Manager) applyKillSwitches(ctx context.Context, runners []*Runner) {
 
 	for _, r := range runners {
 		for _, k := range switches {
-			if k.covers(r.dep.Broker) && k.ClosePositions && r.HasPosition() {
+			if k.covers(r.dep.Broker) && k.ClosePositions && r.Busy() {
 				if err := r.ForceClose(ctx, "kill switch"); err != nil {
 					m.Logf("%s: kill switch close failed: %v", r.dep.Name, err)
 				}
@@ -290,7 +296,7 @@ func (m *Manager) housekeeping(ctx context.Context, runners int) {
 func (m *Manager) checkStopsFromREST(ctx context.Context, runners []*Runner) {
 	checked := map[string]bool{}
 	for _, r := range runners {
-		if !r.HasPosition() || checked[r.dep.Broker] {
+		if !r.Busy() || checked[r.dep.Broker] {
 			continue
 		}
 		checked[r.dep.Broker] = true

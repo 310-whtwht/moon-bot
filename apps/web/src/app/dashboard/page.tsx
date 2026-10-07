@@ -3,7 +3,7 @@
 import { Spinner } from '@/components/ui/spinner';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Activity, RefreshCw, Trash2 } from 'lucide-react';
+import { Activity, RefreshCw, Settings2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -26,6 +26,8 @@ import {
   setDeploymentEnabled,
 } from '@/lib/bot';
 import { NewDeploymentForm } from '@/components/bot/NewDeploymentForm';
+import { EditDeploymentForm } from '@/components/bot/EditDeploymentForm';
+import { describeEntry } from '@/components/bot/EntrySettingsFields';
 import { TIMEFRAMES } from '@/lib/backtest';
 
 const REFRESH_MS = 15000;
@@ -75,6 +77,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -233,60 +236,83 @@ export default function DashboardPage() {
           ) : (
             <div className="space-y-3">
               {status.deployments.map(d => (
-                <div
-                  key={d.id}
-                  className="flex items-center justify-between gap-4 p-4 border rounded-lg"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium">{d.name}</span>
-                      <Badge variant="secondary">
-                        {SCOPE_LABELS[d.broker] ?? d.broker}
-                      </Badge>
-                      {d.enabled ? (
-                        <Badge>有効</Badge>
-                      ) : (
-                        <Badge variant="outline">無効</Badge>
-                      )}
+                <div key={d.id} className="p-4 border rounded-lg">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium">{d.name}</span>
+                        <Badge variant="secondary">
+                          {SCOPE_LABELS[d.broker] ?? d.broker}
+                        </Badge>
+                        {d.enabled ? (
+                          <Badge>有効</Badge>
+                        ) : (
+                          <Badge variant="outline">無効</Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {d.symbol} / {timeframeLabel(d.timeframe)} /{' '}
+                        {d.units.toLocaleString('ja-JP')} 通貨 — 戦略:{' '}
+                        <Link
+                          href={`/strategies/${d.strategy_id}`}
+                          className="underline"
+                        >
+                          {d.strategy_name}
+                        </Link>
+                        {d.active_version
+                          ? `（バージョン ${d.active_version}）`
+                          : '（有効なバージョンなし）'}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {describeEntry(d)}
+                      </p>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {d.symbol} / {timeframeLabel(d.timeframe)} /{' '}
-                      {d.units.toLocaleString('ja-JP')} 通貨 — 戦略:{' '}
-                      <Link
-                        href={`/strategies/${d.strategy_id}`}
-                        className="underline"
+                    <div className="flex items-center gap-3 shrink-0">
+                      <Switch
+                        checked={d.enabled}
+                        disabled={pending === d.id}
+                        onCheckedChange={(checked: boolean) =>
+                          toggleDeployment(d.id, checked)
+                        }
+                        aria-label={`${d.name} を有効にする`}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() =>
+                          setEditing(editing === d.id ? null : d.id)
+                        }
+                        title="数量と発注の設定"
+                        aria-label={`${d.name} の設定`}
                       >
-                        {d.strategy_name}
-                      </Link>
-                      {d.active_version
-                        ? `（バージョン ${d.active_version}）`
-                        : '（有効なバージョンなし）'}
-                    </p>
+                        <Settings2 className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled={pending === d.id || d.enabled}
+                        onClick={() => removeDeployment(d.id, d.name)}
+                        title={
+                          d.enabled
+                            ? '削除するには先に無効にしてください'
+                            : '削除'
+                        }
+                        aria-label={`${d.name} を削除`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <Switch
-                      checked={d.enabled}
-                      disabled={pending === d.id}
-                      onCheckedChange={(checked: boolean) =>
-                        toggleDeployment(d.id, checked)
-                      }
-                      aria-label={`${d.name} を有効にする`}
+                  {editing === d.id && (
+                    <EditDeploymentForm
+                      deployment={d}
+                      onSaved={() => {
+                        setEditing(null);
+                        refresh();
+                      }}
+                      onCancel={() => setEditing(null)}
                     />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      disabled={pending === d.id || d.enabled}
-                      onClick={() => removeDeployment(d.id, d.name)}
-                      title={
-                        d.enabled
-                          ? '削除するには先に無効にしてください'
-                          : '削除'
-                      }
-                      aria-label={`${d.name} を削除`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
+                  )}
                 </div>
               ))}
             </div>

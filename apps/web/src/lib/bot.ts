@@ -30,7 +30,32 @@ export interface Deployment {
   timeframe: string;
   units: number;
   enabled: boolean;
+  entry_order: EntryOrder;
+  limit_wait_seconds: number;
+  limit_fallback: LimitFallback;
+  /** Entries are skipped while ASK - BID is wider than this; null = no limit. */
+  max_spread: number | null;
 }
+
+/** market: take the quote now. limit: rest at the near side and wait. */
+export type EntryOrder = 'market' | 'limit';
+/** What follows a limit entry that was not filled in time. */
+export type LimitFallback = 'skip' | 'market';
+
+/** How a deployment sends its entries. */
+export interface EntrySettings {
+  entry_order: EntryOrder;
+  limit_wait_seconds: number;
+  limit_fallback: LimitFallback;
+  max_spread: number | null;
+}
+
+export const DEFAULT_ENTRY: EntrySettings = {
+  entry_order: 'market',
+  limit_wait_seconds: 30,
+  limit_fallback: 'skip',
+  max_spread: null,
+};
 
 export interface Position {
   id: string;
@@ -129,12 +154,27 @@ export async function fetchInstruments(): Promise<Instrument[]> {
   );
 }
 
-export interface NewDeployment {
+export interface NewDeployment extends EntrySettings {
   name: string;
   strategy_id: string;
   symbol: string;
   timeframe: string;
   units: number;
+}
+
+/** Changes a deployment's size and how it sends entries. Applies from the next entry. */
+export async function updateDeployment(
+  id: string,
+  patch: { units: number } & EntrySettings
+): Promise<void> {
+  await parse(
+    await fetch(`/api/v1/deployments/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      // The API reads max_spread 0 as "no limit".
+      body: JSON.stringify({ ...patch, max_spread: patch.max_spread ?? 0 }),
+    })
+  );
 }
 
 /** Creates a deployment on the paper account. It starts disabled. */
