@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,6 +96,8 @@ type Runner struct {
 	loaded  bool
 	// pendingExit is the reason of an exit that could not be executed yet
 	// (market closed, broker error). It is retried on every poll and tick.
+	// outcomes collects what happened while acting on the current bar's signal.
+	outcomes []string
 	// strategyErr is the last strategy failure reported, so it is reported once.
 	strategyErr string
 	pendingExit string
@@ -157,7 +160,8 @@ func (r *Runner) Poll(ctx context.Context) error {
 	for i, bar := range bars {
 		sig := r.strat.OnBar(toStrategyBar(bar), r.view())
 		r.lastBar = bar.OpenTime
-		r.logBar(ctx, bar, sig)
+		decision := r.logBar(ctx, bar, sig)
+		r.outcomes = nil
 		if f, ok := r.strat.(strategy.Failer); ok && f.Err() != nil {
 			// The strategy has stopped deciding (it only holds from here on):
 			// say so once, loudly. An open position keeps its stop-loss.
@@ -174,10 +178,16 @@ func (r *Runner) Poll(ctx context.Context) error {
 		if i != len(bars)-1 || age > r.cfg.MaxSignalAge {
 			r.logf("%s: skipped stale %s signal from bar %s (closed %s ago)",
 				r.dep.Name, sig.Action, bar.OpenTime.Format(time.RFC3339), age.Round(time.Second))
+			r.note("skipped", fmt.Sprintf("stale signal (bar closed %s ago)", age.Round(time.Second)))
+			r.recordResult(ctx, decision)
 			continue
 		}
-		if err := r.act(ctx, sig, bar); err != nil {
+		err := r.act(ctx, sig, bar)
+		if err != nil {
 			r.notify("error", err.Error())
+		}
+		r.recordResult(ctx, decision)
+		if err != nil {
 			return err
 		}
 	}
@@ -187,7 +197,7 @@ func (r *Runner) Poll(ctx context.Context) error {
 // logBar records every bar the strategy has judged, including the ones with
 // no signal, so the log and the UI show that bars are being processed and why
 // nothing was traded.
-func (r *Runner) logBar(ctx context.Context, bar market.Bar, sig strategy.Signal) {
+func (r *Runner) logBar(ctx context.Context, bar market.Bar, sig strategy.Signal) BarDecision {
 	d := BarDecision{
 		DeploymentID: r.dep.ID, BarTime: bar.OpenTime, Close: bar.Close,
 		Action: string(sig.Action), DecidedAt: r.now(),
@@ -205,12 +215,38 @@ func (r *Runner) logBar(ctx context.Context, bar market.Bar, sig strategy.Signal
 	r.logf("%s: bar %s close %s -> %s (%s)%s",
 		r.dep.Name, bar.OpenTime.Format(time.RFC3339), bar.Close.String(), sig.Action, holding, seen)
 
+	r.recordBar(ctx, d)
+	return d
+}
+
+func (r *Runner) recordBar(ctx context.Context, d BarDecision) {
 	if rec, ok := r.store.(BarRecorder); ok {
 		if err := rec.RecordBar(ctx, d); err != nil {
 			r.logf("%s: record bar decision: %v", r.dep.Name, err)
 		}
 	}
 }
+
+// recordResult adds what became of a bar's signal to its decision: every
+// notice raised while acting on it (opened, skipped, rejected, ...).
+func (r *Runner) recordResult(ctx context.Context, d BarDecision) {
+	if len(r.outcomes) == 0 {
+		return
+	}
+	d.Result = strings.Join(r.outcomes, " / ")
+	if len(d.Result) > maxResultLen {
+		d.Result = d.Result[:maxResultLen]
+	}
+	r.outcomes = nil
+	r.recordBar(ctx, d)
+}
+
+// note keeps one line of what happened to the signal being acted on.
+func (r *Runner) note(kind, msg string) {
+	r.outcomes = append(r.outcomes, kind+": "+msg)
+}
+
+const maxResultLen = 600
 
 // retryPendingExit re-attempts an exit that failed or was deferred. The order
 // ID changes every minute, so a rejected attempt does not block the next one.
@@ -404,6 +440,7 @@ func (r *Runner) clientOrderID(tag, action string) string {
 func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDistance float64, reason string) error {
 	if !r.dep.Enabled {
 		r.logf("%s: entry skipped (deployment disabled)", r.dep.Name)
+		r.note("skipped", "deployment disabled")
 		return nil
 	}
 	if ok, why := r.guard.EntriesAllowed(ctx, r.dep.Broker); !ok {
@@ -426,6 +463,7 @@ func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDis
 	}
 	if tick.Status != market.StatusOpen {
 		r.logf("%s: entry skipped (market %s)", r.dep.Name, tick.Status)
+		r.note("skipped", fmt.Sprintf("market %s", tick.Status))
 		return nil
 	}
 	price := tick.Ask
@@ -445,6 +483,7 @@ func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDis
 	}
 	if !created {
 		r.logf("%s: order %s already exists, not sending again", r.dep.Name, order.ClientOrderID)
+		r.note("skipped", "this decision was already acted on")
 		return nil
 	}
 
@@ -685,6 +724,7 @@ func (r *Runner) close(ctx context.Context, tag, reason string) error {
 	}
 	if !created {
 		r.logf("%s: order %s already exists, not sending again", r.dep.Name, order.ClientOrderID)
+		r.note("skipped", "this decision was already acted on")
 		return nil
 	}
 
@@ -794,6 +834,7 @@ func (r *Runner) roundToTick(ctx context.Context, price decimal.Decimal) decimal
 }
 
 func (r *Runner) notify(kind, msg string) {
+	r.note(kind, msg)
 	r.logf("%s: %s: %s", r.dep.Name, kind, msg)
 	r.notifier.Notify(Event{Kind: kind, Deployment: r.dep, Message: msg, At: r.now()})
 }

@@ -348,10 +348,10 @@ func (s *MySQLStore) ClosedSummary(ctx context.Context, from, to time.Time) (int
 // RecordBar keeps what the strategy decided on a bar (one row per bar).
 func (s *MySQLStore) RecordBar(ctx context.Context, d BarDecision) error {
 	_, err := s.DB.ExecContext(ctx, `
-INSERT INTO bar_decisions (deployment_id, bar_time, close, action, holding, detail, decided_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO bar_decisions (deployment_id, bar_time, close, action, holding, detail, result, decided_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE close = VALUES(close), action = VALUES(action), holding = VALUES(holding),
-  detail = VALUES(detail), decided_at = VALUES(decided_at)`,
-		d.DeploymentID, d.BarTime.UTC(), d.Close, d.Action, string(d.Holding), d.Detail, d.DecidedAt.UTC())
+  detail = VALUES(detail), result = VALUES(result), decided_at = VALUES(decided_at)`,
+		d.DeploymentID, d.BarTime.UTC(), d.Close, d.Action, string(d.Holding), d.Detail, d.Result, d.DecidedAt.UTC())
 	return err
 }

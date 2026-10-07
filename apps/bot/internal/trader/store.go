@@ -124,7 +124,10 @@ type BarDecision struct {
 	Action       string      // strategy.Action
 	Holding      broker.Side // side held when the bar was judged, or ""
 	Detail       string      // indicator values the strategy saw
-	DecidedAt    time.Time
+	// Result is what became of the signal: "opened: ...", "skipped: ...",
+	// "rejected: ...". Empty when there was no signal.
+	Result    string
+	DecidedAt time.Time
 }
 
 // BarRecorder is optionally implemented by a Store to keep bar decisions for

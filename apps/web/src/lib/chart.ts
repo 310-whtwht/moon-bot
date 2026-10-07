@@ -36,6 +36,11 @@ export interface BarDecision {
   holding: '' | 'BUY' | 'SELL';
   /** Indicator values the strategy saw, e.g. "fast=1 slow=2 diff=-1 atr=0.1". */
   detail: string;
+  /**
+   * What became of the signal: "kind: message" parts joined by " / "
+   * (opened, closed, skipped, rejected, error). Empty when there was none.
+   */
+  result: string;
   decided_at: string;
 }
 
@@ -139,4 +144,64 @@ export function withQuote(
     ...bars,
     { time: bucket, open: bid, high: bid, low: bid, close: bid },
   ];
+}
+
+const RESULT_KINDS: Record<string, string> = {
+  opened: '新規約定',
+  closed: '決済',
+  skipped: '発注せず',
+  rejected: '発注せず',
+  error: 'エラー',
+};
+
+/** Why an order was held back, for the reasons the bot is known to give. */
+const RESULT_REASONS: [RegExp, (m: RegExpMatchArray) => string][] = [
+  [
+    /daily_loss: lost (\d+) JPY today, limit (\d+)/,
+    m =>
+      `1日の損失上限に達しています（今日の損失 ${m[1]} 円 / 上限 ${m[2]} 円）`,
+  ],
+  [
+    /weekly_loss: lost (\d+) JPY this week, limit (\d+)/,
+    m =>
+      `1週間の損失上限に達しています（今週の損失 ${m[1]} 円 / 上限 ${m[2]} 円）`,
+  ],
+  [
+    /max_open_positions: (\d+) open, limit (\d+)/,
+    m => `同時に持てる建玉の上限です（保有 ${m[1]} 件 / 上限 ${m[2]} 件）`,
+  ],
+  [/max_units: /, () => '1建玉の数量上限を超えています'],
+  [/margin: /, () => '証拠金が足りません'],
+  [/entry blocked: /, () => 'Kill Switch で新規の発注を止めています'],
+  [
+    /stale signal/,
+    () => '足の確定から時間が経ちすぎています（bot の停止やデータの遅れ）',
+  ],
+  [/market /, () => '市場が閉まっています'],
+  [/deployment disabled/, () => '割り当てが無効です'],
+  [/already acted on/, () => 'この判断は処理済みです'],
+  [/hard cap/, () => '本番口座の数量の安全上限を超えています'],
+  [/valid stop-loss/, () => '損切りの指定がありません'],
+];
+
+/** Turns a decision's result into lines a person can read; raw text is kept as a fallback. */
+export function describeResult(result: string): string[] {
+  if (!result) {
+    return [];
+  }
+  return result.split(' / ').map(part => {
+    const [kind = '', ...rest] = part.split(': ');
+    const message = rest.join(': ');
+    const label = RESULT_KINDS[kind] ?? kind;
+    if (kind === 'opened' || kind === 'closed') {
+      return `${label}（${message}）`;
+    }
+    for (const [pattern, describe] of RESULT_REASONS) {
+      const match = message.match(pattern);
+      if (match) {
+        return `${label}: ${describe(match)}`;
+      }
+    }
+    return `${label}: ${message}`;
+  });
 }

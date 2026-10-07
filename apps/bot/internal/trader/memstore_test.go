@@ -273,6 +273,13 @@ func (o *memOps) SetKillSwitch(_ context.Context, k KillSwitch) error {
 func (m *memStore) RecordBar(_ context.Context, d BarDecision) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// One row per deployment and bar, like the table's unique key.
+	for i := range m.bars {
+		if m.bars[i].DeploymentID == d.DeploymentID && m.bars[i].BarTime.Equal(d.BarTime) {
+			m.bars[i] = d
+			return nil
+		}
+	}
 	m.bars = append(m.bars, d)
 	return nil
 }
