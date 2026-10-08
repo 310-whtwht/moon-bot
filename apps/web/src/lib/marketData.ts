@@ -10,6 +10,10 @@ export interface Coverage {
   ask_bars: number;
   first: string;
   last: string;
+  /** Whether a backtest can run on it. */
+  usable: boolean;
+  /** Why not, when it cannot (BID/ASK incomplete, or the yen pair is missing). */
+  missing: string;
 }
 
 export type ImportStatus =
@@ -72,11 +76,13 @@ export function sortCoverage(coverage: Coverage[]): Coverage[] {
 }
 
 /**
- * A backtest needs both BID and ASK bars. They are downloaded one after the
- * other, so a count that differs means the download is still going or failed.
+ * The pair that turns a symbol's quote currency into yen ("USD_JPY" for
+ * EUR_USD), or null when the symbol is quoted in yen already.
  */
-export const usable = (c: Coverage) =>
-  c.bid_bars > 0 && c.ask_bars === c.bid_bars;
+export function conversionSymbol(symbol: string): string | null {
+  const quote = symbol.split('_')[1];
+  return quote && quote !== 'JPY' ? `${quote}_JPY` : null;
+}
 
 async function parse<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({}));

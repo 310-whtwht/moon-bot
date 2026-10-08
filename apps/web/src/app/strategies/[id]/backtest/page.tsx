@@ -18,10 +18,10 @@ import Link from 'next/link';
 import { type StrategyVersion, formatParams } from '@/lib/backtest';
 import {
   type Coverage,
+  conversionSymbol,
   fetchMarketData,
   sortCoverage,
   timeframeLabel,
-  usable,
 } from '@/lib/marketData';
 
 interface Strategy {
@@ -72,7 +72,9 @@ export default function BacktestPage() {
         fetch(`/api/v1/strategies/${strategyId}/versions`),
         fetchMarketData().catch(() => null),
       ]);
-      const available = sortCoverage(market?.coverage ?? []).filter(usable);
+      const available = sortCoverage(market?.coverage ?? []).filter(
+        c => c.usable
+      );
       setCoverage(available);
       if (!s.ok) {
         throw new Error('戦略を取得できませんでした');
@@ -276,6 +278,8 @@ export default function BacktestPage() {
                   <p className="text-xs text-muted-foreground">
                     {chosenData &&
                       `データは ${chosenData.first.slice(0, 10)} 〜 ${chosenData.last.slice(0, 10)}（${chosenData.bid_bars.toLocaleString('ja-JP')} 本）。`}
+                    {conversionSymbol(form.symbol) &&
+                      `損益は、${conversionSymbol(form.symbol)?.replace('_', '/')} の同じ足のレートで円に換算します。`}
                     選べるのは、取り込み済みの銘柄・足です。ほかを使うときは{' '}
                     <Link href="/universe" className="underline">
                       銘柄・データ

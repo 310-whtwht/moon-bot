@@ -27,6 +27,9 @@ type Coverage struct {
 	AskBars   int       `json:"ask_bars"`
 	First     time.Time `json:"first"`
 	Last      time.Time `json:"last"`
+	// Usable says whether a backtest can run on it; Missing explains why not.
+	Usable  bool   `json:"usable"`
+	Missing string `json:"missing"`
 }
 
 // Coverage lists the stored history per symbol and timeframe.

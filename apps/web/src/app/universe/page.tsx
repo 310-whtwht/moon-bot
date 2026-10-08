@@ -29,8 +29,8 @@ import {
   fetchMarketData,
   requestImport,
   sortCoverage,
+  conversionSymbol,
   timeframeLabel,
-  usable,
 } from '@/lib/marketData';
 
 const BUSY_REFRESH_MS = 4000;
@@ -127,6 +127,7 @@ export default function MarketDataPage() {
   const chosenSymbol = symbol || data.instruments[0]?.symbol || '';
   const chosenFrom = from || data.history_start;
   const coverage = sortCoverage(data.coverage);
+  const conversion = conversionSymbol(chosenSymbol);
   const existing = coverage.find(
     c => c.symbol === chosenSymbol && c.timeframe === timeframe
   );
@@ -201,6 +202,7 @@ export default function MarketDataPage() {
                     {data.instruments.map(i => (
                       <option key={i.symbol} value={i.symbol}>
                         {pair(i.symbol)}
+                        {i.quote !== 'JPY' && '（円建て以外）'}
                       </option>
                     ))}
                   </select>
@@ -242,8 +244,9 @@ export default function MarketDataPage() {
                 {existing
                   ? `${pair(chosenSymbol)} の${timeframeLabel(timeframe)}は ${day(existing.first)} 〜 ${day(existing.last)} のデータがあります。取り込むと、その続きから最新までを足します（開始日より前のデータは増えません）。`
                   : `${pair(chosenSymbol)} の${timeframeLabel(timeframe)}は、まだデータがありません。`}{' '}
-                選べるのは円建ての通貨ペアです。GMOコインのデータは{' '}
-                {day(data.history_start)}{' '}
+                {conversion &&
+                  `${pair(chosenSymbol)} は円建てではないので、損益を円に直すために ${pair(conversion)} の同じ足も一緒に取り込みます。`}{' '}
+                GMOコインのデータは {day(data.history_start)}{' '}
                 からあります。足が短いほど本数が多く、時間がかかります。
               </p>
               {formError && (
@@ -344,7 +347,7 @@ export default function MarketDataPage() {
         <CardHeader>
           <CardTitle>保存済みのデータ</CardTitle>
           <CardDescription>
-            バックテストで選べるのは、売値（BID）と買値（ASK）が揃っている銘柄・足です
+            バックテストで選べるのは、売値（BID）と買値（ASK）が揃っている銘柄・足です。円建て以外の銘柄は、円換算に使うペアの同じ足も必要です。売買の割り当てに使えるのは、円建ての銘柄だけです
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -382,12 +385,10 @@ export default function MarketDataPage() {
                         {c.ask_bars.toLocaleString('ja-JP')}
                       </td>
                       <td className="py-2">
-                        {usable(c) ? (
+                        {c.usable ? (
                           <Badge>使えます</Badge>
                         ) : (
-                          <Badge variant="outline">
-                            BID と ASK が揃っていません
-                          </Badge>
+                          <Badge variant="outline">{c.missing}</Badge>
                         )}
                       </td>
                     </tr>

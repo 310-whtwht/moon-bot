@@ -79,6 +79,49 @@ func TestRun_LongEntryAtAskExitAtBidWithFees(t *testing.T) {
 	assert.Equal(t, strategy.Long, s.seen[1].Side)
 }
 
+func TestRun_ConvertsProfitFeesAndMarginToYen(t *testing.T) {
+	// The same trade as above on a pair quoted in dollars, with the dollar
+	// at 150 yen on entry and 152 yen on exit.
+	script := func() *scripted {
+		return &scripted{signals: map[int]strategy.Signal{
+			0: {Action: strategy.EnterLong, StopLoss: 99},
+			2: {Action: strategy.Exit},
+		}}
+	}
+	candles := []Candle{
+		candle(0, 100, 100.5, 99.5, 100),
+		candle(1, 100.2, 101, 100, 100.8),
+		candle(2, 100.8, 101.5, 100.5, 101.2),
+		candle(3, 101, 101.2, 100.9, 101.1),
+	}
+	for i, rate := range []float64{150, 150, 151, 152} {
+		candles[i].QuoteRate = rate
+	}
+	c := cfg(script())
+	c.InitialBalance = 10_000_000 // margin is in yen too: 1000 units at 100 dollars is 15 million yen of exposure
+
+	res, err := Run(candles, c)
+	require.NoError(t, err)
+	require.Len(t, res.Trades, 1)
+	tr := res.Trades[0]
+
+	assert.InDelta(t, 100.21, tr.EntryPrice, 1e-9, "prices stay in the quote currency")
+	assert.InDelta(t, 101.0, tr.ExitPrice, 1e-9)
+	entryFee := 100.21 * 1000 * DefaultFeeRate * 150
+	exitFee := 101.0 * 1000 * DefaultFeeRate * 152
+	assert.InDelta(t, entryFee+exitFee, tr.Fees, 1e-6)
+	assert.InDelta(t, 790*152-entryFee-exitFee, tr.PnL, 1e-6, "0.79 dollars a unit, worth 152 yen each at the exit")
+	assert.InDelta(t, 10_000_000+tr.PnL, res.Metrics.FinalEquity, 1e-6)
+
+	// The margin check counts yen: 1000 units need 100.21*1000*150/25 = 601,260 yen.
+	c = cfg(script())
+	c.InitialBalance = 600_000
+	res, err = Run(candles, c)
+	require.NoError(t, err)
+	assert.Empty(t, res.Trades)
+	assert.Equal(t, 1, res.SkippedEntries)
+}
+
 func TestRun_ShortStopHitIntrabar(t *testing.T) {
 	s := &scripted{signals: map[int]strategy.Signal{0: {Action: strategy.EnterShort, StopLoss: 101}}}
 	candles := []Candle{

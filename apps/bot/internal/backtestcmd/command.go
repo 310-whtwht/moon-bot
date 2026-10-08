@@ -203,8 +203,13 @@ func printTable(out io.Writer, def strategy.Definition, opts options, candles []
 	fmt.Fprintln(w, "params\ttrades\twin%\tPF\tnet pips\tnet JPY\treturn%\tCAGR%\tmaxDD%\tSharpe\tSQN\tfees JPY\t")
 	for _, r := range results {
 		m := r.Metrics
-		fmt.Fprintf(w, "%s\t%d\t%.1f\t%.2f\t%.1f\t%.0f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.0f\t\n",
-			formatParams(def, r.Params), m.NumTrades, m.WinRate*100, m.ProfitFactor, netPips(m.NetProfit, opts.units),
+		// Pips are only meaningful here for yen pairs (profit is kept in yen).
+		pips := "-"
+		if backtest.ConversionSymbol(opts.symbol) == "" {
+			pips = strconv.FormatFloat(netPips(m.NetProfit, opts.units), 'f', 1, 64)
+		}
+		fmt.Fprintf(w, "%s\t%d\t%.1f\t%.2f\t%s\t%.0f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.0f\t\n",
+			formatParams(def, r.Params), m.NumTrades, m.WinRate*100, m.ProfitFactor, pips,
 			m.NetProfit, m.TotalReturn*100, m.CAGR*100, m.MaxDrawdown*100, m.Sharpe, m.SQN, m.TotalFees)
 	}
 	w.Flush()
