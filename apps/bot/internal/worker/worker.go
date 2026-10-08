@@ -7,9 +7,11 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/moomoo-trading/bot/internal/config"
+	"github.com/moomoo-trading/bot/internal/imports"
 	"github.com/moomoo-trading/bot/internal/jobs"
 	"github.com/moomoo-trading/bot/internal/trader"
 	"github.com/moomoo-trading/core/backtest"
@@ -77,6 +79,23 @@ func (w *Worker) Start(ctx context.Context) error {
 		}
 	}()
 	log.Println("Worker started (backtest jobs)")
+
+	// Price-history downloads requested from the UI, one at a time and at a
+	// gentle pace: they share the broker's rate limit with live trading.
+	importer := &imports.Runner{
+		Store: &imports.MySQLStore{DB: db},
+		Source: gmofx.New(gmofx.Options{
+			PublicURL: w.config.GMO.PublicURL, PublicWSURL: w.config.GMO.PublicWSURL,
+			MinInterval: 400 * time.Millisecond,
+		}),
+		Bars: marketdata.NewMySQLBarStore(db),
+		Logf: log.Printf,
+	}
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		_ = importer.Run(runCtx)
+	}()
 
 	if w.config.Trader.Enabled {
 		if err := w.startTrader(runCtx); err != nil {
