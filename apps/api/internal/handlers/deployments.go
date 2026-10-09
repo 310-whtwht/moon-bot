@@ -23,6 +23,7 @@ type instrumentSource interface {
 // tradable is an instrument a deployment may use.
 type tradable struct {
 	Symbol   string  `json:"symbol"`
+	Quote    string  `json:"quote"` // currency the price is in, e.g. JPY
 	MinUnits float64 `json:"min_units"`
 	Step     float64 `json:"step"`
 }
@@ -37,9 +38,8 @@ type instrumentCache struct {
 	entries []tradable
 }
 
-// list returns the instruments quoted in JPY. Profit, loss and the risk limits
-// are all counted in yen, so other pairs cannot be deployed yet.
-func (c *instrumentCache) list(ctx context.Context) ([]tradable, error) {
+// all returns every instrument the broker offers.
+func (c *instrumentCache) all(ctx context.Context) ([]tradable, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.entries != nil && c.now().Sub(c.loaded) < time.Hour {
@@ -54,17 +54,32 @@ func (c *instrumentCache) list(ctx context.Context) ([]tradable, error) {
 	}
 	entries := []tradable{}
 	for _, in := range instruments {
-		if in.QuoteCurrency != "JPY" {
-			continue
-		}
 		entries = append(entries, tradable{
 			Symbol:   in.Key.Symbol,
+			Quote:    in.QuoteCurrency,
 			MinUnits: in.MinOrderSize.InexactFloat64(),
 			Step:     in.SizeStep.InexactFloat64(),
 		})
 	}
 	c.entries, c.loaded = entries, c.now()
 	return entries, nil
+}
+
+// list returns the instruments quoted in JPY: the ones a deployment may
+// trade. Live profit, loss and the risk limits are all counted in yen, so
+// other pairs cannot be deployed yet (they can be downloaded and backtested).
+func (c *instrumentCache) list(ctx context.Context) ([]tradable, error) {
+	all, err := c.all(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []tradable{}
+	for _, t := range all {
+		if t.Quote == "JPY" {
+			out = append(out, t)
+		}
+	}
+	return out, nil
 }
 
 // checkUnits validates an order size against an instrument.

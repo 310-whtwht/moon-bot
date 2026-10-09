@@ -7,7 +7,8 @@
 //   - The protective stop is checked against each bar's BID low (long) or
 //     ASK high (short); a gap through the stop fills at the open.
 //   - Fees are a rate on traded notional (GMO FX API fee: 0.002%).
-//   - One position at a time; P&L is in the quote currency (JPY pairs only).
+//   - One position at a time; P&L is in yen. For pairs quoted in another
+//     currency it is converted at each candle's QuoteRate.
 package backtest
 
 import (
@@ -28,6 +29,10 @@ type Candle struct {
 	Time time.Time
 	Bid  OHLC
 	Ask  OHLC
+	// QuoteRate is the yen value of one unit of the quote currency at this
+	// candle (about 150 for a USD-quoted pair). Zero means the pair is quoted
+	// in yen already.
+	QuoteRate float64
 }
 
 // DefaultFeeRate is the GMO Coin FX API fee (0.002% of notional per fill).
@@ -41,7 +46,7 @@ type Config struct {
 	Strategy       strategy.Definition
 	Params         strategy.Params
 	Units          float64 // position size in base currency units
-	InitialBalance float64 // in the quote currency (JPY)
+	InitialBalance float64 // in yen
 	FeeRate        float64
 	Leverage       float64
 }
@@ -153,12 +158,20 @@ func Run(candles []Candle, cfg Config) (*Result, error) {
 	}
 
 	if last := candles[len(candles)-1]; r.pos != nil {
-		r.close(last.Time, r.exitPrice(last.Bid.Close, last.Ask.Close), "end")
+		r.close(last, r.exitPrice(last.Bid.Close, last.Ask.Close), "end")
 		r.result.Equity[len(r.result.Equity)-1].Equity = r.balance
 	}
 
 	r.result.Metrics = computeMetrics(r.result, cfg.InitialBalance, r.inBars)
 	return r.result, nil
+}
+
+// yen is the yen value of one unit of the candle's quote currency.
+func (c Candle) yen() float64 {
+	if c.QuoteRate > 0 {
+		return c.QuoteRate
+	}
+	return 1
 }
 
 func (r *run) view() *strategy.Position {
@@ -180,7 +193,7 @@ func (r *run) execute(sig strategy.Signal, refClose float64, c Candle) {
 	switch sig.Action {
 	case strategy.Exit:
 		if r.pos != nil {
-			r.close(c.Time, r.exitPrice(c.Bid.Open, c.Ask.Open), "signal")
+			r.close(c, r.exitPrice(c.Bid.Open, c.Ask.Open), "signal")
 		}
 	case strategy.EnterLong, strategy.EnterShort:
 		side := strategy.Long
@@ -191,7 +204,7 @@ func (r *run) execute(sig strategy.Signal, refClose float64, c Candle) {
 			if r.pos.side == side {
 				return
 			}
-			r.close(c.Time, r.exitPrice(c.Bid.Open, c.Ask.Open), "signal")
+			r.close(c, r.exitPrice(c.Bid.Open, c.Ask.Open), "signal")
 		}
 		// Keep the stop distance the strategy chose, re-anchored at the actual fill.
 		distance := refClose - sig.StopLoss
@@ -200,11 +213,11 @@ func (r *run) execute(sig strategy.Signal, refClose float64, c Candle) {
 			distance = sig.StopLoss - refClose
 			entry, stop = c.Bid.Open, c.Ask.Open+distance
 		}
-		if r.cfg.Units*entry/r.cfg.Leverage > r.balance {
+		if r.cfg.Units*entry*c.yen()/r.cfg.Leverage > r.balance {
 			r.result.SkippedEntries++
 			return
 		}
-		fee := entry * r.cfg.Units * r.cfg.FeeRate
+		fee := entry * r.cfg.Units * r.cfg.FeeRate * c.yen()
 		r.balance -= fee
 		r.pos = &openPosition{side: side, entryTime: c.Time, entryPrice: entry, stop: stop, entryFee: fee, entryReason: sig.Reason}
 	}
@@ -217,22 +230,25 @@ func (r *run) checkStop(c Candle) {
 	switch r.pos.side {
 	case strategy.Long:
 		if c.Bid.Low <= r.pos.stop {
-			r.close(c.Time, minf(r.pos.stop, c.Bid.Open), "stop")
+			r.close(c, minf(r.pos.stop, c.Bid.Open), "stop")
 		}
 	case strategy.Short:
 		if c.Ask.High >= r.pos.stop {
-			r.close(c.Time, maxf(r.pos.stop, c.Ask.Open), "stop")
+			r.close(c, maxf(r.pos.stop, c.Ask.Open), "stop")
 		}
 	}
 }
 
-func (r *run) close(at time.Time, price float64, reason string) {
+// close settles the position at price on candle c. Profit, loss and the fee
+// are converted to yen at that candle's rate.
+func (r *run) close(c Candle, price float64, reason string) {
 	p := r.pos
-	gross := (price - p.entryPrice) * r.cfg.Units
+	at := c.Time
+	gross := (price - p.entryPrice) * r.cfg.Units * c.yen()
 	if p.side == strategy.Short {
 		gross = -gross
 	}
-	exitFee := price * r.cfg.Units * r.cfg.FeeRate
+	exitFee := price * r.cfg.Units * r.cfg.FeeRate * c.yen()
 	r.balance += gross - exitFee
 	r.result.Trades = append(r.result.Trades, Trade{
 		Side: p.side, EntryTime: p.entryTime, EntryPrice: p.entryPrice,
@@ -248,9 +264,9 @@ func (r *run) markToMarket(c Candle) float64 {
 		return r.balance
 	}
 	if r.pos.side == strategy.Long {
-		return r.balance + (c.Bid.Close-r.pos.entryPrice)*r.cfg.Units
+		return r.balance + (c.Bid.Close-r.pos.entryPrice)*r.cfg.Units*c.yen()
 	}
-	return r.balance + (r.pos.entryPrice-c.Ask.Close)*r.cfg.Units
+	return r.balance + (r.pos.entryPrice-c.Ask.Close)*r.cfg.Units*c.yen()
 }
 
 func minf(a, b float64) float64 {

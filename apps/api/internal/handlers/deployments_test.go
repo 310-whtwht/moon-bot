@@ -38,8 +38,13 @@ func TestInstrumentCache_OnlyYenPairsAndCachedForAnHour(t *testing.T) {
 
 	list, err := cache.list(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, []tradable{{Symbol: "USD_JPY", MinUnits: 100, Step: 100}, {Symbol: "TRY_JPY", MinUnits: 10000, Step: 10000}}, list,
+	assert.Equal(t, []tradable{{Symbol: "USD_JPY", Quote: "JPY", MinUnits: 100, Step: 100}, {Symbol: "TRY_JPY", Quote: "JPY", MinUnits: 10000, Step: 10000}}, list,
 		"P&L and limits are counted in yen, so only JPY-quoted pairs")
+
+	everything, err := cache.all(context.Background())
+	require.NoError(t, err)
+	require.Len(t, everything, 3, "other pairs can still be downloaded and backtested")
+	assert.Equal(t, "USD", everything[1].Quote)
 
 	now = now.Add(30 * time.Minute)
 	_, _ = cache.list(context.Background())

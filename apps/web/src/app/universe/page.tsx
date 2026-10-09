@@ -1,7 +1,14 @@
 'use client';
 
-import { Spinner } from '@/components/ui/spinner';
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  CheckCircle,
+  Download,
+  Loader2,
+  RefreshCw,
+  XCircle,
+} from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -10,235 +17,95 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
-
+import { Spinner } from '@/components/ui/spinner';
 import {
-  Plus,
-  Upload,
-  Globe,
-  Building2,
-  Coins,
-  TrendingUp,
-  Eye,
-  Trash2,
-} from 'lucide-react';
+  DATA_TIMEFRAMES,
+  type DataImport,
+  type ImportStatus,
+  type MarketData,
+  cancelImport,
+  fetchMarketData,
+  requestImport,
+  sortCoverage,
+  conversionSymbol,
+  timeframeLabel,
+} from '@/lib/marketData';
 
-interface UniverseSymbol {
-  id: string;
-  symbol: string;
-  name?: string;
-  exchange: string;
-  asset_type: string;
-  is_active: boolean;
-  data_source: string;
-  last_updated?: string;
-  created_at: string;
-  updated_at: string;
+const BUSY_REFRESH_MS = 4000;
+const IDLE_REFRESH_MS = 30000;
+
+const selectClass =
+  'h-10 w-full rounded-md border border-input bg-background px-3 text-sm';
+
+const pair = (symbol: string) => symbol.replace('_', '/');
+const day = (iso: string) =>
+  new Date(iso).toLocaleDateString('ja-JP', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  });
+const dateTime = (iso: string) =>
+  new Date(iso).toLocaleString('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+const STATUS_LABELS: Record<ImportStatus, string> = {
+  pending: '待機中',
+  running: '取り込み中',
+  completed: '完了',
+  failed: '失敗',
+  cancelled: '取消',
+};
+
+const active = (i: DataImport) =>
+  i.status === 'pending' || i.status === 'running';
+
+/** "ASK 2025-06-01" -> "買値（ASK）を 2025/6/1 まで". */
+function describeProgress(progress: string): string {
+  const [side, date] = progress.split(' ');
+  if (!side || !date) {
+    return '';
+  }
+  const label = side === 'BID' ? '売値（BID）' : '買値（ASK）';
+  return `${label}を ${day(date)} まで`;
 }
 
-export default function UniversePage() {
-  const [symbols, setSymbols] = useState<UniverseSymbol[]>([]);
+export default function MarketDataPage() {
+  const [data, setData] = useState<MarketData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [exchangeFilter, setExchangeFilter] = useState('all');
-  const [assetTypeFilter, setAssetTypeFilter] = useState('all');
-  const [activeFilter, setActiveFilter] = useState('all');
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [showBulkUpload, setShowBulkUpload] = useState(false);
-  const [newSymbol, setNewSymbol] = useState({
-    symbol: '',
-    name: '',
-    exchange: 'NASDAQ',
-    asset_type: 'stock',
-    is_active: true,
-    data_source: 'moomoo',
-  });
-  const [bulkSymbols, setBulkSymbols] = useState('');
+  const [symbol, setSymbol] = useState('');
+  const [timeframe, setTimeframe] = useState('1h');
+  const [from, setFrom] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchUniverse();
-  }, []);
-
-  const fetchUniverse = async () => {
+  const refresh = useCallback(async () => {
     try {
-      setLoading(true);
-      const response = await fetch('/api/v1/universe');
-      if (!response.ok) {
-        throw new Error('Failed to fetch universe');
-      }
-      const data = await response.json();
-      setSymbols(data.data || []);
+      setData(await fetchMarketData());
+      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : '取得できませんでした');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const handleAddSymbol = async () => {
-    try {
-      const response = await fetch('/api/v1/universe', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(newSymbol),
-      });
-      if (!response.ok) {
-        throw new Error('Failed to add symbol');
-      }
-      await fetchUniverse();
-      setNewSymbol({
-        symbol: '',
-        name: '',
-        exchange: 'NASDAQ',
-        asset_type: 'stock',
-        is_active: true,
-        data_source: 'moomoo',
-      });
-      setShowAddForm(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add symbol');
-    }
-  };
-
-  const handleBulkUpload = async () => {
-    try {
-      const symbolsList = bulkSymbols
-        .split('\n')
-        .filter(line => line.trim())
-        .map(line => {
-          const [symbol, name, exchange = 'NASDAQ', assetType = 'stock'] = line
-            .split(',')
-            .map(s => s.trim());
-          return {
-            symbol,
-            name: name || symbol,
-            exchange,
-            asset_type: assetType,
-            is_active: true,
-            data_source: 'moomoo',
-          };
-        });
-
-      const response = await fetch('/api/v1/universe/bulk', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ symbols: symbolsList }),
-      });
-      if (!response.ok) {
-        throw new Error('Failed to bulk upload symbols');
-      }
-      await fetchUniverse();
-      setBulkSymbols('');
-      setShowBulkUpload(false);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to bulk upload symbols'
-      );
-    }
-  };
-
-  const handleDeleteSymbol = async (symbol: string) => {
-    if (
-      !window.confirm(
-        `Are you sure you want to remove ${symbol} from the universe?`
-      )
-    ) {
-      return;
-    }
-
-    try {
-      const response = await fetch(`/api/v1/universe/${symbol}`, {
-        method: 'DELETE',
-      });
-      if (!response.ok) {
-        throw new Error('Failed to delete symbol');
-      }
-      await fetchUniverse();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete symbol');
-    }
-  };
-
-  const handleToggleActive = async (symbol: UniverseSymbol) => {
-    try {
-      const response = await fetch(`/api/v1/universe/${symbol.symbol}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...symbol,
-          is_active: !symbol.is_active,
-        }),
-      });
-      if (!response.ok) {
-        throw new Error('Failed to update symbol');
-      }
-      await fetchUniverse();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update symbol');
-    }
-  };
-
-  const getAssetTypeIcon = (assetType: string) => {
-    switch (assetType) {
-      case 'stock':
-        return <Building2 className="w-4 h-4" />;
-      case 'etf':
-        return <TrendingUp className="w-4 h-4" />;
-      case 'crypto':
-        return <Coins className="w-4 h-4" />;
-      default:
-        return <Globe className="w-4 h-4" />;
-    }
-  };
-
-  const getAssetTypeColor = (assetType: string) => {
-    switch (assetType) {
-      case 'stock':
-        return 'bg-blue-100 text-blue-800';
-      case 'etf':
-        return 'bg-green-100 text-green-800';
-      case 'crypto':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'option':
-        return 'bg-purple-100 text-purple-800';
-      case 'future':
-        return 'bg-orange-100 text-orange-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const filteredSymbols = symbols.filter(symbol => {
-    const matchesSearch =
-      symbol.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (symbol.name &&
-        symbol.name.toLowerCase().includes(searchTerm.toLowerCase()));
-    const matchesExchange =
-      exchangeFilter === 'all' || symbol.exchange === exchangeFilter;
-    const matchesAssetType =
-      assetTypeFilter === 'all' || symbol.asset_type === assetTypeFilter;
-    const matchesActive =
-      activeFilter === 'all' ||
-      (activeFilter === 'active' && symbol.is_active) ||
-      (activeFilter === 'inactive' && !symbol.is_active);
-    return (
-      matchesSearch && matchesExchange && matchesAssetType && matchesActive
+  // Refresh quickly while something is downloading, slowly otherwise.
+  const busy = data?.imports.some(active) ?? false;
+  useEffect(() => {
+    refresh();
+    const timer = setInterval(
+      refresh,
+      busy ? BUSY_REFRESH_MS : IDLE_REFRESH_MS
     );
-  });
-
-  const exchanges = [...new Set(symbols.map(s => s.exchange))];
-  const assetTypes = [...new Set(symbols.map(s => s.asset_type))];
+    return () => clearInterval(timer);
+  }, [refresh, busy]);
 
   if (loading) {
     return (
@@ -247,350 +114,291 @@ export default function UniversePage() {
       </div>
     );
   }
-
-  if (error) {
+  if (!data) {
     return (
       <div className="container mx-auto p-6">
-        <div className="flex items-center justify-center h-64">
-          <div className="text-red-500">Error: {error}</div>
+        <div className="p-4 bg-red-50 border border-red-200 rounded-md text-red-700">
+          銘柄とデータの情報を取得できませんでした: {error}
         </div>
       </div>
     );
   }
 
+  const chosenSymbol = symbol || data.instruments[0]?.symbol || '';
+  const chosenFrom = from || data.history_start;
+  const coverage = sortCoverage(data.coverage);
+  const conversion = conversionSymbol(chosenSymbol);
+  const existing = coverage.find(
+    c => c.symbol === chosenSymbol && c.timeframe === timeframe
+  );
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      await requestImport(chosenSymbol, timeframe, chosenFrom);
+      await refresh();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : '登録できませんでした');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const cancel = async (id: string) => {
+    try {
+      await cancelImport(id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '取り消せませんでした');
+    }
+    await refresh();
+  };
+
   return (
-    <div className="container mx-auto p-6">
-      <div className="flex justify-between items-center mb-6">
+    <div className="container mx-auto p-6 space-y-6">
+      <div className="flex justify-between items-start">
         <div>
-          <h1 className="text-3xl font-bold">Universe Management</h1>
-          <p className="text-muted-foreground">
-            Manage tradable symbols and assets
+          <h1 className="text-3xl font-bold">銘柄・データ</h1>
+          <p className="text-muted-foreground mt-1">
+            バックテストに使う過去の足データを、銘柄と足を選んで取り込みます
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setShowBulkUpload(!showBulkUpload)}
-          >
-            <Upload className="w-4 h-4 mr-2" />
-            Bulk Upload
-          </Button>
-          <Button onClick={() => setShowAddForm(!showAddForm)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Add Symbol
-          </Button>
-        </div>
+        <Button variant="outline" size="sm" onClick={refresh}>
+          <RefreshCw className="w-4 h-4 mr-2" />
+          更新
+        </Button>
       </div>
 
-      {/* Add Symbol Form */}
-      {showAddForm && (
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>Add New Symbol</CardTitle>
-            <CardDescription>
-              Add a single symbol to the universe
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <Label htmlFor="symbol">Symbol</Label>
-                <Input
-                  id="symbol"
-                  value={newSymbol.symbol}
-                  onChange={e =>
-                    setNewSymbol({ ...newSymbol, symbol: e.target.value })
-                  }
-                  placeholder="AAPL"
-                />
-              </div>
-              <div>
-                <Label htmlFor="name">Name (Optional)</Label>
-                <Input
-                  id="name"
-                  value={newSymbol.name}
-                  onChange={e =>
-                    setNewSymbol({ ...newSymbol, name: e.target.value })
-                  }
-                  placeholder="Apple Inc."
-                />
-              </div>
-              <div>
-                <Label htmlFor="exchange">Exchange</Label>
-                <select
-                  id="exchange"
-                  value={newSymbol.exchange}
-                  onChange={e =>
-                    setNewSymbol({ ...newSymbol, exchange: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background"
-                >
-                  <option value="NASDAQ">NASDAQ</option>
-                  <option value="NYSE">NYSE</option>
-                  <option value="AMEX">AMEX</option>
-                  <option value="BINANCE">BINANCE</option>
-                  <option value="COINBASE">COINBASE</option>
-                </select>
-              </div>
-              <div>
-                <Label htmlFor="asset_type">Asset Type</Label>
-                <select
-                  id="asset_type"
-                  value={newSymbol.asset_type}
-                  onChange={e =>
-                    setNewSymbol({ ...newSymbol, asset_type: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background"
-                >
-                  <option value="stock">Stock</option>
-                  <option value="etf">ETF</option>
-                  <option value="crypto">Crypto</option>
-                  <option value="option">Option</option>
-                  <option value="future">Future</option>
-                </select>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="is_active"
-                  checked={newSymbol.is_active}
-                  onCheckedChange={(checked: boolean) =>
-                    setNewSymbol({ ...newSymbol, is_active: checked })
-                  }
-                />
-                <Label htmlFor="is_active">Active</Label>
-              </div>
-            </div>
-            <div className="flex gap-2 mt-4">
-              <Button onClick={handleAddSymbol}>Add Symbol</Button>
-              <Button variant="outline" onClick={() => setShowAddForm(false)}>
-                Cancel
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+      {error && (
+        <div className="p-3 bg-red-50 border border-red-200 rounded-md text-red-700 text-sm">
+          {error}
+        </div>
       )}
 
-      {/* Bulk Upload Form */}
-      {showBulkUpload && (
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>Bulk Upload Symbols</CardTitle>
-            <CardDescription>
-              Upload multiple symbols at once. Format:
-              symbol,name,exchange,asset_type (one per line)
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Textarea
-              value={bulkSymbols}
-              onChange={e => setBulkSymbols(e.target.value)}
-              placeholder="AAPL,Apple Inc.,NASDAQ,stock&#10;TSLA,Tesla Inc.,NASDAQ,stock&#10;BTC-USD,Bitcoin,BINANCE,crypto"
-              rows={6}
-            />
-            <div className="flex gap-2 mt-4">
-              <Button onClick={handleBulkUpload}>Upload Symbols</Button>
-              <Button
-                variant="outline"
-                onClick={() => setShowBulkUpload(false)}
-              >
-                Cancel
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Filters */}
-      <div className="mb-6 flex gap-4">
-        <div className="flex-1">
-          <Input
-            placeholder="Search symbols..."
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            className="max-w-sm"
-          />
-        </div>
-        <select
-          value={exchangeFilter}
-          onChange={e => setExchangeFilter(e.target.value)}
-          className="px-3 py-2 border border-input rounded-md bg-background"
-        >
-          <option value="all">All Exchanges</option>
-          {exchanges.map(exchange => (
-            <option key={exchange} value={exchange}>
-              {exchange}
-            </option>
-          ))}
-        </select>
-        <select
-          value={assetTypeFilter}
-          onChange={e => setAssetTypeFilter(e.target.value)}
-          className="px-3 py-2 border border-input rounded-md bg-background"
-        >
-          <option value="all">All Types</option>
-          {assetTypes.map(type => (
-            <option key={type} value={type}>
-              {type}
-            </option>
-          ))}
-        </select>
-        <select
-          value={activeFilter}
-          onChange={e => setActiveFilter(e.target.value)}
-          className="px-3 py-2 border border-input rounded-md bg-background"
-        >
-          <option value="all">All Status</option>
-          <option value="active">Active Only</option>
-          <option value="inactive">Inactive Only</option>
-        </select>
-      </div>
-
-      {/* Statistics */}
-      <div className="grid gap-4 mb-6 md:grid-cols-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  Total Symbols
-                </p>
-                <p className="text-2xl font-bold">{symbols.length}</p>
-              </div>
-              <Globe className="w-8 h-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  Active Symbols
-                </p>
-                <p className="text-2xl font-bold">
-                  {symbols.filter(s => s.is_active).length}
-                </p>
-              </div>
-              <Eye className="w-8 h-8 text-green-600" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  Exchanges
-                </p>
-                <p className="text-2xl font-bold">{exchanges.length}</p>
-              </div>
-              <Building2 className="w-8 h-8 text-blue-600" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  Asset Types
-                </p>
-                <p className="text-2xl font-bold">{assetTypes.length}</p>
-              </div>
-              <Coins className="w-8 h-8 text-yellow-600" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Symbols List */}
-      {filteredSymbols.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center h-64">
-            <Globe className="w-12 h-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No symbols found</h3>
-            <p className="text-muted-foreground mb-4">
-              {searchTerm ||
-              exchangeFilter !== 'all' ||
-              assetTypeFilter !== 'all' ||
-              activeFilter !== 'all'
-                ? 'Try adjusting your search or filters'
-                : 'Add your first symbol to get started'}
+      <Card>
+        <CardHeader>
+          <CardTitle>データを取り込む</CardTitle>
+          <CardDescription>
+            GMOコインから、売値（BID）と買値（ASK）の足を開始日から今日まで取り込みます。1つの足で数分〜十数分かかり、依頼は1つずつ順番に処理されます。すでにあるデータの続きから取り込むので、同じ銘柄・足をもう一度依頼すると、最新まで更新されます
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {data.instruments.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              GMOコインから銘柄の一覧を取得できませんでした。少し待ってから「更新」を押してください
             </p>
-            {!searchTerm &&
-              exchangeFilter === 'all' &&
-              assetTypeFilter === 'all' &&
-              activeFilter === 'all' && (
-                <Button onClick={() => setShowAddForm(true)}>
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Symbol
-                </Button>
+          ) : (
+            <form onSubmit={submit} className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-4">
+                <div className="space-y-1">
+                  <Label htmlFor="import-symbol">銘柄</Label>
+                  <select
+                    id="import-symbol"
+                    className={selectClass}
+                    value={chosenSymbol}
+                    onChange={e => setSymbol(e.target.value)}
+                  >
+                    {data.instruments.map(i => (
+                      <option key={i.symbol} value={i.symbol}>
+                        {pair(i.symbol)}
+                        {i.quote !== 'JPY' && '（円建て以外）'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="import-timeframe">足</Label>
+                  <select
+                    id="import-timeframe"
+                    className={selectClass}
+                    value={timeframe}
+                    onChange={e => setTimeframe(e.target.value)}
+                  >
+                    {DATA_TIMEFRAMES.map(t => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="import-from">開始日</Label>
+                  <Input
+                    id="import-from"
+                    type="date"
+                    min={data.history_start}
+                    value={chosenFrom}
+                    onChange={e => setFrom(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="flex items-end">
+                  <Button type="submit" disabled={submitting}>
+                    <Download className="w-4 h-4 mr-2" />
+                    {submitting ? '登録中...' : '取り込む'}
+                  </Button>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {existing
+                  ? `${pair(chosenSymbol)} の${timeframeLabel(timeframe)}は ${day(existing.first)} 〜 ${day(existing.last)} のデータがあります。取り込むと、その続きから最新までを足します（開始日より前のデータは増えません）。`
+                  : `${pair(chosenSymbol)} の${timeframeLabel(timeframe)}は、まだデータがありません。`}{' '}
+                {conversion &&
+                  `${pair(chosenSymbol)} は円建てではないので、損益を円に直すために ${pair(conversion)} の同じ足も一緒に取り込みます。`}{' '}
+                GMOコインのデータは {day(data.history_start)}{' '}
+                からあります。足が短いほど本数が多く、時間がかかります。
+              </p>
+              {formError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-md text-red-700 text-sm">
+                  {formError}
+                </div>
               )}
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filteredSymbols.map(symbol => (
-            <Card key={symbol.id} className="hover:shadow-lg transition-shadow">
-              <CardHeader>
-                <div className="flex justify-between items-start">
-                  <div>
-                    <CardTitle className="text-lg">{symbol.symbol}</CardTitle>
-                    <CardDescription className="mt-1">
-                      {symbol.name || 'No name provided'}
-                    </CardDescription>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge className={getAssetTypeColor(symbol.asset_type)}>
-                      {getAssetTypeIcon(symbol.asset_type)}
-                      <span className="ml-1">{symbol.asset_type}</span>
-                    </Badge>
-                    <Badge variant={symbol.is_active ? 'default' : 'secondary'}>
-                      {symbol.is_active ? 'Active' : 'Inactive'}
-                    </Badge>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <div className="text-sm text-muted-foreground">
-                    <span className="font-medium">Exchange:</span>{' '}
-                    {symbol.exchange}
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    <span className="font-medium">Data Source:</span>{' '}
-                    {symbol.data_source}
-                  </div>
-                  {symbol.last_updated && (
-                    <div className="text-sm text-muted-foreground">
-                      <span className="font-medium">Last Updated:</span>{' '}
-                      {new Date(symbol.last_updated).toLocaleDateString()}
-                    </div>
-                  )}
-                  <div className="flex gap-2 pt-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleToggleActive(symbol)}
+            </form>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>取り込みの状況</CardTitle>
+          <CardDescription>
+            直近20件。取り込み中は数秒ごとに更新します
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {data.imports.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              まだ取り込みの依頼はありません
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left text-muted-foreground">
+                  <tr>
+                    <th className="py-2 pr-4">銘柄・足</th>
+                    <th className="py-2 pr-4">開始日</th>
+                    <th className="py-2 pr-4">状態</th>
+                    <th className="py-2 pr-4 text-right">取り込んだ本数</th>
+                    <th className="py-2 pr-4">進み具合</th>
+                    <th className="py-2 pr-4">依頼</th>
+                    <th className="py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.imports.map(i => (
+                    <tr key={i.id} className="border-t tabular-nums">
+                      <td className="py-2 pr-4 whitespace-nowrap">
+                        {pair(i.symbol)} {timeframeLabel(i.timeframe)}
+                      </td>
+                      <td className="py-2 pr-4">{day(i.from_date)}</td>
+                      <td className="py-2 pr-4 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1">
+                          {i.status === 'running' && (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          )}
+                          {i.status === 'completed' && (
+                            <CheckCircle className="w-4 h-4 text-green-600" />
+                          )}
+                          {i.status === 'failed' && (
+                            <XCircle className="w-4 h-4 text-red-600" />
+                          )}
+                          {STATUS_LABELS[i.status] ?? i.status}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-4 text-right">
+                        {i.bars_stored.toLocaleString('ja-JP')}
+                      </td>
+                      <td className="py-2 pr-4">
+                        {i.status === 'failed' ? (
+                          <span className="text-red-600">{i.error}</span>
+                        ) : i.status === 'running' ? (
+                          describeProgress(i.progress)
+                        ) : i.status === 'completed' && i.bars_stored === 0 ? (
+                          'すでに最新でした'
+                        ) : (
+                          ''
+                        )}
+                      </td>
+                      <td className="py-2 pr-4 whitespace-nowrap">
+                        {dateTime(i.created_at)}
+                      </td>
+                      <td className="py-2 text-right">
+                        {i.status === 'pending' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => cancel(i.id)}
+                          >
+                            取り消す
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>保存済みのデータ</CardTitle>
+          <CardDescription>
+            バックテストで選べるのは、売値（BID）と買値（ASK）が揃っている銘柄・足です。円建て以外の銘柄は、円換算に使うペアの同じ足も必要です。売買の割り当てに使えるのは、円建ての銘柄だけです
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {coverage.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              まだデータがありません。上のフォームから取り込んでください
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left text-muted-foreground">
+                  <tr>
+                    <th className="py-2 pr-4">銘柄</th>
+                    <th className="py-2 pr-4">足</th>
+                    <th className="py-2 pr-4">期間</th>
+                    <th className="py-2 pr-4 text-right">本数（BID / ASK）</th>
+                    <th className="py-2">バックテスト</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {coverage.map(c => (
+                    <tr
+                      key={`${c.symbol}-${c.timeframe}`}
+                      className="border-t tabular-nums"
                     >
-                      {symbol.is_active ? 'Deactivate' : 'Activate'}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleDeleteSymbol(symbol.symbol)}
-                      className="text-red-600 hover:text-red-700"
-                    >
-                      <Trash2 className="w-4 h-4 mr-1" />
-                      Remove
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+                      <td className="py-2 pr-4">{pair(c.symbol)}</td>
+                      <td className="py-2 pr-4">
+                        {timeframeLabel(c.timeframe)}
+                      </td>
+                      <td className="py-2 pr-4 whitespace-nowrap">
+                        {day(c.first)} 〜 {day(c.last)}
+                      </td>
+                      <td className="py-2 pr-4 text-right">
+                        {c.bid_bars.toLocaleString('ja-JP')} /{' '}
+                        {c.ask_bars.toLocaleString('ja-JP')}
+                      </td>
+                      <td className="py-2">
+                        {c.usable ? (
+                          <Badge>使えます</Badge>
+                        ) : (
+                          <Badge variant="outline">{c.missing}</Badge>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -2,8 +2,6 @@ package backtest
 
 import (
 	"errors"
-	"fmt"
-	"strings"
 
 	"github.com/moomoo-trading/core/market"
 	"github.com/moomoo-trading/core/strategy"
@@ -21,16 +19,16 @@ const (
 // requested. It fully describes the run, so later edits to the strategy
 // version do not change a queued or finished backtest.
 type JobSpec struct {
-	StrategyVersionID string           `json:"strategy_version_id"`
-	StrategyType      string           `json:"strategy_type"`
+	StrategyVersionID string `json:"strategy_version_id"`
+	StrategyType      string `json:"strategy_type"`
 	// StrategyScript is the source for strategy type "script" (empty otherwise).
-	StrategyScript string `json:"strategy_script,omitempty"`
-	StrategyParams    strategy.Params  `json:"strategy_params"`
-	Broker            string           `json:"broker"`
-	Symbol            string           `json:"symbol"`
-	Timeframe         market.Timeframe `json:"timeframe"`
-	Units             float64          `json:"units"`
-	InitialBalance    float64          `json:"initial_balance"`
+	StrategyScript string           `json:"strategy_script,omitempty"`
+	StrategyParams strategy.Params  `json:"strategy_params"`
+	Broker         string           `json:"broker"`
+	Symbol         string           `json:"symbol"`
+	Timeframe      market.Timeframe `json:"timeframe"`
+	Units          float64          `json:"units"`
+	InitialBalance float64          `json:"initial_balance"`
 }
 
 // Resolve validates the spec, applies strategy parameter defaults and returns
@@ -48,9 +46,6 @@ func (s *JobSpec) Resolve() (strategy.Definition, error) {
 
 	if s.Broker == "" || s.Symbol == "" {
 		return strategy.Definition{}, errors.New("broker and symbol are required")
-	}
-	if !strings.HasSuffix(s.Symbol, "_JPY") {
-		return strategy.Definition{}, fmt.Errorf("only JPY-quoted symbols are supported (got %s)", s.Symbol)
 	}
 	if _, err := s.Timeframe.Duration(); err != nil {
 		return strategy.Definition{}, err

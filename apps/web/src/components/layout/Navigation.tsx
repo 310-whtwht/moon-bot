@@ -21,7 +21,7 @@ const navigation = [
   { name: '戦略管理', href: '/strategies', icon: TrendingUp },
   { name: 'バックテスト', href: '/backtests', icon: BarChart3 },
   { name: '注文', href: '/orders', icon: ListOrdered },
-  { name: 'ユニバース', href: '/universe', icon: Globe },
+  { name: '銘柄・データ', href: '/universe', icon: Globe },
   { name: '監査・ログ', href: '/audit', icon: Shield },
   { name: '通知', href: '/notifications', icon: Bell },
 ];

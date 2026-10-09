@@ -33,6 +33,9 @@ type Backfiller struct {
 	Source broker.MarketData
 	Store  BarStore
 	Logf   func(format string, args ...any)
+	// OnProgress, when set, is called after each stored chunk with the price
+	// type, how far the download has got and the bars stored for that type.
+	OnProgress func(pt market.PriceType, upTo time.Time, stored int)
 }
 
 func (b *Backfiller) logf(format string, args ...any) {
@@ -98,6 +101,9 @@ func (b *Backfiller) Run(ctx context.Context, req BackfillRequest) ([]BackfillRe
 			result.Stored += len(bars)
 			b.logf("backfill %s %s %s: %s..%s +%d bars (total %d)", key, req.Timeframe, pt,
 				chunkStart.Format("2006-01-02"), chunkEnd.Format("2006-01-02"), len(bars), result.Stored)
+			if b.OnProgress != nil {
+				b.OnProgress(pt, chunkEnd, result.Stored)
+			}
 		}
 		results = append(results, result)
 	}

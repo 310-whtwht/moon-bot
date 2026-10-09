@@ -71,6 +71,7 @@ func main() {
 	gmoPublic := gmofx.New(gmofx.Options{})
 	botHandler := handlers.NewBotHandler(botRepo, gmoPublic)
 	chartHandler := handlers.NewChartHandler(botRepo, gmoPublic)
+	marketDataHandler := handlers.NewMarketDataHandler(database.NewMarketDataRepository(db), gmoPublic)
 	auditHandler := handlers.NewAuditHandler(audit.NewTraceManager(gormDB, redisClient))
 
 	// Initialize Redis Streams
@@ -130,6 +131,11 @@ func main() {
 		api.PUT("/deployments/:id", botHandler.UpdateDeployment)
 		api.DELETE("/deployments/:id", botHandler.DeleteDeployment)
 		api.GET("/chart", chartHandler.GetChart)
+
+		// Stored price history and the downloads of more
+		api.GET("/market-data", marketDataHandler.Get)
+		api.POST("/market-data/imports", marketDataHandler.CreateImport)
+		api.DELETE("/market-data/imports/:id", marketDataHandler.CancelImport)
 
 		// Strategy types (registered in packages/core/strategy)
 		api.GET("/strategy-types", handlers.GetStrategyTypes)

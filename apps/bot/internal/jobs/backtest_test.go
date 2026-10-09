@@ -102,12 +102,12 @@ func TestHandle_SkipsWhenNotPending(t *testing.T) {
 
 func TestHandle_RecordsFailure(t *testing.T) {
 	c := claim()
-	c.Spec.Symbol = "EUR_USD"
+	c.Spec.StrategyType = "no_such_strategy"
 	store := &fakeStore{claim: c, claimable: true}
 	r := &BacktestRunner{Store: store, Bars: sineBars{n: 10}, Logf: func(string, ...any) {}}
 
 	require.NoError(t, r.Handle(context.Background(), "bt-1"))
-	assert.Contains(t, store.failed, "JPY")
+	assert.Contains(t, store.failed, "no_such_strategy")
 
 	store = &fakeStore{claim: claim(), claimable: true}
 	r = &BacktestRunner{Store: store, Bars: sineBars{n: 0}, Logf: func(string, ...any) {}}

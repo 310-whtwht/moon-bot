@@ -15,7 +15,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ArrowLeft, Play } from 'lucide-react';
 import Link from 'next/link';
-import { type StrategyVersion, TIMEFRAMES, formatParams } from '@/lib/backtest';
+import { type StrategyVersion, formatParams } from '@/lib/backtest';
+import {
+  type Coverage,
+  conversionSymbol,
+  fetchMarketData,
+  sortCoverage,
+  timeframeLabel,
+} from '@/lib/marketData';
 
 interface Strategy {
   id: string;
@@ -24,6 +31,16 @@ interface Strategy {
 
 const selectClass =
   'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm';
+
+/** The form fields that follow from choosing a stored symbol and timeframe. */
+function dataRange(c: Coverage) {
+  return {
+    symbol: c.symbol,
+    timeframe: c.timeframe,
+    start_date: c.first.slice(0, 10),
+    end_date: new Date().toISOString().slice(0, 10),
+  };
+}
 
 export default function BacktestPage() {
   const params = useParams();
@@ -35,6 +52,8 @@ export default function BacktestPage() {
   const [error, setError] = useState<string | null>(null);
   const [strategy, setStrategy] = useState<Strategy | null>(null);
   const [versions, setVersions] = useState<StrategyVersion[]>([]);
+  // Symbols and timeframes that have both BID and ASK bars stored.
+  const [coverage, setCoverage] = useState<Coverage[]>([]);
   const [form, setForm] = useState({
     name: '',
     strategy_version_id: '',
@@ -48,10 +67,15 @@ export default function BacktestPage() {
 
   const load = useCallback(async () => {
     try {
-      const [s, v] = await Promise.all([
+      const [s, v, market] = await Promise.all([
         fetch(`/api/v1/strategies/${strategyId}`),
         fetch(`/api/v1/strategies/${strategyId}/versions`),
+        fetchMarketData().catch(() => null),
       ]);
+      const available = sortCoverage(market?.coverage ?? []).filter(
+        c => c.usable
+      );
+      setCoverage(available);
       if (!s.ok) {
         throw new Error('戦略を取得できませんでした');
       }
@@ -63,10 +87,15 @@ export default function BacktestPage() {
       setStrategy(sData.data);
       setVersions(runnable);
       const active = runnable.find(x => x.is_active) ?? runnable[0];
+      // Start on USD/JPY 1h when it is there, else on whatever is.
+      const first =
+        available.find(c => c.symbol === 'USD_JPY' && c.timeframe === '1h') ??
+        available[0];
       setForm(prev => ({
         ...prev,
         name: `${sData.data.name} バックテスト`,
         strategy_version_id: active?.id ?? '',
+        ...(first ? dataRange(first) : {}),
       }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'エラーが発生しました');
@@ -83,6 +112,19 @@ export default function BacktestPage() {
 
   const set = (field: keyof typeof form, value: string) =>
     setForm(prev => ({ ...prev, [field]: value }));
+
+  const symbols = Array.from(new Set(coverage.map(c => c.symbol)));
+  const timeframes = coverage.filter(c => c.symbol === form.symbol);
+  const chosenData = timeframes.find(c => c.timeframe === form.timeframe);
+
+  /** Switches to a stored symbol and timeframe, and to the dates it covers. */
+  const choose = (symbol: string, timeframe: string) => {
+    const forSymbol = coverage.filter(c => c.symbol === symbol);
+    const next = forSymbol.find(c => c.timeframe === timeframe) ?? forSymbol[0];
+    if (next) {
+      setForm(prev => ({ ...prev, ...dataRange(next) }));
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -191,33 +233,61 @@ export default function BacktestPage() {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="symbol">銘柄</Label>
-                  <Input
-                    id="symbol"
-                    value={form.symbol}
-                    onChange={e => set('symbol', e.target.value.toUpperCase())}
-                    placeholder="USD_JPY"
-                    required
-                  />
+              {coverage.length === 0 ? (
+                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md text-yellow-800 text-sm">
+                  バックテストに使える足データがまだありません。先に{' '}
+                  <Link href="/universe" className="underline">
+                    銘柄・データ
+                  </Link>{' '}
+                  の画面で取り込んでください。
                 </div>
+              ) : (
                 <div className="space-y-2">
-                  <Label htmlFor="timeframe">時間足</Label>
-                  <select
-                    id="timeframe"
-                    className={selectClass}
-                    value={form.timeframe}
-                    onChange={e => set('timeframe', e.target.value)}
-                  >
-                    {TIMEFRAMES.map(t => (
-                      <option key={t.value} value={t.value}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="symbol">銘柄</Label>
+                      <select
+                        id="symbol"
+                        className={selectClass}
+                        value={form.symbol}
+                        onChange={e => choose(e.target.value, form.timeframe)}
+                      >
+                        {symbols.map(sym => (
+                          <option key={sym} value={sym}>
+                            {sym.replace('_', '/')}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="timeframe">時間足</Label>
+                      <select
+                        id="timeframe"
+                        className={selectClass}
+                        value={form.timeframe}
+                        onChange={e => choose(form.symbol, e.target.value)}
+                      >
+                        {timeframes.map(c => (
+                          <option key={c.timeframe} value={c.timeframe}>
+                            {timeframeLabel(c.timeframe)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {chosenData &&
+                      `データは ${chosenData.first.slice(0, 10)} 〜 ${chosenData.last.slice(0, 10)}（${chosenData.bid_bars.toLocaleString('ja-JP')} 本）。`}
+                    {conversionSymbol(form.symbol) &&
+                      `損益は、${conversionSymbol(form.symbol)?.replace('_', '/')} の同じ足のレートで円に換算します。`}
+                    選べるのは、取り込み済みの銘柄・足です。ほかを使うときは{' '}
+                    <Link href="/universe" className="underline">
+                      銘柄・データ
+                    </Link>{' '}
+                    で取り込みます。
+                  </p>
                 </div>
-              </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -278,7 +348,7 @@ export default function BacktestPage() {
                 </div>
               )}
 
-              <Button type="submit" disabled={running}>
+              <Button type="submit" disabled={running || coverage.length === 0}>
                 <Play className="w-4 h-4 mr-2" />
                 {running ? '送信中...' : '実行'}
               </Button>

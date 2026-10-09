@@ -31,11 +31,16 @@ func TestJobSpecResolve(t *testing.T) {
 		"unknown type":  func(s *JobSpec) { s.StrategyType = "nope" },
 		"bad param":     func(s *JobSpec) { s.StrategyParams = strategy.Params{"fast_period": 1} },
 		"no symbol":     func(s *JobSpec) { s.Symbol = "" },
-		"non-JPY quote": func(s *JobSpec) { s.Symbol = "EUR_USD" },
 		"bad timeframe": func(s *JobSpec) { s.Timeframe = "2h" },
 		"zero units":    func(s *JobSpec) { s.Units = 0 },
 		"zero balance":  func(s *JobSpec) { s.InitialBalance = 0 },
 	}
+	// Pairs quoted in another currency are accepted: P&L is converted to yen.
+	usd := validSpec()
+	usd.Symbol = "EUR_USD"
+	_, err = usd.Resolve()
+	assert.NoError(t, err)
+
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			s := validSpec()

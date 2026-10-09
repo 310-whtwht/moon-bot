@@ -144,6 +144,8 @@ export async function setDeploymentEnabled(
 /** An instrument a deployment may trade (JPY-quoted pairs). */
 export interface Instrument {
   symbol: string;
+  /** Currency the price is in, e.g. "JPY". */
+  quote: string;
   min_units: number;
   step: number;
 }
