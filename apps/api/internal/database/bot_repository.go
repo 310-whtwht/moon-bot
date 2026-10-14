@@ -336,6 +336,14 @@ type EntrySettings struct {
 	MaxSpread   *float64 // nil = no limit
 }
 
+// StrategyHasActiveVersion reports whether a strategy has a version the bot can run.
+func (r *BotRepository) StrategyHasActiveVersion(ctx context.Context, id string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM strategy_versions WHERE package_id = ? AND is_active = TRUE`, id).Scan(&n)
+	return n > 0, err
+}
+
 // StrategyExists reports whether a strategy package exists.
 func (r *BotRepository) StrategyExists(ctx context.Context, id string) (bool, error) {
 	var n int
@@ -365,12 +373,15 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?)`,
 }
 
 // DeploymentPatch changes a deployment; nil fields are left as they are.
-// The instrument, timeframe and strategy are fixed: the bot's state (warm-up,
-// open position, order IDs) is tied to them, so those need a new deployment.
+// The instrument and timeframe are fixed: the bot's state (warm-up, open
+// position, order IDs) is tied to them, so those need a new deployment. The
+// strategy can change: the bot keeps managing an open position with the
+// version that opened it and switches once flat.
 type DeploymentPatch struct {
-	Name    *string
-	Units   *float64
-	Enabled *bool
+	Name       *string
+	Units      *float64
+	Enabled    *bool
+	StrategyID *string
 	// Entry replaces all entry settings at once when set.
 	Entry *EntrySettings
 }
@@ -385,8 +396,9 @@ func (r *BotRepository) UpdateDeployment(ctx context.Context, id string, p Deplo
 		return false, nil
 	}
 	if _, err := r.db.ExecContext(ctx, `
-UPDATE deployments SET name = COALESCE(?, name), units = COALESCE(?, units), enabled = COALESCE(?, enabled)
-WHERE id = ?`, p.Name, p.Units, p.Enabled, id); err != nil {
+UPDATE deployments SET name = COALESCE(?, name), units = COALESCE(?, units), enabled = COALESCE(?, enabled),
+  strategy_id = COALESCE(?, strategy_id)
+WHERE id = ?`, p.Name, p.Units, p.Enabled, p.StrategyID, id); err != nil {
 		return true, err
 	}
 	if p.Entry != nil {
