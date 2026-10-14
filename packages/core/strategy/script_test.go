@@ -1,7 +1,9 @@
 package strategy
 
 import (
+	"math"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -228,11 +230,27 @@ func TestScript_PublishedExamplesRun(t *testing.T) {
 	}
 	require.GreaterOrEqual(t, len(sources), 2, "the manual's examples were found")
 
+	// Ready-made strategies kept in the repository.
+	files, err := filepath.Glob("../../../strategies/*.star")
+	require.NoError(t, err)
+	require.NotEmpty(t, files)
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		require.NoError(t, err)
+		sources = append(sources, string(src))
+	}
+
 	template, err := os.ReadFile("../../../apps/web/src/lib/scriptTemplate.ts")
 	require.NoError(t, err)
 	match := regexp.MustCompile("(?s)SCRIPT_TEMPLATE = `(.*?)`;").FindStringSubmatch(string(template))
 	require.NotNil(t, match)
 	sources = append(sources, match[1])
+	// The editor's copies of the ready-made strategies must not drift from the files.
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		require.NoError(t, err)
+		assert.Contains(t, string(template), "= `"+string(src)+"`;", "%s is offered in the editor unchanged", f)
+	}
 
 	bars := wave(400)
 	traded := 0
@@ -249,4 +267,42 @@ func TestScript_PublishedExamplesRun(t *testing.T) {
 		require.NoError(t, s.(Failer).Err(), src)
 	}
 	assert.Greater(t, traded, 5, "the examples do trade on a moving market")
+}
+
+func TestTrendlineScript_TradesBothModesOnAZigZag(t *testing.T) {
+	src, err := os.ReadFile("../../../strategies/trendline.star")
+	require.NoError(t, err)
+	def, err := Define(ScriptType, string(src))
+	require.NoError(t, err)
+
+	// A falling market with swings, then a rally: lower highs give a falling
+	// trendline, which the rally breaks.
+	var bars []Bar
+	price := 150.0
+	t0 := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 300; i++ {
+		swing := 0.3 * math.Sin(float64(i)/4)
+		drift := -0.02
+		if i > 200 {
+			drift = 0.06
+		}
+		price += drift
+		c := price + swing
+		bars = append(bars, Bar{Time: t0.Add(time.Duration(i) * time.Hour), Open: c, High: c + 0.05, Low: c - 0.05, Close: c})
+	}
+	for _, mode := range []float64{1, 2} {
+		s, _, err := def.New(Params{"mode": mode})
+		require.NoError(t, err)
+		signals := run(s, bars)
+		require.NoError(t, s.(Failer).Err())
+		entries := 0
+		for i, sig := range signals {
+			if sig.Action == EnterLong || sig.Action == EnterShort {
+				entries++
+				assert.NotEmpty(t, sig.Reason, "bar %d", i)
+			}
+		}
+		assert.Greater(t, entries, 0, "mode %v trades", mode)
+		assert.Contains(t, s.(Explainer).Explain(), "抵抗線")
+	}
 }

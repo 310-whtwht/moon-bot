@@ -17,7 +17,7 @@ import { Switch } from '@/components/ui/switch';
 import { ArrowLeft, CheckCircle, Save } from 'lucide-react';
 import Link from 'next/link';
 import type { ParamSpec, StrategyType } from '@/lib/backtest';
-import { SCRIPT_TEMPLATE } from '@/lib/scriptTemplate';
+import { SCRIPT_TEMPLATE, SCRIPT_TEMPLATES } from '@/lib/scriptTemplate';
 
 const selectClass =
   'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm';
@@ -184,7 +184,33 @@ export default function NewVersionPage() {
 
             {scripted && (
               <div className="space-y-2">
-                <Label htmlFor="script">スクリプト</Label>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label htmlFor="script">スクリプト</Label>
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="text-muted-foreground">ひな形:</span>
+                    {SCRIPT_TEMPLATES.map(t => (
+                      <Button
+                        key={t.name}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (
+                            script === t.source ||
+                            window.confirm(
+                              `入力中のスクリプトを「${t.name}」のひな形に置き換えますか？`
+                            )
+                          ) {
+                            setScript(t.source);
+                            setScriptParams(null);
+                          }
+                        }}
+                      >
+                        {t.name}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
                 <Textarea
                   id="script"
                   value={script}
