@@ -521,6 +521,34 @@ func TestGuardBlocksEntriesButNotExits(t *testing.T) {
 	assert.Equal(t, []string{"opened", "closed", "skipped"}, h.kinds())
 }
 
+func TestStrategyChangeTakesOverOnceFlat(t *testing.T) {
+	h := newHarness(t, Config{})
+	h.store.versions["v3"] = Version{ID: "v3", Type: "test_scripted", Params: strategy.Params{"variant": 1}}
+	h.store.active["strat-2"] = "v3"
+	setScript(0, map[int]strategy.Signal{10: long(149), 12: {Action: strategy.Exit}})
+	setScript(1, map[int]strategy.Signal{11: short(151), 14: short(151)})
+	h.poll(10)
+	h.poll(11) // the first strategy opens a long
+
+	h.store.deployments[0].StrategyID = "strat-2" // the deployment is given another strategy
+
+	h.poll(12) // the long still belongs to v1: the new strategy's short is not taken
+	require.Len(t, h.openPositions(), 1)
+	assert.Equal(t, "v1", h.openPositions()[0].StrategyVersionID)
+
+	h.poll(13) // v1 exits by its own rule
+	assert.Empty(t, h.openPositions())
+
+	h.poll(14) // flat: the new strategy takes over
+	assert.True(t, h.logged("switched strategy version v1 -> v3"))
+
+	h.poll(15)
+	pos := h.openPositions()
+	require.Len(t, pos, 1)
+	assert.Equal(t, "v3", pos[0].StrategyVersionID)
+	assert.Equal(t, "strat-2", pos[0].StrategyID)
+}
+
 func TestVersionSwitchWaitsForPositionToClose(t *testing.T) {
 	h := newHarness(t, Config{})
 	setScript(0, map[int]strategy.Signal{10: long(149), 12: {Action: strategy.Exit}})

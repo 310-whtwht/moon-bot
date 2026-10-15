@@ -229,23 +229,37 @@ func (h *BotHandler) CreateDeployment(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{"id": id}})
 }
 
-// UpdateDeployment changes a deployment's name, size, enabled state or entry settings.
+// UpdateDeployment changes a deployment's name, size, enabled state, strategy
+// or entry settings. A new strategy takes over once the deployment is flat.
 // Disabling does not close an open position: the bot keeps managing its exit
 // and stop-loss. A new size applies from the next entry.
 func (h *BotHandler) UpdateDeployment(c *gin.Context) {
 	ctx := c.Request.Context()
 	id := c.Param("id")
 	var req struct {
-		Name    *string  `json:"name"`
-		Units   *float64 `json:"units"`
-		Enabled *bool    `json:"enabled"`
+		Name       *string  `json:"name"`
+		Units      *float64 `json:"units"`
+		Enabled    *bool    `json:"enabled"`
+		StrategyID *string  `json:"strategy_id"`
 		// Entry settings are replaced together, when entry_order is given.
 		entryRequest
 	}
 	if err := c.ShouldBindJSON(&req); err != nil ||
-		(req.Name == nil && req.Units == nil && req.Enabled == nil && req.entryRequest.Order == "") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name・units・enabled・entry_order のいずれかを指定してください"})
+		(req.Name == nil && req.Units == nil && req.Enabled == nil && req.StrategyID == nil && req.entryRequest.Order == "") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name・units・enabled・strategy_id・entry_order のいずれかを指定してください"})
 		return
+	}
+	if req.StrategyID != nil {
+		// The bot needs an active version to switch to.
+		ok, err := h.repo.StrategyHasActiveVersion(ctx, *req.StrategyID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "戦略を確認できませんでした"})
+			return
+		}
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "この戦略には有効なバージョンがありません。先にバージョンを作って有効にしてください"})
+			return
+		}
 	}
 	var entry *database.EntrySettings
 	if req.entryRequest.Order != "" {
@@ -285,7 +299,7 @@ func (h *BotHandler) UpdateDeployment(c *gin.Context) {
 		}
 	}
 
-	found, err := h.repo.UpdateDeployment(ctx, id, database.DeploymentPatch{Name: req.Name, Units: req.Units, Enabled: req.Enabled, Entry: entry})
+	found, err := h.repo.UpdateDeployment(ctx, id, database.DeploymentPatch{Name: req.Name, Units: req.Units, Enabled: req.Enabled, StrategyID: req.StrategyID, Entry: entry})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "割り当てを更新できませんでした"})
 		return

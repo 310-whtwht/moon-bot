@@ -164,10 +164,13 @@ export interface NewDeployment extends EntrySettings {
   units: number;
 }
 
-/** Changes a deployment's size and how it sends entries. Applies from the next entry. */
+/**
+ * Changes a deployment's strategy, size and how it sends entries. They apply
+ * from the next entry; a new strategy takes over once any open position closes.
+ */
 export async function updateDeployment(
   id: string,
-  patch: { units: number } & EntrySettings
+  patch: { name: string; units: number; strategy_id: string } & EntrySettings
 ): Promise<void> {
   await parse(
     await fetch(`/api/v1/deployments/${id}`, {
