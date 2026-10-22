@@ -244,7 +244,8 @@ export default function NewVersionPage() {
                   ago=何本前）、close / open / high / low（ago=）、buy / sell
                   （stop=損切り価格）、exit、hold、explain、num、state。bar には
                   time / open / high / low / close / hour / minute /
-                  weekday（日本時間、月曜=0）があります。作成したら、有効にする前にバックテストで確かめてください。
+                  weekday（月曜=0）/ year / month / day /
+                  days_in_month（その月の日数）があります（時刻と日付は日本時間）。作成したら、有効にする前にバックテストで確かめてください。
                 </p>
               </div>
             )}
