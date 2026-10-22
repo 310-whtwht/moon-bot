@@ -8,7 +8,7 @@
     - gotobi_only 0 にすると、毎営業日で同じことをする（ゴトー日の効果かどうかを見る対照）
   - [strategies/research/london_breakout.star](../../strategies/research/london_breakout.star) — 東京レンジのロンドンブレイク
     - 9:00〜range_end（分）の高値・安値を東京レンジとし、その後に buffer（レンジ幅に対する割合）を超えて抜けた方向へ入る
-    - 損切りは stop_mode 1 = レンジの反対側、2 = ATR(14) × stop_atr。exit_min 分たったら決済。1日1回まで、日をまたいだら決済
+    - 損切りは stop_mode 1 = レンジの反対側、2 = ATR(14) × stop_atr。exit_min（0時からの分。240 = 翌朝 4:00、1380 = 23:00）の時刻に決済。1日1回まで
   - [strategies/research/prev_day_fakeout.star](../../strategies/research/prev_day_fakeout.star) — 前日高安値のダマシ・抜け
     - mode 1 = 前日の高値（安値）を一度抜けて戻ったら逆張り、mode 2 = 終値で抜けたら順張り。1日1回まで
 - 条件: 100通貨、初期資金 30,000円、成行（買いは ASK・売りは BID、次の足の始値で約定）、手数料 0.002%
