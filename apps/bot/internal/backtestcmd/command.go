@@ -5,6 +5,7 @@ package backtestcmd
 import (
 	"context"
 	"database/sql"
+	"encoding/csv"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -43,6 +44,9 @@ type options struct {
 	balance   float64
 	feeRate   float64
 	jsonOut   bool
+	// candlesOut, when set, receives the loaded candles as CSV (for offline
+	// research such as training a trade filter).
+	candlesOut string
 }
 
 func parseFlags(args []string, now time.Time, stderr io.Writer) (options, error) {
@@ -61,6 +65,7 @@ func parseFlags(args []string, now time.Time, stderr io.Writer) (options, error)
 	balance := fs.Float64("balance", 30000, "initial balance (JPY)")
 	feeRate := fs.Float64("fee-rate", backtest.DefaultFeeRate, "fee rate per fill on notional")
 	jsonOut := fs.Bool("json", false, "print full results as JSON")
+	candlesOut := fs.String("candles-out", "", "also write the loaded candles to this CSV file")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -69,6 +74,7 @@ func parseFlags(args []string, now time.Time, stderr io.Writer) (options, error)
 		strategy: *strat, params: strategy.Params{}, sweeps: map[string][]float64{},
 		symbol: *symbol, timeframe: market.Timeframe(*interval),
 		units: *units, balance: *balance, feeRate: *feeRate, jsonOut: *jsonOut,
+		candlesOut: *candlesOut,
 	}
 	if _, err := opts.timeframe.Duration(); err != nil {
 		return options{}, err
@@ -169,6 +175,11 @@ func Run(ctx context.Context, cfg *config.Config, args []string, out io.Writer) 
 	if err != nil {
 		return err
 	}
+	if opts.candlesOut != "" {
+		if err := writeCandlesFile(opts.candlesOut, candles); err != nil {
+			return err
+		}
+	}
 
 	var results []*backtest.Result
 	for _, params := range grid(opts.params, opts.sweeps) {
@@ -191,6 +202,38 @@ func Run(ctx context.Context, cfg *config.Config, args []string, out io.Writer) 
 	}
 	printTable(out, def, opts, candles, results)
 	return nil
+}
+
+func writeCandlesFile(path string, candles []backtest.Candle) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create -candles-out: %w", err)
+	}
+	if err := writeCandlesCSV(f, candles); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// writeCandlesCSV writes one row per candle: time (RFC 3339, UTC), BID and ASK
+// OHLC, and the quote rate.
+func writeCandlesCSV(w io.Writer, candles []backtest.Candle) error {
+	cw := csv.NewWriter(w)
+	if err := cw.Write([]string{"time", "bid_open", "bid_high", "bid_low", "bid_close",
+		"ask_open", "ask_high", "ask_low", "ask_close", "quote_rate"}); err != nil {
+		return err
+	}
+	f := func(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+	for _, c := range candles {
+		if err := cw.Write([]string{c.Time.UTC().Format(time.RFC3339),
+			f(c.Bid.Open), f(c.Bid.High), f(c.Bid.Low), f(c.Bid.Close),
+			f(c.Ask.Open), f(c.Ask.High), f(c.Ask.Low), f(c.Ask.Close), f(c.QuoteRate)}); err != nil {
+			return err
+		}
+	}
+	cw.Flush()
+	return cw.Error()
 }
 
 func printTable(out io.Writer, def strategy.Definition, opts options, candles []backtest.Candle, results []*backtest.Result) {

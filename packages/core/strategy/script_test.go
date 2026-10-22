@@ -131,7 +131,7 @@ def on_bar(bar, pos):
     state["n"] = state.get("n", 0) + 1
     # Monday 2026-10-05 09:00 JST is 00:00 UTC.
     if bars() == 1:
-        if (bar.hour, bar.minute, bar.weekday) != (9, 0, 0):
+        if (bar.hour, bar.minute, bar.weekday) != (9, 0, 0) or (bar.year, bar.month, bar.day, bar.days_in_month) != (2026, 10, 5, 31):
             fail("wrong time: %d:%d weekday %d" % (bar.hour, bar.minute, bar.weekday))
         if close(ago=1) != None or sma(2) != None:
             fail("no history yet")
@@ -235,6 +235,15 @@ func TestScript_PublishedExamplesRun(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, files)
 	for _, f := range files {
+		src, err := os.ReadFile(f)
+		require.NoError(t, err)
+		sources = append(sources, string(src))
+	}
+
+	// Rules still under evaluation: they must run, but are not offered in the editor.
+	research, err := filepath.Glob("../../../strategies/research/*.star")
+	require.NoError(t, err)
+	for _, f := range research {
 		src, err := os.ReadFile(f)
 		require.NoError(t, err)
 		sources = append(sources, string(src))
