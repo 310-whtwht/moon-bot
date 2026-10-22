@@ -370,3 +370,43 @@ func TestExecutionEventTriggersImmediateReconcile(t *testing.T) {
 	assert.Equal(t, "148.9", h.store.positions[0].ClosePrice.String())
 	assert.True(t, h.logged("execution stream ended"))
 }
+
+func TestTwoDeploymentsOnOneSymbolDoNotSeeEachOtherAsUnknown(t *testing.T) {
+	h, sb, ops := stopHarness(t)
+	second := h.store.deployments[0]
+	second.ID, second.Name = "dep-00000002", "test 2"
+	h.store.deployments = append(h.store.deployments, second)
+
+	// Both deployments open USD/JPY on the same bar.
+	setScript(0, map[int]strategy.Signal{10: long(149)})
+	h.poll(10)
+	h.poll(11)
+	pos := h.gmoPositions()
+	require.Len(t, pos, 2)
+	assert.ElementsMatch(t, []string{"dep-00000001", "dep-00000002"}, []string{pos[0].DeploymentID, pos[1].DeploymentID})
+
+	h.later(6 * time.Minute)
+	require.NoError(t, h.mgr.PollOnce(context.Background()))
+	stopped, why := halted(ops)
+	assert.False(t, stopped, why)
+	assert.Len(t, sb.activeStops(), 2, "each position keeps its own stop")
+}
+
+func TestJustOpenedUnknownPositionIsGivenTimeToBeRecorded(t *testing.T) {
+	h, sb, ops := stopHarness(t)
+	h.poll(10)
+
+	// A fill reported by the stream makes the runner reconcile at once, while
+	// whoever opened the position may not have recorded it yet.
+	_, err := sb.Broker.PlaceOpen(context.Background(), marketOrder())
+	require.NoError(t, err)
+	h.mgr.OnExecution(context.Background(), "gmo", broker.Execution{Symbol: "USD_JPY"})
+	stopped, _ := halted(ops)
+	assert.False(t, stopped)
+
+	// Still unknown at the next check: it is reported.
+	h.later(6 * time.Minute)
+	require.NoError(t, h.mgr.PollOnce(context.Background()))
+	stopped, _ = halted(ops)
+	assert.True(t, stopped)
+}

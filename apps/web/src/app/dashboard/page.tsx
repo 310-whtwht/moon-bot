@@ -318,12 +318,7 @@ export default function DashboardPage() {
             </div>
           )}
           <div className="mt-4">
-            <NewDeploymentForm
-              takenSymbols={status.deployments
-                .filter(d => d.broker === 'paper')
-                .map(d => d.symbol)}
-              onCreated={refresh}
-            />
+            <NewDeploymentForm onCreated={refresh} />
           </div>
         </CardContent>
       </Card>

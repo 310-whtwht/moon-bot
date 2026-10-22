@@ -309,9 +309,6 @@ ORDER BY b.bar_time DESC LIMIT ?`, symbol, timeframe, limit)
 	return out, rows.Err()
 }
 
-// ErrDeploymentTaken means the account already trades that symbol.
-var ErrDeploymentTaken = errors.New("a deployment for this account and symbol already exists")
-
 // ErrDeploymentInUse means the deployment still has an open position or a
 // limit entry waiting for its fill.
 var ErrDeploymentInUse = errors.New("the deployment has an open position")
@@ -353,15 +350,6 @@ func (r *BotRepository) StrategyExists(ctx context.Context, id string) (bool, er
 
 // CreateDeployment adds a disabled deployment and returns its ID.
 func (r *BotRepository) CreateDeployment(ctx context.Context, d NewDeployment) (string, error) {
-	var taken int
-	if err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM deployments WHERE broker = ? AND account_id = ? AND symbol = ?`,
-		d.Broker, d.AccountID, d.Symbol).Scan(&taken); err != nil {
-		return "", err
-	}
-	if taken > 0 {
-		return "", ErrDeploymentTaken
-	}
 	id := uuid.NewString()
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO deployments (id, name, strategy_id, broker, account_id, symbol, timeframe, units, enabled,
