@@ -243,6 +243,11 @@ func (r *scriptRun) OnBar(bar Bar, pos *Position) Signal {
 		"hour":    starlark.MakeInt(t.Hour()),
 		"minute":  starlark.MakeInt(t.Minute()),
 		"weekday": starlark.MakeInt((int(t.Weekday()) + 6) % 7), // 0 = Monday
+		"year":    starlark.MakeInt(t.Year()),
+		"month":   starlark.MakeInt(int(t.Month())),
+		"day":     starlark.MakeInt(t.Day()),
+		// days_in_month helps with month-end rules (e.g. the 5th/10th-day fixings).
+		"days_in_month": starlark.MakeInt(time.Date(t.Year(), t.Month()+1, 0, 0, 0, 0, 0, jst).Day()),
 	})
 	var posValue starlark.Value = starlark.None
 	if pos != nil {

@@ -44,6 +44,8 @@ def on_bar(bar, pos):
 | `bar.time` | 足の始まりの時刻（Unix 秒） |
 | `bar.hour` / `bar.minute` | 足の始まりの時・分（日本時間） |
 | `bar.weekday` | 曜日（日本時間。月曜 = 0 〜 日曜 = 6） |
+| `bar.year` / `bar.month` / `bar.day` | 年・月・日（日本時間） |
+| `bar.days_in_month` | その月の日数（月末の判定に使えます） |
 
 ### `pos`（いま持っている建玉）
 
