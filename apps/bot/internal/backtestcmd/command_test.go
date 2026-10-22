@@ -1,10 +1,12 @@
 package backtestcmd
 
 import (
+	"bytes"
 	"io"
 	"testing"
 	"time"
 
+	"github.com/moomoo-trading/core/backtest"
 	"github.com/moomoo-trading/core/strategy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,4 +50,15 @@ func TestGrid(t *testing.T) {
 	assert.Equal(t, strategy.Params{"atr_period": 14, "fast_period": 10, "slow_period": 60}, combos[5])
 
 	assert.Len(t, grid(strategy.Params{}, nil), 1, "no sweeps = one run")
+}
+
+func TestWriteCandlesCSV(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, writeCandlesCSV(&buf, []backtest.Candle{{
+		Time: time.Date(2026, 10, 5, 0, 55, 0, 0, time.UTC),
+		Bid:  backtest.OHLC{Open: 150.1, High: 150.2, Low: 150, Close: 150.15},
+		Ask:  backtest.OHLC{Open: 150.102, High: 150.202, Low: 150.002, Close: 150.152},
+	}}))
+	assert.Equal(t, "time,bid_open,bid_high,bid_low,bid_close,ask_open,ask_high,ask_low,ask_close,quote_rate\n"+
+		"2026-10-05T00:55:00Z,150.1,150.2,150,150.15,150.102,150.202,150.002,150.152,0\n", buf.String())
 }
