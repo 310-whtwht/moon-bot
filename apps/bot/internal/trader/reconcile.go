@@ -3,6 +3,7 @@ package trader
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/moomoo-trading/core/broker"
 	"github.com/shopspring/decimal"
@@ -41,6 +42,9 @@ func (r *Runner) reconcileWith(ctx context.Context, maintainStop bool) error {
 	if err != nil {
 		return fmt.Errorf("reconcile: %w", err)
 	}
+	if positions, err = r.withoutOthers(ctx, positions); err != nil {
+		return fmt.Errorf("reconcile: %w", err)
+	}
 
 	if r.pos == nil {
 		if r.working != nil {
@@ -77,6 +81,45 @@ func (r *Runner) reconcileWith(ctx context.Context, maintainStop bool) error {
 		r.ensureProtectiveStop(ctx)
 	}
 	return nil
+}
+
+// justOpened is how long a position the bot does not know is given before it
+// counts as unknown: another deployment on the same symbol may have just been
+// filled and not yet recorded it (a fill reported by the broker's stream makes
+// every runner on that symbol reconcile at once).
+const justOpened = 30 * time.Second
+
+// withoutOthers drops the positions that belong to other deployments trading
+// the same symbol on the same account, and the ones opened moments ago.
+func (r *Runner) withoutOthers(ctx context.Context, positions []broker.Position) ([]broker.Position, error) {
+	if len(positions) == 0 {
+		return positions, nil
+	}
+	known, err := r.store.OpenPositions(ctx, r.dep.Broker, r.dep.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	others := map[string]bool{}
+	for _, p := range known {
+		if p.DeploymentID != r.dep.ID && p.BrokerPositionID != "" {
+			others[p.BrokerPositionID] = true
+		}
+	}
+	mine := ""
+	if r.pos != nil {
+		mine = r.pos.BrokerPositionID
+	}
+	out := positions[:0:0]
+	for _, p := range positions {
+		if others[p.PositionID] {
+			continue
+		}
+		if p.PositionID != mine && !p.OpenedAt.IsZero() && r.now().Sub(p.OpenedAt) < justOpened {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 // mismatch halts new entries on the broker and reports once per distinct problem.

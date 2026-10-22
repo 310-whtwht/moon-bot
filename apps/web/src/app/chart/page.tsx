@@ -340,7 +340,10 @@ export default function ChartPage() {
   const symbols = Array.from(
     new Set([symbol, ...deployments.map(d => d.symbol)])
   );
-  const traded = deployments.find(d => d.symbol === symbol);
+  // The timeframes the bot trades this symbol on (several deployments may share a symbol).
+  const tradedTimeframes = deployments
+    .filter(d => d.symbol === symbol)
+    .map(d => d.timeframe);
   const timeframes = TIMEFRAMES.some(t => t.value === timeframe)
     ? TIMEFRAMES
     : [...TIMEFRAMES, { value: timeframe, label: timeframe }];
@@ -382,11 +385,11 @@ export default function ChartPage() {
               variant={t.value === timeframe ? 'default' : 'outline'}
               onClick={() => setTimeframe(t.value)}
               title={
-                traded?.timeframe === t.value ? 'bot が売買している足' : ''
+                tradedTimeframes.includes(t.value) ? 'bot が売買している足' : ''
               }
             >
               {t.label}
-              {traded?.timeframe === t.value && ' ●'}
+              {tradedTimeframes.includes(t.value) && ' ●'}
             </Button>
           ))}
         </div>

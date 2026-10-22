@@ -218,10 +218,6 @@ func (h *BotHandler) CreateDeployment(c *gin.Context) {
 		Name: req.Name, StrategyID: req.StrategyID, Broker: "paper", AccountID: "default",
 		Symbol: req.Symbol, Timeframe: req.Timeframe, Units: req.Units, Entry: entry,
 	})
-	if errors.Is(err, database.ErrDeploymentTaken) {
-		c.JSON(http.StatusConflict, gin.H{"error": "この銘柄の割り当ては既にあります（1口座につき1銘柄1つ）"})
-		return
-	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "割り当てを作成できませんでした"})
 		return

@@ -36,14 +36,7 @@ const selectClass =
   'h-10 w-full rounded-md border border-input bg-background px-3 text-sm';
 
 /** Adds a deployment on the paper account. It starts disabled. */
-export function NewDeploymentForm({
-  takenSymbols,
-  onCreated,
-}: {
-  /** Symbols that already have a deployment (one per account and symbol). */
-  takenSymbols: string[];
-  onCreated: () => void;
-}) {
+export function NewDeploymentForm({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [strategies, setStrategies] = useState<StrategyOption[]>([]);
   const [instruments, setInstruments] = useState<Instrument[]>([]);
@@ -79,8 +72,7 @@ export function NewDeploymentForm({
       );
   }, [open]);
 
-  const available = instruments.filter(i => !takenSymbols.includes(i.symbol));
-  const chosen = available.find(i => i.symbol === symbol) ?? available[0];
+  const chosen = instruments.find(i => i.symbol === symbol) ?? instruments[0];
   const strategyName = strategies.find(s => s.id === strategyId)?.name ?? '';
   const timeframeLabel =
     TIMEFRAMES.find(t => t.value === timeframe)?.label ?? timeframe;
@@ -154,7 +146,7 @@ export function NewDeploymentForm({
               setUnits('');
             }}
           >
-            {available.map(i => (
+            {instruments.map(i => (
               <option key={i.symbol} value={i.symbol}>
                 {i.symbol.replace('_', '/')}
               </option>
@@ -203,7 +195,7 @@ export function NewDeploymentForm({
         Paper
         口座に、無効の状態で追加します。追加後にスイッチをオンにすると売買を始めます。
         {chosen && ` 最小 ${chosen.min_units.toLocaleString('ja-JP')} 通貨。`}
-        円建ての通貨ペアのみ選べます（1銘柄につき1つ）。
+        円建ての通貨ペアのみ選べます。同じ銘柄に、別の戦略の割り当てを並べて追加できます。
       </p>
       {error && (
         <div className="p-3 bg-red-50 border border-red-200 rounded-md text-red-700 text-sm">
