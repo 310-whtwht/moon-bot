@@ -173,8 +173,8 @@ def evaluate(trades_path, candles_path, label):
         auc = roc_auc_score(y[idx_all], probs_all) if y[idx_all].nunique() > 1 else float("nan")
         print(f"- {name}（判定した期間の AUC {auc:.3f}。0.5 = 当てずっぽう）")
         print("\n".join(rows))
-        print(f"  合計: 全部 {len(base)}回 {base.sum():+.0f}円 PF {pf(base):.2f}"
-              f" | 通した {len(kept)}回 {kept.sum():+.0f}円 PF {pf(kept):.2f}"
+        print(f"  合計: 全部 {len(base)}回 {base.sum():+.0f}円 PF {pf(base):.2f} 勝率 {np.mean(base > 0):.1%}"
+              f" | 通した {len(kept)}回 {kept.sum():+.0f}円 PF {pf(kept):.2f} 勝率 {np.mean(kept > 0):.1%}"
               f" | ランダムに同じ数 {sum(tot['rand']):+.0f}円")
 
 
