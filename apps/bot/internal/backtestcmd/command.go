@@ -43,6 +43,7 @@ type options struct {
 	units     float64
 	balance   float64
 	feeRate   float64
+	slippage  float64
 	jsonOut   bool
 	// candlesOut, when set, receives the loaded candles as CSV (for offline
 	// research such as training a trade filter).
@@ -64,6 +65,7 @@ func parseFlags(args []string, now time.Time, stderr io.Writer) (options, error)
 	units := fs.Float64("units", 100, "position size in currency units")
 	balance := fs.Float64("balance", 30000, "initial balance (JPY)")
 	feeRate := fs.Float64("fee-rate", backtest.DefaultFeeRate, "fee rate per fill on notional")
+	slippage := fs.Float64("slippage", 0, "extra cost per fill in the quote currency (0.005 = 0.5 sen on a yen pair)")
 	jsonOut := fs.Bool("json", false, "print full results as JSON")
 	candlesOut := fs.String("candles-out", "", "also write the loaded candles to this CSV file")
 	if err := fs.Parse(args); err != nil {
@@ -73,7 +75,7 @@ func parseFlags(args []string, now time.Time, stderr io.Writer) (options, error)
 	opts := options{
 		strategy: *strat, params: strategy.Params{}, sweeps: map[string][]float64{},
 		symbol: *symbol, timeframe: market.Timeframe(*interval),
-		units: *units, balance: *balance, feeRate: *feeRate, jsonOut: *jsonOut,
+		units: *units, balance: *balance, feeRate: *feeRate, slippage: *slippage, jsonOut: *jsonOut,
 		candlesOut: *candlesOut,
 	}
 	if _, err := opts.timeframe.Duration(); err != nil {
@@ -185,7 +187,7 @@ func Run(ctx context.Context, cfg *config.Config, args []string, out io.Writer) 
 	for _, params := range grid(opts.params, opts.sweeps) {
 		res, err := backtest.Run(candles, backtest.Config{
 			Strategy: def, Params: params, Units: opts.units,
-			InitialBalance: opts.balance, FeeRate: opts.feeRate,
+			InitialBalance: opts.balance, FeeRate: opts.feeRate, Slippage: opts.slippage,
 		})
 		if err != nil {
 			// Invalid combinations (e.g. fast >= slow) are reported and skipped.
@@ -237,10 +239,10 @@ func writeCandlesCSV(w io.Writer, candles []backtest.Candle) error {
 }
 
 func printTable(out io.Writer, def strategy.Definition, opts options, candles []backtest.Candle, results []*backtest.Result) {
-	fmt.Fprintf(out, "%s %s %s  %s .. %s  (%d bars, %.0f units, balance %.0f JPY, fee %.4f%%)\n\n",
+	fmt.Fprintf(out, "%s %s %s  %s .. %s  (%d bars, %.0f units, balance %.0f JPY, fee %.4f%%, slippage %g)\n\n",
 		def.Type, opts.symbol, opts.timeframe,
 		candles[0].Time.Format("2006-01-02"), candles[len(candles)-1].Time.Format("2006-01-02"),
-		len(candles), opts.units, opts.balance, opts.feeRate*100)
+		len(candles), opts.units, opts.balance, opts.feeRate*100, opts.slippage)
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', tabwriter.AlignRight)
 	fmt.Fprintln(w, "params\ttrades\twin%\tPF\tnet pips\tnet JPY\treturn%\tCAGR%\tmaxDD%\tSharpe\tSQN\tfees JPY\t")

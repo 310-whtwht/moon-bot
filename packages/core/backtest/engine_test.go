@@ -79,6 +79,32 @@ func TestRun_LongEntryAtAskExitAtBidWithFees(t *testing.T) {
 	assert.Equal(t, strategy.Long, s.seen[1].Side)
 }
 
+func TestRun_SlippageWorsensEveryFill(t *testing.T) {
+	signals := map[int]strategy.Signal{
+		0: {Action: strategy.EnterLong, StopLoss: 99},
+		2: {Action: strategy.Exit},
+		3: {Action: strategy.EnterShort, StopLoss: 102},
+	}
+	candles := []Candle{
+		candle(0, 100, 100.5, 99.5, 100),
+		candle(1, 100.2, 101, 100, 100.8),
+		candle(2, 100.8, 101.5, 100.5, 101.2),
+		candle(3, 101, 101.2, 100.9, 101.1),
+		candle(4, 101.1, 103.5, 101, 103), // short stop: ASK open 101.11 + 0.9 = 102.01
+	}
+	c := cfg(&scripted{signals: signals})
+	c.Slippage = 0.02
+	res, err := Run(candles, c)
+	require.NoError(t, err)
+	require.Len(t, res.Trades, 2)
+
+	assert.InDelta(t, 100.23, res.Trades[0].EntryPrice, 1e-9, "buy at ASK open + slippage")
+	assert.InDelta(t, 100.98, res.Trades[0].ExitPrice, 1e-9, "sell at BID open - slippage")
+	assert.InDelta(t, 101.08, res.Trades[1].EntryPrice, 1e-9, "short at BID open - slippage")
+	assert.Equal(t, "stop", res.Trades[1].ExitReason)
+	assert.InDelta(t, 102.01+0.02, res.Trades[1].ExitPrice, 1e-9, "the stop fills worse too")
+}
+
 func TestRun_ConvertsProfitFeesAndMarginToYen(t *testing.T) {
 	// The same trade as above on a pair quoted in dollars, with the dollar
 	// at 150 yen on entry and 152 yen on exit.
