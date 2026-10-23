@@ -51,6 +51,14 @@ func (s *memStore) LatestOpenTime(_ context.Context, key market.InstrumentKey, t
 	return ts[len(ts)-1], true, nil
 }
 
+func (s *memStore) EarliestOpenTime(_ context.Context, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType) (time.Time, bool, error) {
+	ts := s.times(key, tf, pt)
+	if len(ts) == 0 {
+		return time.Time{}, false, nil
+	}
+	return ts[0], true, nil
+}
+
 func (s *memStore) Bars(_ context.Context, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType, from, to time.Time) ([]market.Bar, error) {
 	var out []market.Bar
 	for _, b := range s.bars {
@@ -135,6 +143,34 @@ func TestBackfill_StoresBothPriceTypesAndResumes(t *testing.T) {
 	assert.Equal(t, 24, results[0].Stored)
 	require.NotEmpty(t, src.requests)
 	assert.Equal(t, time.Date(2026, 9, 18, 23, 0, 0, 0, time.UTC).Add(time.Hour), src.requests[0].From)
+}
+
+func TestBackfill_FillsHistoryOlderThanStored(t *testing.T) {
+	src := &fakeSource{}
+	store := newMemStore()
+	bf := &Backfiller{Source: src, Store: store, Logf: func(string, ...any) {}}
+	key := market.InstrumentKey{Broker: "fake", Symbol: "USD_JPY"}
+
+	second := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC) // Monday
+	req := BackfillRequest{Symbol: "USD_JPY", Timeframe: market.TF1Hour,
+		PriceTypes: []market.PriceType{market.PriceBid}, From: second, To: second.AddDate(0, 0, 7)}
+	_, err := bf.Run(context.Background(), req)
+	require.NoError(t, err)
+	require.Len(t, store.times(key, market.TF1Hour, market.PriceBid), 5*24)
+
+	// Asking from a week earlier fills that week, then the newest bars; the
+	// stored week is not downloaded again.
+	src.requests = nil
+	req.From = second.AddDate(0, 0, -7)
+	results, err := bf.Run(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, 5*24, results[0].Stored)
+	assert.Len(t, store.times(key, market.TF1Hour, market.PriceBid), 10*24)
+	require.NotEmpty(t, src.requests)
+	assert.Equal(t, req.From, src.requests[0].From)
+	for _, r := range src.requests {
+		assert.False(t, r.From.Before(second) && r.To.After(second), "the stored week is not requested: %v", r)
+	}
 }
 
 func TestBackfill_StopsOnSourceErrorAndKeepsProgress(t *testing.T) {

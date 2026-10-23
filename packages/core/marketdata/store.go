@@ -23,6 +23,13 @@ type BarStore interface {
 	OpenTimes(ctx context.Context, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType, from, to time.Time) ([]time.Time, error)
 }
 
+// EarliestOpenTimer is implemented by stores that can report their oldest bar,
+// which lets a backfill fill in history older than what is stored.
+type EarliestOpenTimer interface {
+	// EarliestOpenTime returns the oldest stored open time, or ok=false if none.
+	EarliestOpenTime(ctx context.Context, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType) (t time.Time, ok bool, err error)
+}
+
 // MySQLBarStore stores bars in the bars table (migration 007).
 // The connection must use loc=UTC so DATETIME values stay in UTC.
 type MySQLBarStore struct {
@@ -74,18 +81,27 @@ ON DUPLICATE KEY UPDATE open = VALUES(open), high = VALUES(high), low = VALUES(l
 }
 
 func (s *MySQLBarStore) LatestOpenTime(ctx context.Context, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType) (time.Time, bool, error) {
-	var latest sql.NullTime
+	return s.edgeOpenTime(ctx, "MAX", key, tf, pt)
+}
+
+func (s *MySQLBarStore) EarliestOpenTime(ctx context.Context, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType) (time.Time, bool, error) {
+	return s.edgeOpenTime(ctx, "MIN", key, tf, pt)
+}
+
+// edgeOpenTime returns MIN or MAX of the stored open times.
+func (s *MySQLBarStore) edgeOpenTime(ctx context.Context, agg string, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType) (time.Time, bool, error) {
+	var edge sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		`SELECT MAX(open_time) FROM bars WHERE broker = ? AND symbol = ? AND timeframe = ? AND price_type = ?`,
+		`SELECT `+agg+`(open_time) FROM bars WHERE broker = ? AND symbol = ? AND timeframe = ? AND price_type = ?`,
 		key.Broker, key.Symbol, string(tf), string(pt),
-	).Scan(&latest)
+	).Scan(&edge)
 	if err != nil {
-		return time.Time{}, false, fmt.Errorf("latest bar: %w", err)
+		return time.Time{}, false, fmt.Errorf("%s bar: %w", strings.ToLower(agg), err)
 	}
-	if !latest.Valid {
+	if !edge.Valid {
 		return time.Time{}, false, nil
 	}
-	return latest.Time.UTC(), true, nil
+	return edge.Time.UTC(), true, nil
 }
 
 func (s *MySQLBarStore) Bars(ctx context.Context, key market.InstrumentKey, tf market.Timeframe, pt market.PriceType, from, to time.Time) ([]market.Bar, error) {

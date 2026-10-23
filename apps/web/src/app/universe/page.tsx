@@ -180,7 +180,7 @@ export default function MarketDataPage() {
         <CardHeader>
           <CardTitle>データを取り込む</CardTitle>
           <CardDescription>
-            GMOコインから、売値（BID）と買値（ASK）の足を開始日から今日まで取り込みます。1つの足で数分〜十数分かかり、依頼は1つずつ順番に処理されます。すでにあるデータの続きから取り込むので、同じ銘柄・足をもう一度依頼すると、最新まで更新されます
+            GMOコインから、売値（BID）と買値（ASK）の足を開始日から今日まで取り込みます。1つの足で数分〜十数分かかり、依頼は1つずつ順番に処理されます。すでにあるデータは取り込み直さないので、同じ銘柄・足をもう一度依頼すると、最新まで更新されます。開始日を今あるデータより前にすると、その間も埋めます
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -242,7 +242,7 @@ export default function MarketDataPage() {
               </div>
               <p className="text-xs text-muted-foreground">
                 {existing
-                  ? `${pair(chosenSymbol)} の${timeframeLabel(timeframe)}は ${day(existing.first)} 〜 ${day(existing.last)} のデータがあります。取り込むと、その続きから最新までを足します（開始日より前のデータは増えません）。`
+                  ? `${pair(chosenSymbol)} の${timeframeLabel(timeframe)}は ${day(existing.first)} 〜 ${day(existing.last)} のデータがあります。取り込むと、その続きから最新までを足します。開始日を ${day(existing.first)} より前にすると、その間も埋めます。`
                   : `${pair(chosenSymbol)} の${timeframeLabel(timeframe)}は、まだデータがありません。`}{' '}
                 {conversion &&
                   `${pair(chosenSymbol)} は円建てではないので、損益を円に直すために ${pair(conversion)} の同じ足も一緒に取り込みます。`}{' '}
