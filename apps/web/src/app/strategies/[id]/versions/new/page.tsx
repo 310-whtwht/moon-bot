@@ -242,7 +242,8 @@ export default function NewVersionPage() {
                 <p className="text-xs text-muted-foreground">
                   使える関数: ema / sma / rsi / atr / highest / lowest（期間,
                   ago=何本前）、close / open / high / low（ago=）、buy / sell
-                  （stop=損切り価格）、exit、hold、explain、num、state。bar には
+                  （stop=損切り価格）、exit、hold、explain、num、state、data（価格以外のデータ。例:
+                  data(&quot;cot_jpy_pct&quot;) で投機筋の円の偏り 0〜100）。bar には
                   time / open / high / low / close / hour / minute /
                   weekday（月曜=0）/ year / month / day /
                   days_in_month（その月の日数）があります（時刻と日付は日本時間）。作成したら、有効にする前にバックテストで確かめてください。

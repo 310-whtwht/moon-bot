@@ -315,3 +315,36 @@ func TestTrendlineScript_TradesBothModesOnAZigZag(t *testing.T) {
 		assert.Contains(t, s.(Explainer).Explain(), "抵抗線")
 	}
 }
+
+// stepData has one series "x" that becomes 7 at 2026-09-01 03:00 UTC.
+type stepData struct{}
+
+func (stepData) At(name string, t time.Time) (float64, bool) {
+	if name != "x" || t.Before(time.Date(2026, 9, 1, 3, 0, 0, 0, time.UTC)) {
+		return 0, false
+	}
+	return 7, true
+}
+
+func TestScript_DataIsReadAsOfTheBarOpen(t *testing.T) {
+	src := `
+def on_bar(bar, pos):
+    explain(num(data("x"), digits=0) + " " + num(data("unknown"), digits=0))
+    return hold()
+`
+	def, err := Define(ScriptType, src)
+	require.NoError(t, err)
+
+	explainAt := func(def Definition) []string {
+		s, _, err := def.New(nil)
+		require.NoError(t, err)
+		var out []string
+		for _, bar := range wave(5) {
+			s.OnBar(bar, nil)
+			out = append(out, s.(Explainer).Explain())
+		}
+		return out
+	}
+	assert.Equal(t, []string{"- -", "- -", "- -", "7 -", "7 -"}, explainAt(def.WithData(stepData{})))
+	assert.Equal(t, []string{"- -", "- -", "- -", "- -", "- -"}, explainAt(def), "without data, data() is None")
+}
