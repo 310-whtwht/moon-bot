@@ -38,6 +38,8 @@ type Config struct {
 	FillPollAttempts int
 	// ReconcileInterval is how often positions are compared with the broker.
 	ReconcileInterval time.Duration
+	// Data is the outside data scripts read with data(name) (optional).
+	Data strategy.Data
 }
 
 // HardMaxLiveUnits caps the size of any order sent to a real-money broker,
@@ -308,7 +310,7 @@ func (r *Runner) ensureStrategy(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("version %s: %w", want.ID, err)
 	}
-	strat, _, err := def.New(want.Params)
+	strat, _, err := def.WithData(r.cfg.Data).New(want.Params)
 	if err != nil {
 		return fmt.Errorf("version %s: %w", want.ID, err)
 	}

@@ -120,6 +120,9 @@ type scriptRun struct {
 	opens, highs, lows, closes []float64
 	// series caches indicator values per bar (NaN until ready), extended on demand.
 	series map[string]*scriptSeries
+	// data answers data(name) as of barTime, the open time of the current bar.
+	data    Data
+	barTime time.Time
 
 	explain string
 	err     error
@@ -216,6 +219,8 @@ func scriptError(err error) error {
 
 func (r *scriptRun) Err() error { return r.err }
 
+func (r *scriptRun) setData(d Data) { r.data = d }
+
 func (r *scriptRun) Explain() string {
 	if r.err != nil {
 		return "script error: " + r.err.Error()
@@ -232,6 +237,7 @@ func (r *scriptRun) OnBar(bar Bar, pos *Position) Signal {
 		return Signal{Action: Hold}
 	}
 	r.explain = ""
+	r.barTime = bar.Time
 
 	t := bar.Time.In(jst)
 	barValue := starlarkstruct.FromStringDict(starlark.String("bar"), starlark.StringDict{
@@ -446,6 +452,22 @@ func (r *scriptRun) predeclared(p starlark.Value) starlark.StringDict {
 		"atr": indicatorFn("atr", func(period int) func(int) (float64, bool) {
 			ind := indicator.NewATR(period)
 			return func(i int) (float64, bool) { return ind.Update(r.highs[i], r.lows[i], r.closes[i]) }
+		}),
+		// data(name) is the latest value of an outside series (see Data) that was
+		// public when the current bar opened, or None.
+		"data": starlark.NewBuiltin("data", func(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			name := ""
+			if err := starlark.UnpackArgs(b.Name(), args, kwargs, "name", &name); err != nil {
+				return nil, err
+			}
+			if r.data == nil || r.barTime.IsZero() {
+				return starlark.None, nil
+			}
+			v, ok := r.data.At(name, r.barTime)
+			if !ok {
+				return starlark.None, nil
+			}
+			return starlark.Float(v), nil
 		}),
 		"highest": indicatorFn("highest", window(&r.highs, math.Max)),
 		"lowest":  indicatorFn("lowest", window(&r.lows, math.Min)),

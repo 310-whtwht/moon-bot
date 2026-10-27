@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/moomoo-trading/api/internal/audit"
@@ -13,6 +14,7 @@ import (
 	"github.com/moomoo-trading/api/internal/middleware"
 	"github.com/moomoo-trading/api/internal/redis"
 	"github.com/moomoo-trading/core/broker/gmofx"
+	"github.com/moomoo-trading/core/series"
 )
 
 func main() {
@@ -70,7 +72,8 @@ func main() {
 	// Bars and the instrument list come from GMO's public API (no key needed).
 	gmoPublic := gmofx.New(gmofx.Options{})
 	botHandler := handlers.NewBotHandler(botRepo, gmoPublic)
-	chartHandler := handlers.NewChartHandler(botRepo, gmoPublic)
+	chartHandler := handlers.NewChartHandler(botRepo, gmoPublic,
+		&series.Cache{Load: series.MySQLStore{DB: db}.Load, TTL: time.Hour, Logf: log.Printf})
 	marketDataHandler := handlers.NewMarketDataHandler(database.NewMarketDataRepository(db), gmoPublic)
 	auditHandler := handlers.NewAuditHandler(audit.NewTraceManager(gormDB, redisClient))
 

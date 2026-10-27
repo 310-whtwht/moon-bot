@@ -11,6 +11,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/moomoo-trading/bot/internal/config"
+	"github.com/moomoo-trading/bot/internal/cotcmd"
 	"github.com/moomoo-trading/bot/internal/imports"
 	"github.com/moomoo-trading/bot/internal/jobs"
 	"github.com/moomoo-trading/bot/internal/trader"
@@ -19,6 +20,7 @@ import (
 	"github.com/moomoo-trading/core/broker/gmofx"
 	"github.com/moomoo-trading/core/broker/paper"
 	"github.com/moomoo-trading/core/marketdata"
+	"github.com/moomoo-trading/core/series"
 	"github.com/redis/go-redis/v9"
 	"github.com/shopspring/decimal"
 )
@@ -61,6 +63,7 @@ func (w *Worker) Start(ctx context.Context) error {
 	runner := &jobs.BacktestRunner{
 		Store: &jobs.MySQLBacktestStore{DB: db},
 		Bars:  marketdata.NewMySQLBarStore(db),
+		Data:  &series.Cache{Load: series.MySQLStore{DB: db}.Load, TTL: time.Hour, Logf: log.Printf},
 	}
 	host, _ := os.Hostname()
 	consumer := &jobs.Consumer{
@@ -95,6 +98,13 @@ func (w *Worker) Start(ctx context.Context) error {
 	go func() {
 		defer w.wg.Done()
 		_ = importer.Run(runCtx)
+	}()
+
+	// Outside data for scripts (data(name)): the COT reports, refreshed here.
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		cotcmd.Loop(runCtx, db, log.Printf)
 	}()
 
 	if w.config.Trader.Enabled {
@@ -171,6 +181,8 @@ func (w *Worker) startTrader(ctx context.Context) error {
 		Config: trader.Config{
 			AccountLimits: tc.AccountLimits, GlobalLimits: tc.GlobalLimits,
 			ReconcileInterval: tc.ReconcileInterval,
+			// Reloaded hourly, so a new weekly report reaches running strategies.
+			Data: &series.Cache{Load: series.MySQLStore{DB: w.db}.Load, TTL: time.Hour, Logf: log.Printf},
 		},
 	}
 	quotes := trader.StreamQuotes(ctx, source, store, tc.PollInterval, log.Printf)

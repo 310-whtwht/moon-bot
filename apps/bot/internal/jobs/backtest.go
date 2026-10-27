@@ -12,6 +12,7 @@ import (
 
 	"github.com/moomoo-trading/core/backtest"
 	"github.com/moomoo-trading/core/marketdata"
+	"github.com/moomoo-trading/core/strategy"
 )
 
 // maxEquityPoints keeps stored results small enough for the UI.
@@ -38,7 +39,9 @@ type BacktestStore interface {
 type BacktestRunner struct {
 	Store BacktestStore
 	Bars  marketdata.BarStore
-	Logf  func(format string, args ...any)
+	// Data is the outside data scripts read with data(name) (optional).
+	Data strategy.Data
+	Logf func(format string, args ...any)
 }
 
 func (r *BacktestRunner) logf(format string, args ...any) {
@@ -85,7 +88,7 @@ func (r *BacktestRunner) run(ctx context.Context, c Claim) ([]byte, error) {
 		return nil, err
 	}
 	res, err := backtest.Run(candles, backtest.Config{
-		Strategy: def, Params: c.Spec.StrategyParams,
+		Strategy: def.WithData(r.Data), Params: c.Spec.StrategyParams,
 		Units: c.Spec.Units, InitialBalance: c.Spec.InitialBalance,
 	})
 	if err != nil {

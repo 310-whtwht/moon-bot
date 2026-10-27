@@ -105,11 +105,13 @@ func (c *barCache) recent(ctx context.Context, symbol string, tf market.Timefram
 type ChartHandler struct {
 	repo  *database.BotRepository
 	cache *barCache
-	now   func() time.Time
+	// data is the outside data scripts read with data(name) (may be nil).
+	data strategy.Data
+	now  func() time.Time
 }
 
-func NewChartHandler(repo *database.BotRepository, src barSource) *ChartHandler {
-	return &ChartHandler{repo: repo, cache: newBarCache(src), now: time.Now}
+func NewChartHandler(repo *database.BotRepository, src barSource, data strategy.Data) *ChartHandler {
+	return &ChartHandler{repo: repo, cache: newBarCache(src), data: data, now: time.Now}
 }
 
 type chartBar struct {
@@ -132,7 +134,7 @@ type chartSignal struct {
 // entries, reversals and stop-outs follow the same rules as a backtest. Only
 // BID bars are at hand: the spread and fees are ignored, which is fine for
 // showing where signals fall but not for judging profit.
-func replaySignals(typ, script string, params map[string]float64, bars []market.Bar) []chartSignal {
+func replaySignals(typ, script string, params map[string]float64, bars []market.Bar, data strategy.Data) []chartSignal {
 	def, err := strategy.Define(typ, script)
 	if err != nil || len(bars) == 0 {
 		return nil
@@ -147,7 +149,7 @@ func replaySignals(typ, script string, params map[string]float64, bars []market.
 	}
 	// One unit against a balance that never runs out: only the timing matters.
 	result, err := backtest.Run(candles, backtest.Config{
-		Strategy: def, Params: strategy.Params(params), Units: 1, InitialBalance: 1e12,
+		Strategy: def.WithData(data), Params: strategy.Params(params), Units: 1, InitialBalance: 1e12,
 	})
 	if err != nil {
 		return nil
@@ -234,7 +236,7 @@ func (h *ChartHandler) GetChart(c *gin.Context) {
 
 	var signals []chartSignal
 	if strategy != nil {
-		signals = replaySignals(strategy.Type, strategy.Script, strategy.Params, bars)
+		signals = replaySignals(strategy.Type, strategy.Script, strategy.Params, bars, h.data)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{

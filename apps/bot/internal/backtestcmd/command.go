@@ -23,6 +23,7 @@ import (
 	"github.com/moomoo-trading/core/broker/gmofx"
 	"github.com/moomoo-trading/core/market"
 	"github.com/moomoo-trading/core/marketdata"
+	"github.com/moomoo-trading/core/series"
 	"github.com/moomoo-trading/core/strategy"
 )
 
@@ -183,10 +184,11 @@ func Run(ctx context.Context, cfg *config.Config, args []string, out io.Writer) 
 		}
 	}
 
+	data := &series.Cache{Load: series.MySQLStore{DB: db}.Load}
 	var results []*backtest.Result
 	for _, params := range grid(opts.params, opts.sweeps) {
 		res, err := backtest.Run(candles, backtest.Config{
-			Strategy: def, Params: params, Units: opts.units,
+			Strategy: def.WithData(data), Params: params, Units: opts.units,
 			InitialBalance: opts.balance, FeeRate: opts.feeRate, Slippage: opts.slippage,
 		})
 		if err != nil {
