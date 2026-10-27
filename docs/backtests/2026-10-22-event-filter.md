@@ -1,7 +1,7 @@
 # 経済指標の発表で見送るフィルターの評価
 
 - 日付: 2026-10-22
-- 予定表: [research/events/us_jp_events.csv](../../research/events/us_jp_events.csv)（2023-10〜2026-10、122件）
+- 予定表: [research/events/us_jp_events.csv](../../research/events/us_jp_events.csv)（2023-10〜2027-12、168件。2026-11 以降は予定）
   - 米雇用統計（us_nfp）・米CPI（us_cpi）: 米国東部時間 8:30。BLS のアーカイブのファイル名から発表日を取った（2025年10月分は政府閉鎖で未発表）
   - FOMC（fomc）: 会合の最終日の 14:00（米国東部時間）。FRB の会合予定表から取った
   - 日銀の金融政策決定会合（boj）: 最終日の 12:00 JST を代表値にした（実際は 11時台〜13時台でばらつく）。日銀の会合予定表から取った

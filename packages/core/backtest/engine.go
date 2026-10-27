@@ -7,6 +7,7 @@
 //   - The protective stop is checked against each bar's BID low (long) or
 //     ASK high (short); a gap through the stop fills at the open.
 //   - Fees are a rate on traded notional (GMO FX API fee: 0.002%).
+//   - An optional slippage makes every fill that much worse than the quote.
 //   - One position at a time; P&L is in yen. For pairs quoted in another
 //     currency it is converted at each candle's QuoteRate.
 package backtest
@@ -49,6 +50,10 @@ type Config struct {
 	InitialBalance float64 // in yen
 	FeeRate        float64
 	Leverage       float64
+	// Slippage is an extra cost per fill, in the quote currency (0.005 = 0.5
+	// sen on a yen pair): every entry and exit, stops included, fills that much
+	// worse than the quote. It stresses strategies that earn little per trade.
+	Slippage float64
 }
 
 // Trade is a completed round trip.
@@ -213,6 +218,11 @@ func (r *run) execute(sig strategy.Signal, refClose float64, c Candle) {
 			distance = sig.StopLoss - refClose
 			entry, stop = c.Bid.Open, c.Ask.Open+distance
 		}
+		if side == strategy.Long {
+			entry += r.cfg.Slippage
+		} else {
+			entry -= r.cfg.Slippage
+		}
 		if r.cfg.Units*entry*c.yen()/r.cfg.Leverage > r.balance {
 			r.result.SkippedEntries++
 			return
@@ -244,6 +254,11 @@ func (r *run) checkStop(c Candle) {
 func (r *run) close(c Candle, price float64, reason string) {
 	p := r.pos
 	at := c.Time
+	if p.side == strategy.Long {
+		price -= r.cfg.Slippage
+	} else {
+		price += r.cfg.Slippage
+	}
 	gross := (price - p.entryPrice) * r.cfg.Units * c.yen()
 	if p.side == strategy.Short {
 		gross = -gross

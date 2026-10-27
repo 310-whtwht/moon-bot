@@ -28,7 +28,9 @@ type BackfillResult struct {
 }
 
 // Backfiller downloads bars from a broker into a store. It resumes from the
-// newest stored bar, so it can be interrupted and re-run safely.
+// newest stored bar, so it can be interrupted and re-run safely. When the store
+// can report its oldest bar (EarliestOpenTimer) and the request starts before
+// it, the missing older range is downloaded first.
 type Backfiller struct {
 	Source broker.MarketData
 	Store  BarStore
@@ -73,36 +75,51 @@ func (b *Backfiller) Run(ctx context.Context, req BackfillRequest) ([]BackfillRe
 		if err != nil {
 			return results, err
 		}
-		if ok && !latest.Add(barLen).Before(start) {
-			start = latest.Add(barLen)
+		var ranges [][2]time.Time
+		if ok {
+			if et, can := b.Store.(EarliestOpenTimer); can {
+				earliest, found, err := et.EarliestOpenTime(ctx, key, req.Timeframe, pt)
+				if err != nil {
+					return results, err
+				}
+				if found && start.Before(earliest) {
+					ranges = append(ranges, [2]time.Time{start, earliest})
+				}
+			}
+			if !latest.Add(barLen).Before(start) {
+				start = latest.Add(barLen)
+			}
 		}
+		ranges = append(ranges, [2]time.Time{start, req.To})
 
 		result := BackfillResult{PriceType: pt, ResumedAt: start}
-		for chunkStart := start; chunkStart.Before(req.To); chunkStart = chunkStart.Add(chunkSize(req.Timeframe)) {
-			chunkEnd := chunkStart.Add(chunkSize(req.Timeframe))
-			if chunkEnd.After(req.To) {
-				chunkEnd = req.To
-			}
+		for _, r := range ranges {
+			for chunkStart := r[0]; chunkStart.Before(r[1]); chunkStart = chunkStart.Add(chunkSize(req.Timeframe)) {
+				chunkEnd := chunkStart.Add(chunkSize(req.Timeframe))
+				if chunkEnd.After(r[1]) {
+					chunkEnd = r[1]
+				}
 
-			bars, err := b.Source.Bars(ctx, broker.BarsRequest{
-				Symbol: req.Symbol, Timeframe: req.Timeframe, PriceType: pt,
-				From: chunkStart, To: chunkEnd,
-			})
-			if errors.Is(err, broker.ErrNoData) {
-				continue
-			}
-			if err != nil {
-				return append(results, result), fmt.Errorf("backfill %s %s %s..%s: %w",
-					key, pt, chunkStart.Format(time.RFC3339), chunkEnd.Format(time.RFC3339), err)
-			}
-			if err := b.Store.UpsertBars(ctx, bars); err != nil {
-				return append(results, result), err
-			}
-			result.Stored += len(bars)
-			b.logf("backfill %s %s %s: %s..%s +%d bars (total %d)", key, req.Timeframe, pt,
-				chunkStart.Format("2006-01-02"), chunkEnd.Format("2006-01-02"), len(bars), result.Stored)
-			if b.OnProgress != nil {
-				b.OnProgress(pt, chunkEnd, result.Stored)
+				bars, err := b.Source.Bars(ctx, broker.BarsRequest{
+					Symbol: req.Symbol, Timeframe: req.Timeframe, PriceType: pt,
+					From: chunkStart, To: chunkEnd,
+				})
+				if errors.Is(err, broker.ErrNoData) {
+					continue
+				}
+				if err != nil {
+					return append(results, result), fmt.Errorf("backfill %s %s %s..%s: %w",
+						key, pt, chunkStart.Format(time.RFC3339), chunkEnd.Format(time.RFC3339), err)
+				}
+				if err := b.Store.UpsertBars(ctx, bars); err != nil {
+					return append(results, result), err
+				}
+				result.Stored += len(bars)
+				b.logf("backfill %s %s %s: %s..%s +%d bars (total %d)", key, req.Timeframe, pt,
+					chunkStart.Format("2006-01-02"), chunkEnd.Format("2006-01-02"), len(bars), result.Stored)
+				if b.OnProgress != nil {
+					b.OnProgress(pt, chunkEnd, result.Stored)
+				}
 			}
 		}
 		results = append(results, result)
