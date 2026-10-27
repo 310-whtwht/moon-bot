@@ -10,6 +10,12 @@
 # 長期データ（FRED、1985〜2026）での評価は docs/backtests/2026-10-27-longterm-donchian-cot.md。
 # 研究と同じく終値だけで判断する。日中の高値・安値で入ったり決済したりはしない。
 # 入るときの損切り（stop_atr × ATR）は、急な動きへの備え。研究には無い。
+#
+# cot_filter 1 のとき、投機筋（CFTC の COT、円先物）が自分と逆の向きに偏っているときは入らない。
+#   買い … 円買いに偏っているとき（data("cot_jpy_pct") が cot_skip_pct より上）は見送る
+#   売り … 円売りに偏っているとき（100 − cot_skip_pct より下）は見送る
+# 値は直近3年の中での位置（0〜100）。ボットが CFTC から週に1回取り込む。値が無いときは判定しない。
+# 円が相手の銘柄（USD/JPY など）向け。
 
 PARAMS = {
     "entry_n": 50,
@@ -17,6 +23,8 @@ PARAMS = {
     "carry_sign": 1,
     "atr_period": 20,
     "stop_atr": 5.0,
+    "cot_filter": 1,
+    "cot_skip_pct": 66.7,
 }
 
 def channel(n, pick):
@@ -47,9 +55,17 @@ def on_bar(bar, pos):
                 return exit(reason="%d日高値を超えた" % exit_n)
         return hold()
 
-    explain("入るライン 買い " + num(hi_entry) + " / 売り " + num(lo_entry) + "（向き " + str(int(p.carry_sign)) + "）")
+    cot = data("cot_jpy_pct")
+    explain("入るライン 買い " + num(hi_entry) + " / 売り " + num(lo_entry) + "（向き " + str(int(p.carry_sign)) +
+            "、COT 円 " + num(cot, digits=0) + "）")
     if p.carry_sign > 0 and c > hi_entry:
+        if p.cot_filter == 1 and cot != None and cot > p.cot_skip_pct:
+            explain("%d日高値を超えたが、投機筋が円買いに偏っている（COT %s）ので見送る" % (entry_n, num(cot, digits=0)))
+            return hold()
         return buy(stop=c - p.stop_atr * a, reason="%d日高値を超えた" % entry_n)
     if p.carry_sign < 0 and c < lo_entry:
+        if p.cot_filter == 1 and cot != None and cot < 100 - p.cot_skip_pct:
+            explain("%d日安値を割ったが、投機筋が円売りに偏っている（COT %s）ので見送る" % (entry_n, num(cot, digits=0)))
+            return hold()
         return sell(stop=c + p.stop_atr * a, reason="%d日安値を割った" % entry_n)
     return hold()
