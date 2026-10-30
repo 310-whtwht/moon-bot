@@ -11,6 +11,8 @@
 # 研究と同じく終値だけで判断する。日中の高値・安値で入ったり決済したりはしない。
 # 入るときの損切り（stop_atr × ATR）は、急な動きへの備え。研究には無い。
 #
+# 決済は40日安値、COT の判定は切っている（評価は docs/backtests/2026-10-30-donchian-portfolio.md）。
+#
 # cot_filter 1 のとき、投機筋（CFTC の COT、円先物）が自分と逆の向きに偏っているときは入らない。
 #   買い … 円買いに偏っているとき（data("cot_jpy_pct") が cot_skip_pct より上）は見送る
 #   売り … 円売りに偏っているとき（100 − cot_skip_pct より下）は見送る
@@ -19,11 +21,11 @@
 
 PARAMS = {
     "entry_n": 50,
-    "exit_n": 20,
+    "exit_n": 40,
     "carry_sign": 1,
     "atr_period": 20,
     "stop_atr": 5.0,
-    "cot_filter": 1,
+    "cot_filter": 0,
     "cot_skip_pct": 66.7,
 }
 
