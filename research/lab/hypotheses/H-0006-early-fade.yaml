@@ -1,0 +1,19 @@
+id: H-0006
+revision: 1
+stage: idea
+flow: F-004
+title: 早朝の動きの戻り
+why: 6〜7時のスプレッドの拡大で損切りが不利な値で約定し、スプレッドが戻ると動いた分も戻る
+counterparty: 拡大したスプレッドで損切りにかかる個人
+script: research/early_fade.star
+symbol: USD_JPY
+others: [GBP_JPY, EUR_JPY, AUD_JPY]
+interval: 5m
+from: "2023-10-28"
+slippage: 0.005
+params: {}
+neighbors:
+  thresh_atr: [2, 4]
+  exit_min: [480, 540]
+  stop_atr: [2, 4]
+found_on_same_data: false

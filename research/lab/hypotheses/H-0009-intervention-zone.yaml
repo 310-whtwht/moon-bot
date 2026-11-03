@@ -1,0 +1,19 @@
+id: H-0009
+revision: 1
+stage: idea
+flow: F-007
+title: 介入を警戒する価格帯の売り
+why: 過去の介入の水準に近づくと、介入を恐れて買いが減る。水準は 2024年7月までの公知の値で、それより後の介入の有無は未確認
+counterparty: 水準の近くで買い続け、介入を恐れて手仕舞う参加者
+script: research/intervention_zone.star
+symbol: USD_JPY
+others: []
+interval: 5m
+from: "2023-10-28"
+slippage: 0.005
+params: {}
+neighbors:
+  zone: [0.5, 1.5]
+  hold_bars: [144, 432]
+  stop_yen: [0.7, 1.5]
+found_on_same_data: false

@@ -1,0 +1,18 @@
+id: H-0003
+revision: 1
+stage: idea
+flow: F-000
+title: 月末のフィキシングのあとの買い
+why: 月末の 16:00（ロンドン）のあと、USD/JPY が上がりやすい。理由は未確認（フィキシングの注文は 16:00 で終わるはず）
+counterparty: 不明
+script: research/month_end_fix.star
+symbol: USD_JPY
+others: [GBP_JPY, EUR_JPY, AUD_JPY]
+interval: 5m
+from: "2023-10-28"
+slippage: 0.005
+params: {}
+neighbors:
+  hold_bars: [6, 18]
+  stop_atr: [2, 4]
+found_on_same_data: true

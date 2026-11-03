@@ -1,0 +1,19 @@
+id: H-0005
+revision: 1
+stage: idea
+flow: F-003
+title: スワップを受け取ったあとの売り
+why: 3日分のスワップを受け取ると、持ち続ける理由がなくなった建玉が閉じられる
+counterparty: スワップを目的に持ち、受け取ったあとに値を選ばず閉じる参加者
+script: research/swap_after_grant.star
+symbol: USD_JPY
+others: [GBP_JPY, EUR_JPY, AUD_JPY]
+interval: 5m
+from: "2023-10-28"
+slippage: 0.005
+params: {}
+neighbors:
+  entry_min: [465, 480]
+  exit_min: [540, 600]
+  stop_atr: [2, 4]
+found_on_same_data: false
