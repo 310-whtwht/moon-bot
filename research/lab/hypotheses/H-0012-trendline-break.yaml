@@ -1,0 +1,18 @@
+id: H-0012
+revision: 1
+stage: paper
+flow: F-010
+title: トレンドラインのライン抜け（Paper の 1.0.0）
+why: 線の外に置かれた損切りの注文が、抜けたときに値を選ばず約定し、抜けた向きに動きが続く
+counterparty: トレンドラインの外に損切りを置き、抜けで決済させられる個人
+script: trendline.star
+symbol: USD_JPY
+others: [GBP_JPY, EUR_JPY, AUD_JPY]
+interval: 1h
+from: "2023-10-28"
+slippage: 0.005
+params: {mode: 1, pivot: 10, max_age: 150, atr_period: 14, stop_atr: 2.0, touch_atr: 0.3}
+neighbors:
+  pivot: [8, 12]
+  stop_atr: [1.5, 2.5]
+found_on_same_data: true

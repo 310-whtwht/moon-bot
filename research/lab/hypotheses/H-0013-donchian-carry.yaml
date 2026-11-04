@@ -1,0 +1,19 @@
+id: H-0013
+revision: 1
+stage: paper
+flow: F-011
+title: ドンチャン・ブレイク（金利差の向き、Paper の 1.2.0）
+why: 金利の高い通貨を持ち続ける資金が、金利差の向きの流れを長く続かせる
+counterparty: 金利差に逆らって持つ参加者と、流れに遅れて乗る参加者
+script: research/donchian_carry.star
+symbol: USD_JPY
+others: [GBP_JPY, EUR_JPY, AUD_JPY]
+interval: 1d
+from: "2023-10-28"
+slippage: 0.005
+params: {entry_n: 50, exit_n: 40, carry_sign: 1, atr_period: 20, stop_atr: 5.0, cot_filter: 0, cot_skip_pct: 66.7}
+neighbors:
+  entry_n: [40, 60]
+  exit_n: [30, 50]
+  stop_atr: [4, 6]
+found_on_same_data: true
