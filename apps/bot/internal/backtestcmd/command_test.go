@@ -3,6 +3,7 @@ package backtestcmd
 import (
 	"bytes"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,4 +62,20 @@ func TestWriteCandlesCSV(t *testing.T) {
 	}}))
 	assert.Equal(t, "time,bid_open,bid_high,bid_low,bid_close,ask_open,ask_high,ask_low,ask_close,quote_rate\n"+
 		"2026-10-05T00:55:00Z,150.1,150.2,150,150.15,150.102,150.202,150.002,150.152,0\n", buf.String())
+}
+
+func TestReadCandlesCSVRoundTrip(t *testing.T) {
+	want := []backtest.Candle{{
+		Time: time.Date(2026, 10, 5, 0, 55, 0, 0, time.UTC),
+		Bid:  backtest.OHLC{Open: 150.1, High: 150.2, Low: 150, Close: 150.15},
+		Ask:  backtest.OHLC{Open: 150.102, High: 150.202, Low: 150.002, Close: 150.152},
+	}}
+	var buf bytes.Buffer
+	require.NoError(t, writeCandlesCSV(&buf, want))
+	got, err := readCandlesCSV(&buf)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+
+	_, err = readCandlesCSV(strings.NewReader("a,b\n1,2\n"))
+	assert.Error(t, err, "a file without the -candles-out header is refused")
 }

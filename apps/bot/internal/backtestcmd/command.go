@@ -49,6 +49,11 @@ type options struct {
 	// candlesOut, when set, receives the loaded candles as CSV (for offline
 	// research such as training a trade filter).
 	candlesOut string
+	// candlesIn, when set, reads candles from a CSV file in the -candles-out
+	// format instead of the database (for markets the bot does not store,
+	// such as crypto). Data series (COT and the like) are not available then.
+	candlesIn string
+	leverage  float64
 }
 
 func parseFlags(args []string, now time.Time, stderr io.Writer) (options, error) {
@@ -69,6 +74,8 @@ func parseFlags(args []string, now time.Time, stderr io.Writer) (options, error)
 	slippage := fs.Float64("slippage", 0, "extra cost per fill in the quote currency (0.005 = 0.5 sen on a yen pair)")
 	jsonOut := fs.Bool("json", false, "print full results as JSON")
 	candlesOut := fs.String("candles-out", "", "also write the loaded candles to this CSV file")
+	candlesIn := fs.String("candles-in", "", "read candles from this CSV file (the -candles-out format) instead of the database")
+	leverage := fs.Float64("leverage", backtest.DefaultLeverage, "maximum leverage (25 for FX, 2 for crypto in Japan)")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -77,7 +84,7 @@ func parseFlags(args []string, now time.Time, stderr io.Writer) (options, error)
 		strategy: *strat, params: strategy.Params{}, sweeps: map[string][]float64{},
 		symbol: *symbol, timeframe: market.Timeframe(*interval),
 		units: *units, balance: *balance, feeRate: *feeRate, slippage: *slippage, jsonOut: *jsonOut,
-		candlesOut: *candlesOut,
+		candlesOut: *candlesOut, candlesIn: *candlesIn, leverage: *leverage,
 	}
 	if _, err := opts.timeframe.Duration(); err != nil {
 		return options{}, err
@@ -167,16 +174,28 @@ func Run(ctx context.Context, cfg *config.Config, args []string, out io.Writer) 
 		return err
 	}
 
-	db, err := sql.Open("mysql", cfg.Database.DSN())
-	if err != nil {
-		return err
-	}
-	defer db.Close()
+	var candles []backtest.Candle
+	var data *series.Cache
+	if opts.candlesIn != "" {
+		if candles, err = readCandlesFile(opts.candlesIn, opts.from, opts.to); err != nil {
+			return err
+		}
+		data = &series.Cache{Load: func(context.Context, string) ([]series.Point, error) {
+			return nil, fmt.Errorf("data series are not available with -candles-in")
+		}}
+	} else {
+		db, err := sql.Open("mysql", cfg.Database.DSN())
+		if err != nil {
+			return err
+		}
+		defer db.Close()
 
-	key := market.InstrumentKey{Broker: gmofx.BrokerName, Symbol: opts.symbol}
-	candles, err := backtest.LoadCandles(ctx, marketdata.NewMySQLBarStore(db), key, opts.timeframe, opts.from, opts.to)
-	if err != nil {
-		return err
+		key := market.InstrumentKey{Broker: gmofx.BrokerName, Symbol: opts.symbol}
+		candles, err = backtest.LoadCandles(ctx, marketdata.NewMySQLBarStore(db), key, opts.timeframe, opts.from, opts.to)
+		if err != nil {
+			return err
+		}
+		data = &series.Cache{Load: series.MySQLStore{DB: db}.Load}
 	}
 	if opts.candlesOut != "" {
 		if err := writeCandlesFile(opts.candlesOut, candles); err != nil {
@@ -184,12 +203,11 @@ func Run(ctx context.Context, cfg *config.Config, args []string, out io.Writer) 
 		}
 	}
 
-	data := &series.Cache{Load: series.MySQLStore{DB: db}.Load}
 	var results []*backtest.Result
 	for _, params := range grid(opts.params, opts.sweeps) {
 		res, err := backtest.Run(candles, backtest.Config{
 			Strategy: def.WithData(data), Params: params, Units: opts.units,
-			InitialBalance: opts.balance, FeeRate: opts.feeRate, Slippage: opts.slippage,
+			InitialBalance: opts.balance, FeeRate: opts.feeRate, Slippage: opts.slippage, Leverage: opts.leverage,
 		})
 		if err != nil {
 			// Invalid combinations (e.g. fast >= slow) are reported and skipped.
@@ -218,6 +236,56 @@ func writeCandlesFile(path string, candles []backtest.Candle) error {
 		return err
 	}
 	return f.Close()
+}
+
+// readCandlesFile reads candles written by writeCandlesCSV, keeping those in [from, to).
+func readCandlesFile(path string, from, to time.Time) ([]backtest.Candle, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open -candles-in: %w", err)
+	}
+	defer f.Close()
+	candles, err := readCandlesCSV(f)
+	if err != nil {
+		return nil, err
+	}
+	out := candles[:0]
+	for _, c := range candles {
+		if !c.Time.Before(from) && c.Time.Before(to) {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("-candles-in: no candles between %s and %s", from.Format("2006-01-02"), to.Format("2006-01-02"))
+	}
+	return out, nil
+}
+
+func readCandlesCSV(r io.Reader) ([]backtest.Candle, error) {
+	rows, err := csv.NewReader(r).ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("read -candles-in: %w", err)
+	}
+	if len(rows) == 0 || len(rows[0]) != 10 || rows[0][0] != "time" {
+		return nil, fmt.Errorf("-candles-in: want the -candles-out header")
+	}
+	candles := make([]backtest.Candle, 0, len(rows)-1)
+	for i, row := range rows[1:] {
+		t, err := time.Parse(time.RFC3339, row[0])
+		if err != nil {
+			return nil, fmt.Errorf("-candles-in line %d: %w", i+2, err)
+		}
+		v := make([]float64, 9)
+		for j := range v {
+			if v[j], err = strconv.ParseFloat(row[j+1], 64); err != nil {
+				return nil, fmt.Errorf("-candles-in line %d: %w", i+2, err)
+			}
+		}
+		candles = append(candles, backtest.Candle{Time: t.UTC(),
+			Bid: backtest.OHLC{Open: v[0], High: v[1], Low: v[2], Close: v[3]},
+			Ask: backtest.OHLC{Open: v[4], High: v[5], Low: v[6], Close: v[7]}, QuoteRate: v[8]})
+	}
+	return candles, nil
 }
 
 // writeCandlesCSV writes one row per candle: time (RFC 3339, UTC), BID and ASK

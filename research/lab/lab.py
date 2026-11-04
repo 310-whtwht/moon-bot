@@ -6,7 +6,7 @@
 
   uv run research/lab/lab.py flows              注文の流れの一覧を出す（案はここから作る）
   uv run research/lab/lab.py new <id-短い名前> <流れの id>   仮説カードを作る
-  uv run research/lab/lab.py run <カードのファイル名>   検査を実行する
+  uv run research/lab/lab.py run <カードのファイル名> [銘柄]   検査を実行する（銘柄はカードの symbol を上書きする）
   uv run research/lab/lab.py status             一覧を出す
 
 ボットのバックテストを実行して読むだけで、Paper・本番・データベースの設定は変えない。
@@ -34,6 +34,9 @@ VERDICTS = HERE / "verdicts"
 LEDGER = HERE / "ledger.csv"
 CACHE = HERE / ".cache"
 FLOWS = HERE / "flows.yaml"
+# 足をファイルから読むカード（market: が書かれたもの）は、手元で作ったボットで動かす。
+# 作り方: (cd apps/bot && go build -o ../../research/lab/.cache/bot .)
+BOT_BIN = CACHE / "bot"
 LEGACY_CARDS = ("H-0002", "H-0003")  # 流れの台帳より前に作った、相手を説明できないカード
 REQUIRED = ("id", "revision", "flow", "title", "why", "counterparty", "script", "symbol", "interval", "params", "neighbors")
 TEMPLATE = """\
@@ -107,10 +110,29 @@ def check_locked(rows, card, digest):
                      "revision を上げて、変えた理由を why に書いてください（新しい試行として数えます）。")
 
 
-def backtest(card, symbol, slippage, params, candles=False):
-    cmd = ["docker", "compose", "run", "--rm", "-T", "-v", f"{ROOT}/strategies:/strategies:ro", "-v", f"{CACHE}:/out",
-           "bot", "backtest", "-script", f"/strategies/{card['script']}", "-symbol", symbol,
-           "-interval", card["interval"], "-from", str(card["from"]), "-slippage", str(slippage), "-json"]
+def candles_path(card, symbol):
+    """足の CSV の場所。market: のあるカードはカードに書いた場所、ほかはボットが書き出す場所。"""
+    market = card.get("market")
+    if market:
+        return ROOT / market["candles"][symbol]
+    return CACHE / f"{symbol}_{card['interval']}.csv"
+
+
+def backtest(card, symbol, slippage, params, candles=False, cost=1):
+    """cost は手数料の倍率（market: のあるカードだけに効く。滑りの代わりに手数料でコストを見る）。"""
+    market = card.get("market")
+    if market:
+        if not BOT_BIN.exists():
+            sys.exit(f"{BOT_BIN} がありません。(cd apps/bot && go build -o ../../research/lab/.cache/bot .) で作ってください")
+        cmd = [str(BOT_BIN), "backtest", "-script", str(ROOT / "strategies" / card["script"]), "-symbol", symbol,
+               "-interval", card["interval"], "-from", str(card["from"]), "-slippage", str(slippage), "-json",
+               "-candles-in", str(candles_path(card, symbol)), "-fee-rate", str(market["fee_rate"][symbol] * cost),
+               "-units", str(market["units"][symbol]), "-leverage", str(market["leverage"]), "-balance", str(market["balance"])]
+        candles = False
+    else:
+        cmd = ["docker", "compose", "run", "--rm", "-T", "-v", f"{ROOT}/strategies:/strategies:ro", "-v", f"{CACHE}:/out",
+               "bot", "backtest", "-script", f"/strategies/{card['script']}", "-symbol", symbol,
+               "-interval", card["interval"], "-from", str(card["from"]), "-slippage", str(slippage), "-json"]
     for k, v in params.items():
         cmd += ["-param", f"{k}={v}"]
     if candles:
@@ -157,7 +179,7 @@ def warnings(card, trades, csv_path):
     return out + [n for n in notes if n]
 
 
-def run(name):
+def run(name, symbol=None):
     CACHE.mkdir(exist_ok=True)
     path = CARDS / name
     card = yaml.safe_load(path.read_text())
@@ -167,6 +189,10 @@ def run(name):
     check_flow(card, read_flows())
     rows, digest = read_ledger(), spec_hash(card)
     check_locked(rows, card, digest)
+    suffix = ""
+    if symbol:
+        # 同じカードをほかの銘柄で試す。指紋はカードのままで、台帳には銘柄ごとの試行として数える
+        card["symbol"], card["others"], suffix = symbol, [], f"-{symbol}"
     trials = trials_so_far(rows, card)
     slip, params = card.get("slippage", 0.005), card["params"]
 
@@ -174,14 +200,14 @@ def run(name):
     trades, metrics = backtest(card, card["symbol"], slip, params, candles=True)
     if not trades:
         sys.exit("取引が1回もありません")
-    stress, _ = backtest(card, card["symbol"], slip * gates.STRESS_SLIPPAGE, params)
+    stress, _ = backtest(card, card["symbol"], slip * gates.STRESS_SLIPPAGE, params, cost=gates.STRESS_SLIPPAGE)
     neighbor_pfs = []
     for key, values in card["neighbors"].items():
         for v in values:
             t, _ = backtest(card, card["symbol"], slip, {**params, key: v})
             neighbor_pfs.append(gates.pf(pnl_of(t)))
             print(f"  {key}={v}: PF {neighbor_pfs[-1]:.2f}")
-    p = random_p(trades, CACHE / f"{card['symbol']}_{card['interval']}.csv")
+    p = random_p(trades, candles_path(card, card["symbol"]))
     result = gates.evaluate(pnl_of(trades), pnl_of(stress), neighbor_pfs, p, trials)
     passed = all(g.passed for g in result)
 
@@ -192,7 +218,7 @@ def run(name):
         t, _ = backtest(card, s, slip, params)
         others[s] = {"trades": len(t), "pf": round(gates.pf(pnl_of(t)), 2)}
         print(f"  参考 {s}: {len(t)}回 PF {others[s]['pf']}")
-    notes = warnings(card, trades, CACHE / f"{card['symbol']}_{card['interval']}.csv")
+    notes = warnings(card, trades, candles_path(card, card["symbol"]))
     for w in notes:
         print(f"  注意: {w}")
     print(f"判定: {'合格（Paper の候補。進めるかは人が決める）' if passed else '不合格'}")
@@ -202,7 +228,7 @@ def run(name):
                        trades=len(trades), pf=round(gates.pf(pnl_of(trades)), 2), t=round(gates.t_value(pnl_of(trades)), 2),
                        trials=trials, passed=passed))
     VERDICTS.mkdir(exist_ok=True)
-    (VERDICTS / f"{card['id']}-r{card['revision']}.json").write_text(json.dumps({
+    (VERDICTS / f"{card['id']}-r{card['revision']}{suffix}.json").write_text(json.dumps({
         "id": card["id"], "revision": card["revision"], "time": now, "hash": digest, "trials": trials,
         "passed": passed, "gates": [g.__dict__ for g in result], "metrics": metrics, "others": others, "notes": notes,
     }, ensure_ascii=False, indent=2, default=lambda x: bool(x) if isinstance(x, np.bool_) else str(x)) + "\n")
