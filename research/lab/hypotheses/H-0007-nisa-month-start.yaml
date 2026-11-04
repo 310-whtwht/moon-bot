@@ -1,0 +1,19 @@
+id: H-0007
+revision: 1
+stage: idea
+flow: F-008
+title: 月初の積立の買い
+why: 月初に集まった積立の資金を、運用会社が値を選ばず外貨に替える
+counterparty: 積立の資金を決まった時期に替える運用会社。積立をする個人は値を選ばない
+script: research/nisa_month_start.star
+symbol: USD_JPY
+others: []
+interval: 5m
+from: "2023-10-28"
+slippage: 0.005
+params: {}
+neighbors:
+  business_day: [1, 3]
+  exit_min: [840, 960]
+  stop_atr: [4, 8]
+found_on_same_data: false

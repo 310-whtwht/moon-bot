@@ -1,0 +1,19 @@
+id: H-0010
+revision: 1
+stage: idea
+flow: F-009
+title: ロンドン16時のあとの戻り
+why: 公示の前1時間に偏った運用会社の注文が、公示で止まると動きが戻る
+counterparty: 公示の時刻に合わせて値を選ばず約定する運用会社
+script: research/london_fix_fade.star
+symbol: USD_JPY
+others: [GBP_JPY, EUR_JPY]
+interval: 5m
+from: "2023-10-28"
+slippage: 0.005
+params: {}
+neighbors:
+  thresh_atr: [2, 4]
+  hold_bars: [6, 24]
+  stop_atr: [2, 4]
+found_on_same_data: false

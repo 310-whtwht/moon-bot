@@ -1,0 +1,19 @@
+id: H-0008
+revision: 1
+stage: idea
+flow: F-005
+title: ロスカットのあとの戻り
+why: 買いに偏る個人の建玉が急落で強制決済され、連鎖が終わると売りが止まって戻る
+counterparty: 証拠金が足りなくなり、成行で決済される個人
+script: research/liquidation_rebound.star
+symbol: USD_JPY
+others: []
+interval: 5m
+from: "2023-10-28"
+slippage: 0.005
+params: {}
+neighbors:
+  thresh_atr: [6, 10]
+  hold_bars: [12, 36]
+  stop_atr: [2, 4]
+found_on_same_data: false

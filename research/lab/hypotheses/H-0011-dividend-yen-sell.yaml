@@ -1,0 +1,19 @@
+id: H-0011
+revision: 1
+stage: idea
+flow: F-006
+title: 配当の支払い時期の買い
+why: 日本企業の配当の支払い時期に、海外の株主が受け取った円を値を選ばず自国の通貨に替える
+counterparty: 円の配当を決まった時期に替える海外の株主と、その為替を受ける銀行
+script: research/dividend_yen_sell.star
+symbol: USD_JPY
+others: [EUR_JPY, GBP_JPY]
+interval: 5m
+from: "2023-10-28"
+slippage: 0.005
+params: {}
+neighbors:
+  days: [5, 15]
+  entry_min: [600, 720]
+  exit_min: [840, 960]
+found_on_same_data: false

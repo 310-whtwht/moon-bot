@@ -1,0 +1,18 @@
+id: H-0002
+revision: 1
+stage: idea
+flow: F-000
+title: RSI とボリンジャーバンドの逆張り（校正用。落ちるはずの例）
+why: 行き過ぎた値は戻る（生成 AI の提案。注文が出る理由は書かれていない）
+counterparty: 不明
+script: research/bb_reversion.star
+symbol: USD_JPY
+others: []
+interval: 1h
+from: "2023-10-28"
+slippage: 0.005
+params: {}
+neighbors:
+  period: [15, 30]
+  rsi_hi: [65, 75]
+found_on_same_data: false

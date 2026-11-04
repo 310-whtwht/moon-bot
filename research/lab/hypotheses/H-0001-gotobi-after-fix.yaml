@@ -1,0 +1,18 @@
+id: H-0001
+revision: 1
+stage: paper
+flow: F-001
+title: 仲値後の売り（ゴトー日）
+why: ゴトー日は輸入企業のドル買いが仲値に向けて集まり、公示で買いが止まるので、そのあと戻りやすい
+counterparty: 仲値でドルを買う企業。値を選ばず、決まった時刻に買う
+script: research/gotobi_v2.star
+symbol: USD_JPY
+others: [GBP_JPY, EUR_JPY, AUD_JPY]
+interval: 5m
+from: "2023-10-28"
+slippage: 0.005
+params: {}
+neighbors:
+  exit_min: [610, 630]
+  stop_atr: [2, 4]
+found_on_same_data: true
