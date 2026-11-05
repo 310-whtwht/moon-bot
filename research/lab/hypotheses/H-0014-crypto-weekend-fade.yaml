@@ -1,0 +1,31 @@
+id: H-0014
+revision: 2
+stage: idea
+flow: F-012
+title: 仮想通貨の週末の動きの戻り
+why: CME の先物が閉まる週末は、薄い板で個人の注文だけが値を動かし、機関が戻る週明けに戻る（r2。r1 は大きさの基準が厳しく取引が2〜29回で判定できなかった。基準は損益を見ずに、取引の回数だけで決め直した）
+counterparty: 週末の薄い板で、値を追って売買する個人
+script: research/crypto_weekend_fade.star
+symbol: BTC_JPY
+others: []
+interval: 1h
+from: "2021-01-01"
+slippage: 0
+params: {thresh_atr: 0}
+neighbors:
+  thresh_atr: [1, 2]
+  hold_bars: [12, 48]
+  stop_atr: [4, 8]
+found_on_same_data: false
+market:
+  candles:
+    BTC_JPY: research/lab/.cache/crypto/BTC_JPY_1h.csv
+    ETH_JPY: research/lab/.cache/crypto/ETH_JPY_1h.csv
+    DOT_JPY: research/lab/.cache/crypto/DOT_JPY_1h.csv
+    ATOM_JPY: research/lab/.cache/crypto/ATOM_JPY_1h.csv
+  # 1回の約定ごとのコスト（手数料の率）。今のスプレッドの半分の2倍＋取引の手数料、最低 0.05%
+  # （2026-11-04 の板: BTC 0.013%、ETH 0.058%、DOT 0.678%、ATOM 0.445%。DOT・ATOM は手数料 0.03%）
+  fee_rate: {BTC_JPY: 0.0005, ETH_JPY: 0.0006, DOT_JPY: 0.0071, ATOM_JPY: 0.0047}
+  units: {BTC_JPY: 0.01, ETH_JPY: 0.3, DOT_JPY: 500, ATOM_JPY: 300}
+  leverage: 2
+  balance: 1000000

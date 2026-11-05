@@ -1,0 +1,73 @@
+{
+  "id": "H-0016",
+  "revision": 2,
+  "time": "2026-11-04T06:30:59+00:00",
+  "hash": "516817c74413",
+  "trials": 134,
+  "passed": false,
+  "gates": [
+    {
+      "name": "回数",
+      "passed": true,
+      "detail": "732回（30回以上）"
+    },
+    {
+      "name": "偶然でないか",
+      "passed": false,
+      "detail": "t -1.13（134通り試した分で 3.13 以上）"
+    },
+    {
+      "name": "利益の厚み",
+      "passed": false,
+      "detail": "PF 0.88（1.3 以上）"
+    },
+    {
+      "name": "前半と後半",
+      "passed": false,
+      "detail": "PF 1.00 / 0.77（どちらも 1 超）"
+    },
+    {
+      "name": "最近の3分の1",
+      "passed": false,
+      "detail": "PF 0.70（1 超）"
+    },
+    {
+      "name": "大勝ち頼みでないか",
+      "passed": false,
+      "detail": "大きい3回を除いて PF 0.83（1.1 以上）"
+    },
+    {
+      "name": "コストへの強さ",
+      "passed": false,
+      "detail": "滑り3倍で PF 0.37（1.1 以上）"
+    },
+    {
+      "name": "値を少しずらす",
+      "passed": false,
+      "detail": "6通り、PF>1 が 33%、中央 0.86"
+    },
+    {
+      "name": "でたらめな売買に勝つか",
+      "passed": true,
+      "detail": "p 0.0005（0.01 以下）"
+    }
+  ],
+  "metrics": {
+    "initial_balance": 1000000,
+    "final_equity": 974384.5804283365,
+    "net_profit": -25615.419571663486,
+    "total_return": -0.025615419571663467,
+    "cagr": -0.009178902899235286,
+    "max_drawdown": 0.0377377334861659,
+    "sharpe": -0.5615579052957738,
+    "num_trades": 732,
+    "win_rate": 0.4726775956284153,
+    "profit_factor": 0.8832069148942546,
+    "avg_trade": -34.99374258423957,
+    "sqn": -1.133251646485523,
+    "total_fees": 90944.52358036202,
+    "exposure": 0.059196271616041865
+  },
+  "others": {},
+  "notes": []
+}
