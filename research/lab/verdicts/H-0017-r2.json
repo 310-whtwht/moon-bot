@@ -1,0 +1,93 @@
+{
+  "id": "H-0017",
+  "revision": 2,
+  "time": "2026-11-06T00:12:44+00:00",
+  "hash": "982f3726cc25",
+  "trials": 140,
+  "passed": false,
+  "gates": [
+    {
+      "name": "回数",
+      "passed": true,
+      "detail": "94回（30回以上）"
+    },
+    {
+      "name": "偶然でないか",
+      "passed": false,
+      "detail": "t 3.02（140通り試した分で 3.14 以上）"
+    },
+    {
+      "name": "利益の厚み",
+      "passed": true,
+      "detail": "PF 2.30（1.3 以上）"
+    },
+    {
+      "name": "前半と後半",
+      "passed": true,
+      "detail": "PF 2.07 / 2.56（どちらも 1 超）"
+    },
+    {
+      "name": "最近の3分の1",
+      "passed": true,
+      "detail": "PF 2.02（1 超）"
+    },
+    {
+      "name": "大勝ち頼みでないか",
+      "passed": true,
+      "detail": "大きい3回を除いて PF 1.88（1.1 以上）"
+    },
+    {
+      "name": "コストへの強さ",
+      "passed": true,
+      "detail": "滑り3倍で PF 1.47（1.1 以上）"
+    },
+    {
+      "name": "値を少しずらす",
+      "passed": true,
+      "detail": "6通り、PF>1 が 100%、中央 2.08"
+    },
+    {
+      "name": "でたらめな売買に勝つか",
+      "passed": true,
+      "detail": "p 0.0010（0.01 以下）"
+    },
+    {
+      "name": "外した側より良いか",
+      "passed": false,
+      "detail": "1回あたり +3.85 / 外した側 +6.33（76回）、差の t -1.13（2.0 以上）"
+    }
+  ],
+  "metrics": {
+    "initial_balance": 30000,
+    "final_equity": 30362.0313089663,
+    "net_profit": 362.03130896629955,
+    "total_return": 0.012067710298876655,
+    "cagr": 0.004034448002035118,
+    "max_drawdown": 0.001599657646692387,
+    "sharpe": 1.5140261115641436,
+    "num_trades": 94,
+    "win_rate": 0.574468085106383,
+    "profit_factor": 2.295011901838583,
+    "avg_trade": 3.851396903896826,
+    "sqn": 3.0219766817237117,
+    "total_fees": 57.24546246457136,
+    "exposure": 0.0020546454035813423
+  },
+  "others": {
+    "GBP_JPY": {
+      "trades": 102,
+      "pf": 1.69
+    },
+    "EUR_JPY": {
+      "trades": 98,
+      "pf": 2.49
+    },
+    "AUD_JPY": {
+      "trades": 98,
+      "pf": 1.21
+    }
+  },
+  "notes": [
+    "同じデータを見て思いついた案。合格しても、まだ見ていない期間（Paper）で確かめるまで証拠にならない"
+  ]
+}

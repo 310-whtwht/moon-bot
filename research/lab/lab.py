@@ -56,6 +56,7 @@ slippage: 0.005
 params: {{}}             # 動かす前に決める。結果を見てから変えるなら revision を上げる
 neighbors: {{}}          # 例 hold_bars: [10, 14]。1つずつずらして試す
 found_on_same_data: false   # 同じデータを見て思いついた案なら true
+# complement: {{}}     # 条件で絞る案だけ書く。外した側だけで入る値（例 day_mode: -1）。差の検査が足される
 """
 
 
@@ -207,8 +208,13 @@ def run(name, symbol=None):
             t, _ = backtest(card, card["symbol"], slip, {**params, key: v})
             neighbor_pfs.append(gates.pf(pnl_of(t)))
             print(f"  {key}={v}: PF {neighbor_pfs[-1]:.2f}")
+    excluded = None
+    if card.get("complement"):
+        # 条件で絞る案: 外した側（complement の値で動かした取引）より良いかも見る
+        ex, _ = backtest(card, card["symbol"], slip, {**params, **card["complement"]})
+        excluded = pnl_of(ex)
     p = random_p(trades, candles_path(card, card["symbol"]))
-    result = gates.evaluate(pnl_of(trades), pnl_of(stress), neighbor_pfs, p, trials)
+    result = gates.evaluate(pnl_of(trades), pnl_of(stress), neighbor_pfs, p, trials, excluded)
     passed = all(g.passed for g in result)
 
     for g in result:

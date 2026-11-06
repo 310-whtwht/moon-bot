@@ -45,6 +45,20 @@ def test_profit_only_in_first_half_fails():
     assert not passed(pnl)["前半と後半"]
 
 
+def test_complement_gate_only_when_given():
+    assert "外した側より良いか" not in passed(GOOD)
+
+
+def test_filter_no_better_than_excluded_fails():
+    # 絞った側も外した側も同じ成績なら、絞った意味がない
+    assert not passed(GOOD, excluded_pnl=GOOD)["外した側より良いか"]
+
+
+def test_filter_clearly_better_than_excluded_passes():
+    excluded = [-3.0, 2.0, -4.0, 1.0, -2.0] * 12
+    assert passed(GOOD, excluded_pnl=excluded)["外した側より良いか"]
+
+
 def test_missing_neighbors_fail():
     assert not passed(GOOD, neighbor_pfs=[])["値を少しずらす"]
 
