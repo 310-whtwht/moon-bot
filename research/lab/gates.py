@@ -16,6 +16,8 @@ MIN_NEIGHBOR_SHARE = 2 / 3
 MIN_NEIGHBOR_MEDIAN = 1.1
 MAX_RANDOM_P = 0.01
 STRESS_SLIPPAGE = 3
+# 条件で絞る案で、入る側の1回あたりの損益が外した側より大きいとみなす Welch の t（片側でおよそ 2.5%）
+MIN_COMPLEMENT_T = 2.0
 # ハーネスより前に手で試した数の概算（数えていないので、多めに見積もった値）
 PRIOR_TRIALS = 100
 
@@ -47,8 +49,20 @@ def required_t(trials):
     return math.sqrt(2 * math.log(max(trials, 2)))
 
 
-def evaluate(pnl, stress_pnl, neighbor_pfs, random_p, trials):
-    """pnl は取引順の損益。すべての検査の結果を返す（途中で止めない）。"""
+def welch_t(a, b):
+    """a の平均が b の平均より大きいかの Welch の t。どちらかが2回未満なら 0。"""
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    if len(a) < 2 or len(b) < 2:
+        return 0.0
+    se = math.sqrt(a.var(ddof=1) / len(a) + b.var(ddof=1) / len(b))
+    return float((a.mean() - b.mean()) / se) if se > 0 else 0.0
+
+
+def evaluate(pnl, stress_pnl, neighbor_pfs, random_p, trials, excluded_pnl=None):
+    """pnl は取引順の損益。すべての検査の結果を返す（途中で止めない）。
+
+    excluded_pnl は、条件で絞る案の「外した側」の損益。渡したときだけ、外した側との差の検査を足す。
+    """
     r = np.asarray(pnl, dtype=float)
     n, third = len(r), len(r) // 3
     need = required_t(trials)
@@ -71,7 +85,16 @@ def evaluate(pnl, stress_pnl, neighbor_pfs, random_p, trials):
         Gate("値を少しずらす", bool(neighbor_pfs) and share >= MIN_NEIGHBOR_SHARE and median >= MIN_NEIGHBOR_MEDIAN,
              f"{len(neighbor_pfs)}通り、PF>1 が {share:.0%}、中央 {median:.2f}" if neighbor_pfs else "未指定"),
         Gate("でたらめな売買に勝つか", random_p <= MAX_RANDOM_P, f"p {random_p:.4f}（{MAX_RANDOM_P} 以下）"),
-    ]
+    ] + ([] if excluded_pnl is None else [_complement_gate(r, excluded_pnl)])
+
+
+def _complement_gate(r, excluded):
+    e = np.asarray(excluded, dtype=float)
+    t = welch_t(r, e)
+    if len(e) == 0:
+        return Gate("外した側より良いか", False, "外した側の取引が0回で比べられない")
+    return Gate("外した側より良いか", t >= MIN_COMPLEMENT_T,
+                f"1回あたり {r.mean():+.2f} / 外した側 {e.mean():+.2f}（{len(e)}回）、差の t {t:.2f}（{MIN_COMPLEMENT_T} 以上）")
 
 
 def random_entry_p(bid, ask, entries, exits, sides, n=2000, seed=1):

@@ -1,0 +1,20 @@
+id: H-0017
+revision: 2
+stage: idea
+flow: F-001
+title: 仲値後の売り（9:55 までに上がった日だけ）
+why: 仲値に向けたドル買いが多い日ほど 9:00〜9:55 に上がり、9:55 に買いが止まったあとの戻りも大きい。すでに下げている日は、ドル買いが少ないか、もっと大きな売りがあり、外れやすい。基準は値の大きさを選ばず「9:00 より上か」だけにした（結果を見る前に固定）（r2。ラボに外した側との差の検査を足したので、外した側を書き足した。条件と値は r1 のまま）
+counterparty: 仲値でドルを買う企業。値を選ばず、決まった時刻に買う
+script: research/gotobi_filter.star
+symbol: USD_JPY
+others: [GBP_JPY, EUR_JPY, AUD_JPY]
+interval: 5m
+from: "2023-10-28"
+slippage: 0.005
+params: {rise_filter: 1, ref_min: 540, rise_atr: 0.0}
+neighbors:
+  ref_min: [510, 570]
+  exit_min: [610, 630]
+  stop_atr: [2, 4]
+found_on_same_data: true
+complement: {rise_filter: -1}
