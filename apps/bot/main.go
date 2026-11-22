@@ -12,7 +12,9 @@ import (
 	"github.com/moomoo-trading/bot/internal/backtestcmd"
 	"github.com/moomoo-trading/bot/internal/config"
 	"github.com/moomoo-trading/bot/internal/cotcmd"
+	"github.com/moomoo-trading/bot/internal/driftcmd"
 	"github.com/moomoo-trading/bot/internal/killcmd"
+	"github.com/moomoo-trading/bot/internal/tradescmd"
 	"github.com/moomoo-trading/bot/internal/worker"
 )
 
@@ -25,12 +27,16 @@ func main() {
 	//   bot backtest [flags]  run a strategy over stored bars
 	//   bot kill status|on|off  show or change the kill switches
 	//   bot cot               download the CFTC positioning reports (COT)
+	//   bot drift -deployment <id>  compare a deployment's trades with a backtest
+	//   bot trades [flags]    write closed trades as CSV
 	if len(os.Args) > 1 {
 		commands := map[string]func(context.Context, *config.Config, []string, io.Writer) error{
 			"backfill": backfill.Run,
 			"backtest": backtestcmd.Run,
 			"kill":     killcmd.Run,
 			"cot":      cotcmd.Run,
+			"drift":    driftcmd.Run,
+			"trades":   tradescmd.Run,
 		}
 		if run, ok := commands[os.Args[1]]; ok {
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

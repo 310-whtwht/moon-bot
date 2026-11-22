@@ -201,7 +201,10 @@ func (r *Runner) settleClosedAtBroker(ctx context.Context) error {
 		gross = gross.Neg()
 	}
 	net := gross.Sub(pos.Fees).Sub(fill.Fee)
-	if err := r.store.ClosePosition(ctx, pos.ID, fill.Price, net, fill.Fee, fill.At); err != nil {
+	// Closed at the broker: whether by its stop, a margin call or by hand is
+	// not known here, so no expected price is recorded.
+	closing := Closing{Price: fill.Price, RealizedPnL: net, Fee: fill.Fee, At: fill.At, Reason: "broker"}
+	if err := r.store.ClosePosition(ctx, pos.ID, closing); err != nil {
 		return fmt.Errorf("reconcile: record close: %w", err)
 	}
 	r.pos, r.pendingExit, r.lastMismatch = nil, "", ""

@@ -164,6 +164,11 @@ func (w *Worker) startTrader(ctx context.Context) error {
 		brokers[gmofx.BrokerName] = gmo
 		log.Printf("LIVE TRADING ENABLED: GMO account %q connected (available margin %s JPY, max %d units per order)",
 			w.config.GMO.AccountID, assets.AvailableMargin.StringFixed(0), trader.HardMaxLiveUnits)
+		if n := tc.LiveMinPaperTrades; n > 0 {
+			log.Printf("LIVE TRADING: a strategy version needs %d closed paper trades on a symbol before it trades real money (LIVE_MIN_PAPER_TRADES)", n)
+		} else {
+			log.Printf("WARNING: LIVE_MIN_PAPER_TRADES=0: strategy versions may trade real money without any paper record")
+		}
 	} else {
 		log.Printf("Live trading off (%s): only the paper broker is available", why)
 	}
@@ -180,7 +185,7 @@ func (w *Worker) startTrader(ctx context.Context) error {
 		PollInterval: tc.PollInterval,
 		Config: trader.Config{
 			AccountLimits: tc.AccountLimits, GlobalLimits: tc.GlobalLimits,
-			ReconcileInterval: tc.ReconcileInterval,
+			ReconcileInterval: tc.ReconcileInterval, LiveMinPaperTrades: tc.LiveMinPaperTrades,
 			// Reloaded hourly, so a new weekly report reaches running strategies.
 			Data: &series.Cache{Load: series.MySQLStore{DB: w.db}.Load, TTL: time.Hour, Logf: log.Printf},
 		},

@@ -95,6 +95,8 @@ services:
       - GMO_API_KEY=${GMO_API_KEY:-}
       - GMO_API_SECRET=${GMO_API_SECRET:-}
       - GMO_ACCOUNT_ID=${GMO_ACCOUNT_ID:-default}
+      # Closed paper trades a strategy version needs before it trades real money.
+      - LIVE_MIN_PAPER_TRADES=${LIVE_MIN_PAPER_TRADES:-30}
     restart: unless-stopped
     depends_on:
       api:

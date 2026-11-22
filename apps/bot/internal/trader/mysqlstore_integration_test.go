@@ -218,6 +218,23 @@ VALUES (?, 'e2e', ?, 'paper', ?, 'USD_JPY', '1h', 100, TRUE)`, deployID, strateg
 	var trades int
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM trades WHERE account_id = ?`, account).Scan(&trades))
 	assert.Equal(t, 2, trades, "one trade per fill")
+
+	// The closed position keeps what was expected next to what happened.
+	var expOpen, initialStop, expClose, reason string
+	require.NoError(t, db.QueryRowContext(ctx, `
+SELECT expected_open_price, initial_stop_price, expected_close_price, exit_reason
+FROM positions WHERE account_id = ? AND status = 'closed'`, account).Scan(&expOpen, &initialStop, &expClose, &reason))
+	assert.Equal(t, "150.01000000", expOpen, "the ASK the entry was sent at")
+	assert.Equal(t, "149.00000000", initialStop)
+	assert.NotEmpty(t, expClose)
+	assert.NotEmpty(t, reason)
+
+	n, err := store.PaperTradeCount(ctx, versionID, "USD_JPY")
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	n, err = store.PaperTradeCount(ctx, versionID, "EUR_JPY")
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
 }
 
 // onlyDeployment narrows Deployments to one row.

@@ -155,6 +155,23 @@ func sideToDB(side broker.Side) string { return strings.ToLower(string(side)) }
 
 func sideFromDB(side string) broker.Side { return broker.Side(strings.ToUpper(side)) }
 
+// nullableDecimal stores zero (unknown) as NULL.
+func nullableDecimal(d decimal.Decimal) any {
+	if d.IsZero() {
+		return nil
+	}
+	return d.String()
+}
+
+// truncateRunes cuts s to at most n characters (not bytes).
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
+}
+
 func nullable(s string) any {
 	if s == "" {
 		return nil
@@ -274,11 +291,12 @@ func (s *MySQLStore) MarkOrderUnknown(ctx context.Context, clientOrderID, reason
 func (s *MySQLStore) InsertPosition(ctx context.Context, p Position) error {
 	_, err := s.DB.ExecContext(ctx, `
 INSERT INTO positions (id, deployment_id, broker, account_id, broker_position_id, symbol, side, quantity,
-  open_price, stop_price, stop_order_id, fees, strategy_id, strategy_version_id, status, opened_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)`,
+  open_price, expected_open_price, stop_price, initial_stop_price, stop_order_id, fees, strategy_id, strategy_version_id,
+  status, opened_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)`,
 		p.ID, nullable(p.DeploymentID), p.Broker, p.AccountID, nullable(p.BrokerPositionID), p.Symbol, sideToDB(p.Side),
-		p.Units.String(), p.OpenPrice.String(), p.StopPrice.String(), nullable(p.StopOrderID), p.Fees.String(),
-		nullable(p.StrategyID), nullable(p.StrategyVersionID), p.OpenedAt.UTC())
+		p.Units.String(), p.OpenPrice.String(), nullableDecimal(p.ExpectedOpenPrice), p.StopPrice.String(), p.StopPrice.String(),
+		nullable(p.StopOrderID), p.Fees.String(), nullable(p.StrategyID), nullable(p.StrategyVersionID), p.OpenedAt.UTC())
 	return err
 }
 
@@ -287,11 +305,13 @@ func (s *MySQLStore) SetPositionStopOrder(ctx context.Context, positionID, stopO
 	return err
 }
 
-func (s *MySQLStore) ClosePosition(ctx context.Context, positionID string, closePrice, realizedPnL, closeFee decimal.Decimal, at time.Time) error {
+func (s *MySQLStore) ClosePosition(ctx context.Context, positionID string, c Closing) error {
 	res, err := s.DB.ExecContext(ctx, `
-UPDATE positions SET status = 'closed', close_price = ?, realized_pnl = ?, fees = fees + ?, closed_at = ?
+UPDATE positions SET status = 'closed', close_price = ?, expected_close_price = ?, realized_pnl = ?,
+  fees = fees + ?, exit_reason = ?, closed_at = ?
 WHERE id = ? AND status = 'open'`,
-		closePrice.String(), realizedPnL.String(), closeFee.String(), at.UTC(), positionID)
+		c.Price.String(), nullableDecimal(c.Expected), c.RealizedPnL.String(), c.Fee.String(),
+		nullable(truncateRunes(c.Reason, 64)), c.At.UTC(), positionID)
 	if err != nil {
 		return err
 	}
@@ -299,6 +319,15 @@ WHERE id = ? AND status = 'open'`,
 		return fmt.Errorf("position %s is not open", positionID)
 	}
 	return nil
+}
+
+func (s *MySQLStore) PaperTradeCount(ctx context.Context, strategyVersionID, symbol string) (int, error) {
+	var n int
+	err := s.DB.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM positions
+WHERE broker = 'paper' AND status = 'closed' AND strategy_version_id = ? AND symbol = ?`,
+		strategyVersionID, symbol).Scan(&n)
+	return n, err
 }
 
 func (s *MySQLStore) Exposure(ctx context.Context, brokerName, accountID string, dayStart, weekStart time.Time) (risk.Exposure, risk.Exposure, error) {
