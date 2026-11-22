@@ -440,6 +440,23 @@ func TestStopLossClosesOnTick(t *testing.T) {
 	// (148.900 - 150.010) * 100 = -111, minus fees 0.30002 + 0.2978
 	assert.Equal(t, "-111.59782", closed.RealizedPnL.String())
 	assert.Equal(t, []string{"opened", "closed"}, h.kinds())
+	assert.Equal(t, "150.01", closed.ExpectedOpenPrice.String(), "the ASK the entry was sent at")
+	assert.Equal(t, "148.9", closed.ExpectedClose.String(), "the BID the close was sent at")
+	assert.Equal(t, "stop", closed.ExitReason)
+}
+
+func TestSignalExitRecordsItsReason(t *testing.T) {
+	h := newHarness(t, Config{})
+	setScript(0, map[int]strategy.Signal{10: long(149), 11: {Action: strategy.Exit}})
+	h.poll(10)
+	h.poll(11)
+	h.feed.quote("150.200", "150.210")
+	h.poll(12)
+
+	require.Empty(t, h.openPositions())
+	closed := h.store.positions[0]
+	assert.Equal(t, "signal", closed.ExitReason)
+	assert.Equal(t, "150.2", closed.ExpectedClose.String())
 }
 
 func TestStopLossIsAlsoCheckedOnPoll(t *testing.T) {

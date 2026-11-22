@@ -197,3 +197,59 @@ func TestHardCapForRealMoneyBrokers(t *testing.T) {
 	assert.Equal(t, []string{"skipped"}, h.kinds())
 	assert.Contains(t, h.events[0].Message, "hard cap")
 }
+
+func TestLiveEntriesNeedPaperTrades(t *testing.T) {
+	h, f, _ := flakyHarness(t, "gmo")
+	h.mgr.Config.LiveMinPaperTrades = 2
+	setScript(0, map[int]strategy.Signal{10: long(149)})
+	// One closed paper trade of the active version on the same symbol, and
+	// others that do not count (another version, another symbol, still open).
+	h.store.positions = []*memPosition{
+		{Position: Position{ID: "p1", Broker: "paper", Symbol: "USD_JPY", StrategyVersionID: "v1"}, Closed: true},
+		{Position: Position{ID: "p2", Broker: "paper", Symbol: "USD_JPY", StrategyVersionID: "v2"}, Closed: true},
+		{Position: Position{ID: "p3", Broker: "paper", Symbol: "EUR_JPY", StrategyVersionID: "v1"}, Closed: true},
+	}
+	h.poll(10)
+	h.poll(11)
+
+	assert.Equal(t, 0, f.opens)
+	assert.Empty(t, h.store.statuses())
+	assert.Equal(t, []string{"skipped"}, h.kinds())
+	assert.Contains(t, h.events[0].Message, "1 closed paper trades")
+}
+
+func TestLiveEntriesOpenOnceThePaperRecordIsEnough(t *testing.T) {
+	h, f, _ := flakyHarness(t, "gmo")
+	h.mgr.Config.LiveMinPaperTrades = 1
+	setScript(0, map[int]strategy.Signal{10: long(149)})
+	h.store.positions = []*memPosition{
+		{Position: Position{ID: "p1", Broker: "paper", Symbol: "USD_JPY", StrategyVersionID: "v1"}, Closed: true},
+	}
+	h.poll(10)
+	h.poll(11)
+
+	assert.Equal(t, 1, f.opens)
+	assert.Equal(t, []string{"open:filled"}, h.store.statuses())
+}
+
+func TestLiveEntriesRefusedWhenThePaperRecordCannotBeRead(t *testing.T) {
+	h, f, _ := flakyHarness(t, "gmo")
+	h.mgr.Config.LiveMinPaperTrades = 1
+	h.store.paperCountErr = fmt.Errorf("db down")
+	setScript(0, map[int]strategy.Signal{10: long(149)})
+	h.poll(10)
+	h.poll(11)
+
+	assert.Equal(t, 0, f.opens)
+	assert.Contains(t, h.events[0].Message, "could not be counted")
+}
+
+func TestPaperEntriesIgnoreTheLiveGate(t *testing.T) {
+	h, f, _ := flakyHarness(t, paper.BrokerName)
+	h.mgr.Config.LiveMinPaperTrades = 30
+	setScript(0, map[int]strategy.Signal{10: long(149)})
+	h.poll(10)
+	h.poll(11)
+
+	assert.Equal(t, 1, f.opens)
+}

@@ -20,6 +20,8 @@ type memStore struct {
 	orderSeq    []string
 	positions   []*memPosition
 	bars        []BarDecision
+	// paperCountErr makes PaperTradeCount fail.
+	paperCountErr error
 }
 
 type memOrder struct {
@@ -38,6 +40,9 @@ type memPosition struct {
 	ClosePrice  decimal.Decimal
 	RealizedPnL decimal.Decimal
 	ClosedAt    time.Time
+	// ExpectedClose and ExitReason are what ClosePosition recorded.
+	ExpectedClose decimal.Decimal
+	ExitReason    string
 }
 
 func newMemStore() *memStore {
@@ -148,15 +153,31 @@ func (s *memStore) SetPositionStopOrder(_ context.Context, id, stopOrderID strin
 	return nil
 }
 
-func (s *memStore) ClosePosition(_ context.Context, id string, price, pnl, _ decimal.Decimal, at time.Time) error {
+func (s *memStore) ClosePosition(_ context.Context, id string, c Closing) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, p := range s.positions {
 		if p.ID == id {
-			p.Closed, p.ClosePrice, p.RealizedPnL, p.ClosedAt = true, price, pnl, at
+			p.Closed, p.ClosePrice, p.RealizedPnL, p.ClosedAt = true, c.Price, c.RealizedPnL, c.At
+			p.ExpectedClose, p.ExitReason = c.Expected, c.Reason
 		}
 	}
 	return nil
+}
+
+func (s *memStore) PaperTradeCount(_ context.Context, versionID, symbol string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.paperCountErr != nil {
+		return 0, s.paperCountErr
+	}
+	n := 0
+	for _, p := range s.positions {
+		if p.Closed && p.Broker == "paper" && p.StrategyVersionID == versionID && p.Symbol == symbol {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (s *memStore) Exposure(_ context.Context, brokerName, accountID string, dayStart, weekStart time.Time) (risk.Exposure, risk.Exposure, error) {

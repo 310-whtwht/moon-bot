@@ -34,6 +34,9 @@ type TraderConfig struct {
 	// well before any real-money broker is connected.
 	BrokerMode  string
 	LiveConfirm string
+	// LiveMinPaperTrades: closed paper trades a strategy version needs on a
+	// symbol before a real-money broker takes its entries (0 turns it off).
+	LiveMinPaperTrades int
 }
 
 // LiveTrading reports whether the real-money broker may be connected, and if
@@ -111,6 +114,7 @@ func Load() *Config {
 			SlackWebhookURL:     getEnv("SLACK_WEBHOOK_URL", ""),
 			BrokerMode:          getEnv("BROKER_MODE", "paper"),
 			LiveConfirm:         getEnv("LIVE_CONFIRM", ""),
+			LiveMinPaperTrades:  int(getFloat("LIVE_MIN_PAPER_TRADES", 30)),
 			// Defaults are deliberately small (Phase 6 starts at 100 units).
 			AccountLimits: risk.Limits{
 				MaxUnitsPerPosition: getFloat("RISK_ACCOUNT_MAX_UNITS", 1000),

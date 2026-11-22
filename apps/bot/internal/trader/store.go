@@ -73,6 +73,9 @@ type Position struct {
 	Units            decimal.Decimal
 	OpenPrice        decimal.Decimal
 	StopPrice        decimal.Decimal
+	// ExpectedOpenPrice is the quote the entry was sent at (ASK for a buy,
+	// BID for a sell); the fill minus it is the entry slippage. Zero when unknown.
+	ExpectedOpenPrice decimal.Decimal
 	// StopOrderID is the protective stop order held at the broker, if any.
 	StopOrderID       string
 	Fees              decimal.Decimal // fees paid so far (entry)
@@ -95,6 +98,20 @@ type Order struct {
 	SettleType        string // "open" or "close"
 	Units             decimal.Decimal
 	BrokerPositionID  string // for closes
+}
+
+// Closing is how a position was closed.
+type Closing struct {
+	Price       decimal.Decimal
+	RealizedPnL decimal.Decimal // net of all fees
+	Fee         decimal.Decimal // fee of the closing fill
+	At          time.Time
+	// Expected is the quote the close was sent at (BID to close a long, ASK to
+	// close a short). Zero when the bot did not send the close itself.
+	Expected decimal.Decimal
+	// Reason is why it was closed: signal, stop, broker (closed at the broker:
+	// its stop, a margin call or by hand) or the kill switch's reason.
+	Reason string
 }
 
 // Fill is the result of an executed order.
@@ -138,8 +155,11 @@ type Store interface {
 	InsertPosition(ctx context.Context, p Position) error
 	// SetPositionStopOrder records (or clears, with "") the broker-side stop order.
 	SetPositionStopOrder(ctx context.Context, positionID, stopOrderID string) error
-	// ClosePosition closes a position. realizedPnL is net of all fees.
-	ClosePosition(ctx context.Context, positionID string, closePrice, realizedPnL, closeFee decimal.Decimal, at time.Time) error
+	// ClosePosition closes a position.
+	ClosePosition(ctx context.Context, positionID string, c Closing) error
+	// PaperTradeCount is how many paper positions of a strategy version on a
+	// symbol have been closed (the evidence a version needs before going live).
+	PaperTradeCount(ctx context.Context, strategyVersionID, symbol string) (int, error)
 
 	// Exposure returns open positions and realised P&L for the account and for all accounts.
 	Exposure(ctx context.Context, brokerName, accountID string, dayStart, weekStart time.Time) (account, global risk.Exposure, err error)

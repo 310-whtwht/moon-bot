@@ -40,6 +40,10 @@ type Config struct {
 	ReconcileInterval time.Duration
 	// Data is the outside data scripts read with data(name) (optional).
 	Data strategy.Data
+	// LiveMinPaperTrades: a real-money broker only takes entries once the
+	// strategy version has this many closed paper trades on the same symbol.
+	// Zero turns the check off.
+	LiveMinPaperTrades int
 }
 
 // HardMaxLiveUnits caps the size of any order sent to a real-money broker,
@@ -491,6 +495,10 @@ func (r *Runner) open(ctx context.Context, tag string, side broker.Side, stopDis
 			r.dep.Units.String(), HardMaxLiveUnits))
 		return nil
 	}
+	if ok, why := r.liveAllowed(ctx); !ok {
+		r.notify("skipped", why)
+		return nil
+	}
 
 	tick, err := r.quote(ctx)
 	if err != nil {
@@ -573,7 +581,7 @@ func (r *Runner) enter(ctx context.Context, fill Fill, side broker.Side, tick ma
 	pos := Position{
 		ID: uuid.NewString(), DeploymentID: r.dep.ID, Broker: r.dep.Broker, AccountID: r.dep.AccountID,
 		BrokerPositionID: fill.BrokerPositionID, Symbol: r.dep.Symbol, Side: side, Units: fill.Size,
-		OpenPrice: fill.Price, StopPrice: stop, Fees: fill.Fee,
+		OpenPrice: fill.Price, StopPrice: stop, ExpectedOpenPrice: expectedFill(side, tick), Fees: fill.Fee,
 		StrategyID: r.dep.StrategyID, StrategyVersionID: r.version.ID, OpenedAt: fill.At,
 	}
 	// The stop goes to the broker first, so the position row already carries
@@ -586,6 +594,33 @@ func (r *Runner) enter(ctx context.Context, fill Fill, side broker.Side, tick ma
 	r.notify("opened", fmt.Sprintf("%s %s %s @ %s, stop %s (%s)",
 		side, fill.Size.String(), r.dep.Symbol, fill.Price.String(), stop.StringFixed(3), reason))
 	return nil
+}
+
+// expectedFill is the quote an order on this side is expected to fill at.
+func expectedFill(side broker.Side, tick market.Tick) decimal.Decimal {
+	if side == broker.SideSell {
+		return tick.Bid
+	}
+	return tick.Ask
+}
+
+// liveAllowed refuses entries on a real-money broker until the strategy
+// version has enough closed paper trades on the same symbol. A count that
+// cannot be read refuses too.
+func (r *Runner) liveAllowed(ctx context.Context) (bool, string) {
+	need := r.cfg.LiveMinPaperTrades
+	if r.dep.Broker == paper.BrokerName || need <= 0 {
+		return true, ""
+	}
+	n, err := r.store.PaperTradeCount(ctx, r.version.ID, r.dep.Symbol)
+	if err != nil {
+		return false, fmt.Sprintf("entry refused: paper trades of this version could not be counted (%v)", err)
+	}
+	if n < need {
+		return false, fmt.Sprintf("entry refused: version %s has %d closed paper trades on %s; %d are required before real-money trading",
+			r.version.ID, n, r.dep.Symbol, need)
+	}
+	return true, ""
 }
 
 func (r *Runner) checkRisk(ctx context.Context, price decimal.Decimal) error {
@@ -806,7 +841,9 @@ func (r *Runner) close(ctx context.Context, tag, reason string) error {
 		gross = gross.Neg()
 	}
 	net := gross.Sub(pos.Fees).Sub(fill.Fee)
-	if err := r.store.ClosePosition(ctx, pos.ID, fill.Price, net, fill.Fee, fill.At); err != nil {
+	closing := Closing{Price: fill.Price, RealizedPnL: net, Fee: fill.Fee, At: fill.At,
+		Expected: expectedFill(side, tick), Reason: reason}
+	if err := r.store.ClosePosition(ctx, pos.ID, closing); err != nil {
 		return fmt.Errorf("record close: %w", err)
 	}
 	r.pos, r.pendingExit = nil, ""
